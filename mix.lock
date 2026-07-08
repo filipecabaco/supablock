@@ -1,4 +1,5 @@
 %{
+  "burrito": {:git, "https://github.com/burrito-elixir/burrito.git", "ec6c8ccaf7a020c6711dda99d00b4cdd6922eb56", [tag: "v1.5.0"]},
   "finch": {:git, "https://github.com/sneako/finch.git", "b0cde428304055acac5cf0ab1fa11becb9bac53b", [tag: "v0.20.0"]},
   "hpax": {:git, "https://github.com/elixir-mint/hpax.git", "8d9c57ab94651b3f076871eebe3b70fa208fe3e3", [tag: "v1.0.4"]},
   "jason": {:git, "https://github.com/michalmuskala/jason.git", "926d2ac6cc0271b9a7079b2ec16ae0cf802f7963", [tag: "v1.4.4"]},
@@ -10,4 +11,5 @@
   "plug_crypto": {:git, "https://github.com/elixir-plug/plug_crypto.git", "70af9d89e6bcb6fa7c47d42ef608e5c76a50d7ff", [tag: "v2.1.1"]},
   "req": {:git, "https://github.com/wojtekmach/req.git", "53c3b9912e815b22231dc2892ac2f47f0e119d9d", [tag: "v0.5.18"]},
   "telemetry": {:git, "https://github.com/beam-telemetry/telemetry.git", "8d8af76720856bcf26641ee1307658ad8f25e466", [tag: "v1.3.0"]},
+  "typed_struct": {:git, "https://github.com/ejpcmac/typed_struct.git", "7c26d1654097476ebae9944ba6675a0f3fd21e9d", [tag: "v0.3.0"]},
 }

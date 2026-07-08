@@ -8,15 +8,8 @@ defmodule Superblock.MixProject do
       elixir: "~> 1.17",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
-      releases: [
-        superblock: [
-          include_executables_for: [:unix],
-          strip_beams: true,
-          # userfs/efuse are runtime: false deps (CLI commands like `login`
-          # must not start the FUSE machinery); `mount` starts them on demand.
-          applications: [userfs: :load, efuse: :load]
-        ]
-      ],
+      default_release: :superblock,
+      releases: releases(),
       deps: deps()
     ]
   end
@@ -26,6 +19,55 @@ defmodule Superblock.MixProject do
       extra_applications: [:logger],
       mod: {Superblock.Application, []}
     ]
+  end
+
+  defp releases do
+    [
+      # Classic release, used by bin/superblock (the thin launcher) and the
+      # e2e suite: MIX_ENV=prod mix release
+      superblock: [
+        include_executables_for: [:unix],
+        strip_beams: true,
+        # userfs/efuse are runtime: false deps (CLI commands like `login`
+        # must not start the FUSE machinery); `mount` starts them on demand.
+        applications: [userfs: :load, efuse: :load]
+      ],
+      # Single-file binary via Burrito (needs zig 0.15.x and xz on PATH):
+      #   MIX_ENV=prod mix release superblock_burrito
+      # Binaries land in burrito_out/. The bundled efuse FUSE port is a
+      # native executable compiled on the build machine, so build each
+      # platform's binary natively (no useful cross-targets).
+      superblock_burrito: [
+        include_executables_for: [:unix],
+        strip_beams: true,
+        applications: [userfs: :load, efuse: :load],
+        steps: [:assemble, &Burrito.wrap/1],
+        burrito: [targets: burrito_targets()]
+      ]
+    ]
+  end
+
+  # Native target only (see note above). BURRITO_ERTS_PATH overrides where
+  # the ERTS comes from (an unpacked OTP root, e.g. /usr/lib/erlang) for
+  # build hosts that cannot reach Burrito's precompiled-ERTS CDN.
+  defp burrito_targets do
+    os =
+      case :os.type() do
+        {:unix, :darwin} -> :darwin
+        _other -> :linux
+      end
+
+    cpu =
+      case to_string(:erlang.system_info(:system_architecture)) do
+        "aarch64" <> _rest -> :aarch64
+        "arm" <> _rest -> :aarch64
+        _other -> :x86_64
+      end
+
+    case System.get_env("BURRITO_ERTS_PATH") do
+      nil -> [native: [os: os, cpu: cpu]]
+      path -> [native: [os: os, cpu: cpu, custom_erts: path]]
+    end
   end
 
   defp elixirc_paths(:test), do: ["lib", "test/support"]
@@ -42,7 +84,7 @@ defmodule Superblock.MixProject do
     [
       {:userfs, path: "vendor/userfs", runtime: false},
       {:efuse, path: "vendor/efuse", override: true, runtime: false},
-      {:req, git: "https://github.com/wojtekmach/req.git", tag: "v0.5.18"},
+      {:req, git: "https://github.com/wojtekmach/req.git", tag: "v0.5.18", override: true},
       {:jason, git: "https://github.com/michalmuskala/jason.git", tag: "v1.4.4", override: true},
       {:finch, git: "https://github.com/sneako/finch.git", tag: "v0.20.0", override: true},
       {:mint, git: "https://github.com/elixir-mint/mint.git", tag: "v1.9.1", override: true},
@@ -55,6 +97,14 @@ defmodule Superblock.MixProject do
       {:telemetry,
        git: "https://github.com/beam-telemetry/telemetry.git", tag: "v1.3.0", override: true},
       {:castore, path: "vendor/castore", override: true},
+      # Build-time only: wraps the release into a single-file binary.
+      {:burrito,
+       git: "https://github.com/burrito-elixir/burrito.git", tag: "v1.5.0", runtime: false},
+      {:typed_struct,
+       git: "https://github.com/ejpcmac/typed_struct.git",
+       tag: "v0.3.0",
+       override: true,
+       runtime: false},
       {:plug,
        git: "https://github.com/elixir-plug/plug.git", tag: "v1.20.1", override: true, only: :test},
       {:plug_crypto,

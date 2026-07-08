@@ -39,7 +39,8 @@ at the kernel level (`-o ro` — any write attempt fails with `EROFS`).
 
 Prerequisites:
 
-* Erlang/OTP 25+ and Elixir 1.17+ (see `.tool-versions`)
+* Erlang/OTP 25+ and Elixir 1.17+ — Elixir **1.18.x** recommended, it is the
+  version Burrito's own CI tests against (see `.tool-versions`)
 * Linux: `libfuse3-dev`, `fuse3` and `pkg-config` (Debian/Ubuntu:
   `apt install libfuse3-dev fuse3 pkg-config`); macOS: [macFUSE](https://macfuse.github.io)
 * a C compiler (the FUSE port is a small C program)
@@ -54,6 +55,30 @@ ln -sf "$PWD/bin/superblock" ~/.local/bin/superblock   # or copy
 
 Dependencies are pinned as git tags / vendored (see `mix.exs` and
 `vendor/`), so the build does not need hex.pm.
+
+### Single-file binary (Burrito)
+
+For easier distribution, superblock can be packaged as a self-contained
+executable with [Burrito](https://github.com/burrito-elixir/burrito) — no
+Erlang/Elixir needed on the target machine (FUSE still is):
+
+```bash
+# extra build prerequisites: zig 0.15.x and xz on PATH
+MIX_ENV=prod mix release superblock_burrito
+ls burrito_out/    # -> superblock_burrito_native (~5 MB)
+```
+
+The binary self-extracts on first run and behaves exactly like the launcher
+(`superblock_burrito_native login`, `… mount`, and so on). Notes:
+
+* The build targets the **native** platform only: the bundled FUSE port is a
+  C executable compiled on the build machine, so cross-compiled targets
+  would ship a broken port. Build each platform's binary on that platform.
+* Burrito normally downloads a precompiled ERTS; on build hosts without
+  access to its CDN, point `BURRITO_ERTS_PATH` at an unpacked local OTP
+  root (e.g. `/usr/lib/erlang`) to bundle the ERTS you built with.
+* To clear the self-extracted payload cache after an upgrade gone wrong:
+  remove `~/.local/share/.burrito/`.
 
 ## Quickstart
 

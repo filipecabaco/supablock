@@ -10,3 +10,4 @@ vendor/efuse/c_src/efuse
 vendor/efuse/c_src/*.o
 vendor/efuse/c_src/*.d
 vendor/efuse/priv/efuse
+/burrito_out/

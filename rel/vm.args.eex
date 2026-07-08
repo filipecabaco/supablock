@@ -1,0 +1,3 @@
+## Assume UTF-8 filenames even under a non-UTF-8 locale (the Burrito
+## binary has no launcher script to fix the locale for us).
++fnu
