@@ -45,6 +45,18 @@ defmodule Superblock.Client do
     end
   end
 
+  # Testing escape hatch only: the e2e suite points the release at a local
+  # stub API. Real usage never sets either override.
+  defp base_url do
+    case System.get_env("SUPERBLOCK_API_URL") do
+      url when is_binary(url) and url != "" ->
+        url
+
+      _unset ->
+        Application.get_env(:superblock, :base_url, @base_url)
+    end
+  end
+
   defp get_with_token(path, token, opts) do
     budget_ms = Keyword.get(opts, :timeout_ms) || Config.get("http_timeout_ms") || 8_000
     deadline = System.monotonic_time(:millisecond) + budget_ms
@@ -68,7 +80,7 @@ defmodule Superblock.Client do
   defp run_request(path, token, budget_ms, deadline) do
     req =
       Req.new(
-        base_url: @base_url,
+        base_url: base_url(),
         url: path,
         auth: {:bearer, token},
         receive_timeout: budget_ms,
@@ -116,12 +128,27 @@ defmodule Superblock.Client do
   defp proxy_from_env do
     with url when is_binary(url) and url != "" <-
            System.get_env("HTTPS_PROXY") || System.get_env("https_proxy"),
+         false <- proxy_excluded?(URI.parse(base_url()).host),
          %URI{host: host, port: port} when is_binary(host) and is_integer(port) <-
            URI.parse(url) do
       {:http, host, port, []}
     else
       _other -> nil
     end
+  end
+
+  # Standard NO_PROXY semantics, plus loopback never goes through a proxy.
+  defp proxy_excluded?(nil), do: true
+  defp proxy_excluded?(host) when host in ["localhost", "127.0.0.1", "::1"], do: true
+
+  defp proxy_excluded?(host) do
+    (System.get_env("NO_PROXY") || System.get_env("no_proxy") || "")
+    |> String.split(",", trim: true)
+    |> Enum.map(&String.trim/1)
+    |> Enum.any?(fn entry ->
+      suffix = String.trim_leading(entry, ".")
+      entry != "" and (host == entry or String.ends_with?(host, "." <> suffix))
+    end)
   end
 
   defp retry_decision(_req, %Req.Response{status: 429} = resp, deadline) do

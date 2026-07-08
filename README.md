@@ -144,10 +144,21 @@ calls into `EIO`. `superblock refresh` flushes the cache of a live mount.
 
 ```bash
 mix test                 # unit + router/cache/CLI tests (no FUSE needed)
-mix test --include fuse  # end-to-end tests against a real mount
+mix test --include fuse  # tests against a real mount
                          # (needs /dev/fuse; in CI use a container with
                          #  --device /dev/fuse --cap-add SYS_ADMIN)
+
+MIX_ENV=prod mix release # the e2e suite drives the released binary...
+mix test --include e2e   # ...and cross-checks the mounted tree against the
+                         # official supabase CLI (must be on PATH)
 ```
+
+The e2e suite runs hermetically by default: a local stub Management API
+serves canned fixtures, the supabase CLI is pointed at it with a custom
+`SUPABASE_PROFILE`, and superblock with `SUPERBLOCK_API_URL` (both are
+test-only escape hatches). Set `SUPERBLOCK_E2E_LIVE=1` and
+`SUPABASE_ACCESS_TOKEN=sbp_…` to run the same read-only assertions against
+your real account instead.
 
 `vendor/` contains patched copies of
 [elixir-userfs](https://github.com/mwri/elixir-userfs) and
