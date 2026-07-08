@@ -1,0 +1,13 @@
+%{
+  "finch": {:git, "https://github.com/sneako/finch.git", "b0cde428304055acac5cf0ab1fa11becb9bac53b", [tag: "v0.20.0"]},
+  "hpax": {:git, "https://github.com/elixir-mint/hpax.git", "8d9c57ab94651b3f076871eebe3b70fa208fe3e3", [tag: "v1.0.4"]},
+  "jason": {:git, "https://github.com/michalmuskala/jason.git", "926d2ac6cc0271b9a7079b2ec16ae0cf802f7963", [tag: "v1.4.4"]},
+  "mime": {:git, "https://github.com/elixir-plug/mime.git", "4bb1ba13040a13b2f5d71bede10a7e3e45fc8e93", [tag: "v2.0.7"]},
+  "mint": {:git, "https://github.com/elixir-mint/mint.git", "bc92a3a4c003dbdc71e8ab3f58929fcfc61153cf", [tag: "v1.9.1"]},
+  "nimble_options": {:git, "https://github.com/dashbitco/nimble_options.git", "cc80e7e6fdb9bbbe6a4614b2e2e81ca4012fc264", [tag: "v1.1.1"]},
+  "nimble_pool": {:git, "https://github.com/dashbitco/nimble_pool.git", "9829f2753851694dd1b34682e0abede895966ca5", [tag: "v1.1.0"]},
+  "plug": {:git, "https://github.com/elixir-plug/plug.git", "1fea083ea9a5bc1917fde321cd561debeee8f45a", [tag: "v1.20.1"]},
+  "plug_crypto": {:git, "https://github.com/elixir-plug/plug_crypto.git", "70af9d89e6bcb6fa7c47d42ef608e5c76a50d7ff", [tag: "v2.1.1"]},
+  "req": {:git, "https://github.com/wojtekmach/req.git", "53c3b9912e815b22231dc2892ac2f47f0e119d9d", [tag: "v0.5.18"]},
+  "telemetry": {:git, "https://github.com/beam-telemetry/telemetry.git", "8d8af76720856bcf26641ee1307658ad8f25e466", [tag: "v1.3.0"]},
+}

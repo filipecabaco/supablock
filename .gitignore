@@ -1,0 +1,12 @@
+/_build/
+/cover/
+/deps/
+/doc/
+erl_crash.dump
+*.ez
+superblock-*.tar
+/tmp/
+vendor/efuse/c_src/efuse
+vendor/efuse/c_src/*.o
+vendor/efuse/c_src/*.d
+vendor/efuse/priv/efuse

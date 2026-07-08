@@ -1,0 +1,339 @@
+defmodule Superblock.Router do
+  @moduledoc """
+  Maps filesystem paths to Management API resources. Pure logic plus cache
+  calls — no FUSE types leak in here.
+
+  Tree:
+
+      /
+        organizations/
+          <org-slug>/
+            info.json
+            members.json
+            projects/
+              <project-ref>/
+                info.json
+                health
+                config/auth.json
+                config/database.json
+                api-keys/publishable
+                api-keys/secret
+                functions/<fn-slug>/info.json
+                branches/<branch>/info.json
+        regions.json
+
+  Dynamic segments are validated against the cached parent listing, so a
+  bogus name is a cheap `:enoent` (plus negative caching) rather than an API
+  call. Sizes come from rendering, which is deterministic, so `stat` is
+  stable.
+  """
+
+  require Logger
+
+  alias Superblock.{Cache, Client, Config, Endpoints, Render}
+
+  @type node_kind :: :dir | {:file, non_neg_integer}
+  @type error :: :enoent | :eio | :eagain | :eacces
+
+  @project_children ~w(info.json health config api-keys functions branches)
+  @config_children ~w(auth.json database.json)
+  @api_key_children ~w(publishable secret)
+
+  @redacted_body "REDACTED — run: superblock config set expose_secrets true\n"
+
+  ## Public API
+
+  @spec describe(String.t()) :: {:ok, node_kind} | {:error, error}
+  def describe(path) do
+    case resolve(segments(path)) do
+      {:dir, _lister} -> {:ok, :dir}
+      {:file, render} -> with {:ok, body} <- run_render(render), do: {:ok, {:file, byte_size(body)}}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @spec list(String.t()) :: {:ok, [String.t()]} | {:error, error}
+  def list(path) do
+    case resolve(segments(path)) do
+      {:dir, lister} -> lister.()
+      {:file, _render} -> {:error, :eio}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @spec read(String.t()) :: {:ok, binary} | {:error, error}
+  def read(path) do
+    case resolve(segments(path)) do
+      {:file, render} -> run_render(render)
+      {:dir, _lister} -> {:error, :eio}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  ## Path resolution — returns {:dir, lister} | {:file, render_fun} | {:error, e}
+
+  defp segments(path), do: String.split(path, "/", trim: true)
+
+  defp resolve([]) do
+    {:dir, fn -> {:ok, ["organizations", "regions.json"]} end}
+  end
+
+  defp resolve(["regions.json"]) do
+    file(:regions, %{}, &Render.json/1)
+  end
+
+  defp resolve(["organizations"]) do
+    {:dir, fn -> with {:ok, entries} <- org_entries(), do: {:ok, names(entries)} end}
+  end
+
+  defp resolve(["organizations", org_name | rest]) do
+    with_entry(org_entries(), org_name, fn org -> resolve_org(org, rest) end)
+  end
+
+  defp resolve(_unknown), do: {:error, :enoent}
+
+  defp resolve_org(_org, []) do
+    {:dir, fn -> {:ok, ["info.json", "members.json", "projects"]} end}
+  end
+
+  defp resolve_org(org, ["info.json"]), do: file(:org, %{slug: org_slug(org)}, &Render.json/1)
+
+  defp resolve_org(org, ["members.json"]),
+    do: file(:org_members, %{slug: org_slug(org)}, &Render.json/1)
+
+  defp resolve_org(org, ["projects"]) do
+    {:dir, fn -> with {:ok, entries} <- project_entries(org), do: {:ok, names(entries)} end}
+  end
+
+  defp resolve_org(org, ["projects", ref_name | rest]) do
+    with_entry(project_entries(org), ref_name, fn project ->
+      resolve_project(project, rest)
+    end)
+  end
+
+  defp resolve_org(_org, _rest), do: {:error, :enoent}
+
+  defp resolve_project(_project, []) do
+    {:dir, fn -> {:ok, @project_children} end}
+  end
+
+  defp resolve_project(project, ["info.json"]),
+    do: file(:project, %{ref: project_ref(project)}, &Render.json/1)
+
+  defp resolve_project(project, ["health"]),
+    do: file(:health, %{ref: project_ref(project)}, &Render.health/1)
+
+  defp resolve_project(_project, ["config"]) do
+    {:dir, fn -> {:ok, @config_children} end}
+  end
+
+  defp resolve_project(project, ["config", "auth.json"]),
+    do: file(:auth_config, %{ref: project_ref(project)}, &Render.json/1)
+
+  defp resolve_project(project, ["config", "database.json"]),
+    do: file(:db_config, %{ref: project_ref(project)}, &Render.json/1)
+
+  defp resolve_project(_project, ["api-keys"]) do
+    {:dir, fn -> {:ok, @api_key_children} end}
+  end
+
+  defp resolve_project(project, ["api-keys", "publishable"]) do
+    file(:api_keys, %{ref: project_ref(project)}, &render_api_keys(&1, :publishable))
+  end
+
+  defp resolve_project(project, ["api-keys", "secret"]) do
+    if Config.get("expose_secrets") do
+      file(:api_keys, %{ref: project_ref(project)}, &render_api_keys(&1, :secret))
+    else
+      {:file, fn -> {:ok, @redacted_body} end}
+    end
+  end
+
+  defp resolve_project(project, ["functions"]) do
+    {:dir, fn -> with {:ok, entries} <- function_entries(project), do: {:ok, names(entries)} end}
+  end
+
+  defp resolve_project(project, ["functions", fn_name | rest]) do
+    with_entry(function_entries(project), fn_name, fn function ->
+      resolve_function(project, function, rest)
+    end)
+  end
+
+  defp resolve_project(project, ["branches"]) do
+    {:dir, fn -> with {:ok, entries} <- branch_entries(project), do: {:ok, names(entries)} end}
+  end
+
+  defp resolve_project(project, ["branches", branch_name | rest]) do
+    with_entry(branch_entries(project), branch_name, fn branch ->
+      resolve_branch(branch, rest)
+    end)
+  end
+
+  defp resolve_project(_project, _rest), do: {:error, :enoent}
+
+  defp resolve_function(_project, _function, []) do
+    {:dir, fn -> {:ok, ["info.json"]} end}
+  end
+
+  defp resolve_function(project, function, ["info.json"]) do
+    args = %{ref: project_ref(project), fn_slug: to_string(function["slug"] || function["id"])}
+    file(:function, args, &Render.json/1)
+  end
+
+  defp resolve_function(_project, _function, _rest), do: {:error, :enoent}
+
+  defp resolve_branch(_branch, []) do
+    {:dir, fn -> {:ok, ["info.json"]} end}
+  end
+
+  defp resolve_branch(branch, ["info.json"]) do
+    # Rendered from the already-cached branches list item; no extra endpoint.
+    {:file, fn -> {:ok, Render.json(branch)} end}
+  end
+
+  defp resolve_branch(_branch, _rest), do: {:error, :enoent}
+
+  ## Leaves
+
+  defp file(endpoint, args, render_fun) do
+    {:file,
+     fn ->
+       with {:ok, value} <- fetch(endpoint, args) do
+         {:ok, render_fun.(value)}
+       end
+     end}
+  end
+
+  defp run_render(render) when is_function(render, 0), do: render.()
+
+  defp render_api_keys(keys, kind) when is_list(keys) do
+    entries =
+      keys
+      |> Enum.filter(fn key -> classify_key(key) == kind end)
+      |> Enum.map(fn key ->
+        {to_string(key["name"] || key["id"]), to_string(key["api_key"] || "")}
+      end)
+
+    case entries do
+      [] -> "\n"
+      [{_name, value}] -> value <> "\n"
+      many -> Enum.map_join(many, fn {name, value} -> "#{name}: #{value}\n" end)
+    end
+  end
+
+  defp render_api_keys(other, _kind), do: Render.json(other)
+
+  defp classify_key(key) do
+    name = to_string(key["name"] || "")
+    type = to_string(key["type"] || "")
+
+    cond do
+      type == "publishable" or name in ["anon", "publishable"] -> :publishable
+      type == "secret" or name in ["service_role", "secret"] -> :secret
+      true -> :other
+    end
+  end
+
+  ## Listings (cached parent lists, sanitized names)
+
+  defp org_entries do
+    with {:ok, orgs} <- fetch(:orgs, %{}) do
+      {:ok, entries(orgs, &org_slug/1)}
+    end
+  end
+
+  defp project_entries(org) do
+    with {:ok, projects} <- fetch(:projects, %{}) do
+      ids = [to_string(org["id"] || ""), to_string(org["slug"] || "")]
+
+      projects
+      |> Enum.filter(fn project ->
+        link = to_string(project["organization_id"] || project["organization_slug"] || "")
+        link != "" and link in ids
+      end)
+      |> entries(&project_ref/1)
+      |> then(&{:ok, &1})
+    end
+  end
+
+  defp function_entries(project) do
+    with {:ok, functions} <- fetch(:functions, %{ref: project_ref(project)}) do
+      {:ok, entries(functions, fn f -> to_string(f["slug"] || f["id"]) end)}
+    end
+  end
+
+  defp branch_entries(project) do
+    with {:ok, branches} <- fetch(:branches, %{ref: project_ref(project)}) do
+      {:ok, entries(branches, fn b -> to_string(b["name"] || b["id"]) end)}
+    end
+  end
+
+  defp org_slug(org), do: to_string(org["slug"] || org["id"])
+  defp project_ref(project), do: to_string(project["id"] || project["ref"])
+
+  defp entries(items, name_fun) when is_list(items) do
+    items
+    |> Enum.map(fn item -> {sanitize(name_fun.(item)), item} end)
+    |> uniquify()
+  end
+
+  defp entries(_other, _name_fun), do: []
+
+  defp names(entries), do: Enum.map(entries, fn {name, _item} -> name end)
+
+  defp with_entry(entries_result, name, fun) do
+    with {:ok, entries} <- entries_result do
+      case List.keyfind(entries, name, 0) do
+        {^name, item} -> fun.(item)
+        nil -> {:error, :enoent}
+      end
+    end
+  end
+
+  @doc false
+  # API-supplied names become path components: no separators, no NULs, never
+  # empty; collisions get a deterministic ~2/~3 suffix in API list order.
+  def sanitize(name) do
+    sanitized =
+      name
+      |> to_string()
+      |> String.replace("/", "_")
+      |> String.replace(<<0>>, "_")
+
+    if sanitized == "", do: "_", else: sanitized
+  end
+
+  @doc false
+  def uniquify(pairs) do
+    {out, _seen} =
+      Enum.reduce(pairs, {[], %{}}, fn {name, item}, {acc, seen} ->
+        count = Map.get(seen, name, 0)
+        display = if count == 0, do: name, else: "#{name}~#{count + 1}"
+        {[{display, item} | acc], Map.put(seen, name, count + 1)}
+      end)
+
+    Enum.reverse(out)
+  end
+
+  ## Fetch + error mapping
+
+  defp fetch(endpoint, args) do
+    url = Endpoints.path(endpoint, args)
+    ttl_ms = Config.ttl_ms(Endpoints.ttl_class(endpoint))
+
+    case Cache.fetch(url, ttl_ms, fn -> Client.get(url) end) do
+      {:ok, value} -> {:ok, value}
+      {:error, reason} -> {:error, map_error(reason)}
+    end
+  end
+
+  defp map_error(:not_found), do: :enoent
+
+  defp map_error(reason) when reason in [:unauthorized, :forbidden] do
+    Logger.warning("superblock: API said #{reason} — run: superblock login")
+    :eacces
+  end
+
+  defp map_error(:rate_limited), do: :eagain
+  defp map_error(_other), do: :eio
+end
