@@ -10,7 +10,8 @@ defmodule Superblock.Application do
 
   def start(_type, _args) do
     children = [
-      Superblock.Cache
+      Superblock.Cache,
+      Superblock.Database.Connections
     ]
 
     result = Supervisor.start_link(children, strategy: :one_for_one, name: Superblock.Supervisor)

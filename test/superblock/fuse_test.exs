@@ -142,6 +142,36 @@ defmodule Superblock.FuseTest do
     assert TestEnv.hits("/v1/organizations/org-alpha") == 2
   end
 
+  # Real end-to-end for the database/ tree: needs a reachable Postgres, so it
+  # only runs when SUPERBLOCK_TEST_DB_URL points at one (see README dev notes).
+  test "database tree serves real rows over the mount", %{mountpoint: mp} do
+    case System.get_env("SUPERBLOCK_TEST_DB_URL") do
+      nil ->
+        # No database provided; nothing to assert here.
+        assert true
+
+      url ->
+        :ok = Superblock.DbCredentials.put(@proj_a1, url)
+        :ok = Superblock.Control.send_cmd("flush") |> then(fn {:ok, "ok"} -> :ok end)
+
+        db = Path.join(mp, "organizations/org-alpha/projects/#{@proj_a1}/database")
+
+        assert "database" in File.ls!(Path.join(mp, "organizations/org-alpha/projects/#{@proj_a1}"))
+        assert "app" in File.ls!(db)
+        assert "widgets" in File.ls!(Path.join(db, "app"))
+
+        widgets = Path.join(db, "app/widgets")
+        pages = Enum.sort(File.ls!(widgets))
+        assert "rows-000000.csv" in pages
+
+        page = Path.join(widgets, "rows-000000.csv")
+        body = File.read!(page)
+        assert String.starts_with?(body, "id,name,price,tags,meta,created_at,active\n")
+        # stat size matches the rendered bytes
+        assert File.stat!(page).size == byte_size(body)
+    end
+  end
+
   test "kill -9 of the port leaves a recoverable state", %{mountpoint: mp} do
     # Servers from earlier tests may still be winding down; pick ours.
     {_pid, {^mp, Superblock.Fs, _fs_state, os_pid}} =

@@ -58,6 +58,28 @@ defmodule Superblock.Cache do
     :ok
   end
 
+  @doc """
+  Cache occupancy, used by `superblock refresh --check`: total entries and how
+  many are past their TTL (a refresh would drop all of them and re-fetch the
+  stale ones on next access).
+  """
+  @spec stats() :: %{entries: non_neg_integer, stale: non_neg_integer}
+  def stats do
+    now = now_ms()
+
+    {entries, stale} =
+      :ets.foldl(
+        fn {_key, _value, fetched_at, ttl_ms}, {total, expired} ->
+          expired = if now - fetched_at >= ttl_ms, do: expired + 1, else: expired
+          {total + 1, expired}
+        end,
+        {0, 0},
+        @table
+      )
+
+    %{entries: entries, stale: stale}
+  end
+
   ## GenServer
 
   @impl true

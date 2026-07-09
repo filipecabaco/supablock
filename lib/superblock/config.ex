@@ -11,11 +11,15 @@ defmodule Superblock.Config do
     "mountpoint" => nil,
     "expose_secrets" => false,
     "http_timeout_ms" => 8_000,
+    "db_page_size" => 500,
+    "db_format" => "csv",
+    "db_timeout_ms" => 15_000,
     "ttl" => %{
       "orgs" => 60,
       "project" => 30,
       "health" => 10,
-      "static" => 300
+      "static" => 300,
+      "db" => 30
     }
   }
 
@@ -23,10 +27,14 @@ defmodule Superblock.Config do
     "mountpoint",
     "expose_secrets",
     "http_timeout_ms",
+    "db_page_size",
+    "db_format",
+    "db_timeout_ms",
     "ttl.orgs",
     "ttl.project",
     "ttl.health",
-    "ttl.static"
+    "ttl.static",
+    "ttl.db"
   ]
 
   def defaults, do: @defaults
@@ -84,6 +92,10 @@ defmodule Superblock.Config do
 
   defp coerce("expose_secrets", _),
     do: {:error, "expose_secrets must be true or false"}
+
+  defp coerce("db_format", value) when value in ~w(csv json), do: {:ok, value}
+
+  defp coerce("db_format", _), do: {:error, "db_format must be csv or json"}
 
   defp coerce(key, value) do
     case Integer.parse(value) do

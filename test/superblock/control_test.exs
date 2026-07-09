@@ -20,6 +20,16 @@ defmodule Superblock.ControlTest do
     assert {:ok, "err unknown"} = Control.send_cmd("format-disk")
   end
 
+  test "check reports cache occupancy without flushing" do
+    Superblock.Cache.flush()
+    Superblock.Cache.fetch(:probe_key, 60_000, fn -> {:ok, 1} end)
+
+    assert {:ok, reply} = Control.send_cmd("check")
+    assert reply =~ ~r/^ok entries=\d+ stale=\d+$/
+    # the entry we just inserted is still cached (check does not flush)
+    assert {:hit, {:ok, 1}} = Superblock.Cache.lookup(:probe_key)
+  end
+
   test "send_cmd without a socket reports not mounted" do
     Control.stop()
     assert {:error, :not_mounted} = Control.send_cmd("flush")

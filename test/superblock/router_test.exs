@@ -194,6 +194,105 @@ defmodule Superblock.RouterTest do
     end
   end
 
+  describe "database tree" do
+    setup do
+      Superblock.DbCredentials.put(@proj_a1, "postgres://u:p@localhost/postgres?sslmode=disable")
+      Application.put_env(:superblock, :db_query_fun, &fake_db/3)
+      Cache.flush()
+      on_exit(fn -> Application.delete_env(:superblock, :db_query_fun) end)
+      :ok
+    end
+
+    # Models one table: app.widgets with 1200 rows.
+    defp fake_db(_ref, sql, params) do
+      cond do
+        sql =~ "information_schema.schemata" ->
+          {:ok, %{columns: ["schema_name"], rows: [["app"], ["public"]]}}
+
+        sql =~ "information_schema.tables" ->
+          case params do
+            ["app"] -> {:ok, %{columns: ["table_name"], rows: [["empty"], ["widgets"]]}}
+            _other -> {:ok, %{columns: ["table_name"], rows: []}}
+          end
+
+        sql =~ ~s("empty") ->
+          {:ok, %{columns: ["count"], rows: [[0]]}}
+
+        sql =~ "count(*)" ->
+          {:ok, %{columns: ["count"], rows: [[1200]]}}
+
+        sql =~ "SELECT *" ->
+          [limit, offset] = params
+          hi = min(offset + limit, 1200)
+          rows = for i <- offset..(hi - 1)//1, do: [i, "w#{i}"]
+          {:ok, %{columns: ["id", "name"], rows: rows}}
+      end
+    end
+
+    test "database appears in project children only when configured" do
+      assert {:ok, children} = Router.list("/organizations/org-alpha/projects/#{@proj_a1}")
+      assert "database" in children
+
+      # a project without a stored URL keeps the plain tree
+      other = "/organizations/org-alpha/projects/projatwo1234567890ab"
+      assert {:ok, children2} = Router.list(other)
+      refute "database" in children2
+    end
+
+    test "schemas and tables are listed" do
+      base = "/organizations/org-alpha/projects/#{@proj_a1}/database"
+      assert {:ok, ["app", "public"]} = Router.list(base)
+      assert {:ok, :dir} = Router.describe("#{base}/app")
+      assert {:ok, ["empty", "widgets"]} = Router.list("#{base}/app")
+      assert {:ok, []} = Router.list("#{base}/public")
+    end
+
+    test "an empty table has no page files and no readable page" do
+      base = "/organizations/org-alpha/projects/#{@proj_a1}/database/app/empty"
+      assert {:ok, []} = Router.list(base)
+      assert {:error, :enoent} = Router.describe("#{base}/rows-000000.csv")
+    end
+
+    test "a table lists one page file per page_size rows" do
+      path = "/organizations/org-alpha/projects/#{@proj_a1}/database/app/widgets"
+      assert {:ok, files} = Router.list(path)
+      assert files == ["rows-000000.csv", "rows-000500.csv", "rows-001000.csv"]
+    end
+
+    test "reading a csv page renders header + rows with exact stat size" do
+      path =
+        "/organizations/org-alpha/projects/#{@proj_a1}/database/app/widgets/rows-001000.csv"
+
+      assert {:ok, body} = Router.read(path)
+      assert String.starts_with?(body, "id,name\n1000,w1000\n")
+      # last page holds rows 1000..1199 -> 200 rows + header
+      assert length(String.split(body, "\n", trim: true)) == 201
+
+      assert {:ok, {:file, size}} = Router.describe(path)
+      assert size == byte_size(body)
+    end
+
+    test "json pages are readable even when csv is the default" do
+      path = "/organizations/org-alpha/projects/#{@proj_a1}/database/app/widgets/rows-000000.json"
+      assert {:ok, body} = Router.read(path)
+      assert {:ok, decoded} = Jason.decode(body)
+      assert length(decoded) == 500
+      assert hd(decoded) == %{"id" => 0, "name" => "w0"}
+    end
+
+    test "bad schema, table, and page names are enoent" do
+      base = "/organizations/org-alpha/projects/#{@proj_a1}/database"
+      assert {:error, :enoent} = Router.describe("#{base}/nope")
+      assert {:error, :enoent} = Router.describe("#{base}/app/missing")
+      # offset not on a page boundary
+      assert {:error, :enoent} = Router.describe("#{base}/app/widgets/rows-000123.csv")
+      # offset past the end
+      assert {:error, :enoent} = Router.describe("#{base}/app/widgets/rows-999999.csv")
+      # not a page file at all
+      assert {:error, :enoent} = Router.describe("#{base}/app/widgets/whatever.txt")
+    end
+  end
+
   describe "caching behaviour" do
     test "repeated reads of the same leaf hit the API once" do
       path = "/organizations/org-alpha/info.json"

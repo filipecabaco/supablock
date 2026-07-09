@@ -587,6 +587,7 @@
     <nav class="top-nav">
       <a href="#install">Install</a>
       <a href="#quickstart">Quick start</a>
+      <a href="#tables">Table data</a>
       <a href="#commands">Commands</a>
       <a href="#security">Security</a>
     </nav>
@@ -600,7 +601,8 @@
     <p class="lede">
       superblock mirrors the Supabase Management API as a browsable directory tree.
       Log in once with a personal access token, mount, and inspect organizations, projects,
-      config, keys and functions with the tools you already trust —
+      config, keys and functions — and browse table rows as CSV or JSON — with the tools you
+      already trust —
       <strong class="mono">ls</strong>, <strong class="mono">cat</strong>,
       <strong class="mono">grep</strong>, <strong class="mono">diff</strong>.
     </p>
@@ -626,8 +628,9 @@
       <div class="facts">
         <div class="fact">
           <span class="k"><svg class="icon" aria-hidden="true"><use href="#i-lock-closed"/></svg>mount -o ro</span>
-          <p><strong>Physically read-only.</strong> Only GET requests ever leave the box, and the
-             kernel itself rejects every write with <code>EROFS</code>.</p>
+          <p><strong>Read-only by construction.</strong> The Management API sees only GET; the
+             <code>database/</code> tree issues only <code>SELECT</code>; the kernel rejects every
+             write with <code>EROFS</code>.</p>
         </div>
         <div class="fact">
           <span class="k"><svg class="icon" aria-hidden="true"><use href="#i-arrow-path"/></svg>ttl + single-flight</span>
@@ -795,6 +798,55 @@ Mounted at /mnt/supabase. Ctrl-C to unmount.</pre>
     </div>
   </section>
 
+  <section id="tables">
+    <div class="wrap">
+      <p class="sec-label"><svg class="icon" aria-hidden="true"><use href="#i-folder"/></svg>Table data</p>
+      <h2>Rows as files, too</h2>
+      <p class="body">
+        The Management API has no row endpoint, so table browsing connects straight to a
+        project's Postgres over a read-only connection. Point superblock at a database once and
+        the project grows a <span class="mono">database/</span> folder: one directory per schema,
+        one per table, and rows paged into <span class="mono">.csv</span> (default) or
+        <span class="mono">.json</span> files.
+      </p>
+
+      <div class="oneliner">
+        <p class="what"><strong>Connect a project's database (password is not echoed).</strong></p>
+        <div class="code">
+          <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
+          <pre><span class="p">$</span> superblock db add &lt;ref&gt; --url 'postgres://postgres.&lt;ref&gt;:&lt;pw&gt;@…pooler.supabase.com:6543/postgres'</pre>
+        </div>
+      </div>
+
+      <div class="oneliner">
+        <p class="what"><strong>Browse schemas → tables → row pages.</strong></p>
+        <div class="code">
+          <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
+          <pre><span class="p">$</span> ls  /mnt/supabase/organizations/*/projects/&lt;ref&gt;/database/public/users
+rows-000000.csv  rows-000500.csv  rows-001000.csv
+<span class="p">$</span> cat .../database/public/users/rows-000000.csv</pre>
+        </div>
+      </div>
+
+      <div class="oneliner">
+        <p class="what"><strong>Tune the format and page size.</strong></p>
+        <div class="code">
+          <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
+          <pre><span class="p">$</span> superblock config set db_format json     <span class="c"># csv (default) | json</span>
+<span class="p">$</span> superblock config set db_page_size 1000  <span class="c"># rows per file (default 500)</span></pre>
+        </div>
+      </div>
+
+      <p class="body" style="font-size: 13.5px;">
+        Pages are ordered by <code>ctid</code> so paging is stable; CSV is RFC-4180-quoted with
+        <code>NULL</code> as an empty field; JSON is an array of row objects in column order.
+        Only <code>SELECT</code> is ever issued, connections are reused, and database URLs live
+        per-project in <code>~/.config/superblock/db.json</code> (mode 0600), separate from your
+        API token.
+      </p>
+    </div>
+  </section>
+
   <section id="commands">
     <div class="wrap">
       <p class="sec-label"><svg class="icon" aria-hidden="true"><use href="#i-list-bullet"/></svg>Commands</p>
@@ -809,10 +861,13 @@ Mounted at /mnt/supabase. Ctrl-C to unmount.</pre>
             <tr><td><code>superblock logout</code></td><td>Delete the stored token.</td></tr>
             <tr><td><code>superblock status</code></td><td>Auth state (masked token), org count, mount state, last-seen rate limits.</td></tr>
             <tr><td><code>superblock doctor</code></td><td>Environment checks with a fix hint per failure.</td></tr>
-            <tr><td><code>superblock config set|get|list</code></td><td>Mountpoint, cache TTLs, <code>http_timeout_ms</code>, <code>expose_secrets</code>.</td></tr>
+            <tr><td><code>superblock config set|get|list</code></td><td>Mountpoint, cache TTLs, <code>http_timeout_ms</code>, <code>expose_secrets</code>, <code>db_format</code>, <code>db_page_size</code>.</td></tr>
             <tr><td><code>superblock mount [dir]</code></td><td>Mount in the foreground; recovers stale mounts automatically.</td></tr>
             <tr><td><code>superblock unmount [dir]</code></td><td>Unmount from another shell.</td></tr>
             <tr><td><code>superblock refresh</code></td><td>Flush the cache of a live mount; next reads re-fetch.</td></tr>
+            <tr><td><code>superblock refresh --check</code></td><td>Report cache staleness (total / past-TTL entries) without flushing.</td></tr>
+            <tr><td><code>superblock db add &lt;ref&gt;</code></td><td>Store a Postgres URL so the project grows a <code>database/</code> tree. <code>--url</code> skips the prompt.</td></tr>
+            <tr><td><code>superblock db list | remove &lt;ref&gt;</code></td><td>List projects with a database URL (password masked), or forget one.</td></tr>
           </tbody>
         </table>
       </div>
@@ -832,15 +887,21 @@ Mounted at /mnt/supabase. Ctrl-C to unmount.</pre>
       <div class="guarantee">
         <h3><svg class="icon icon-lg" aria-hidden="true"><use href="#i-lock-closed"/></svg> The write path does not exist</h3>
         <p>
-          Every request superblock can make is a <code>GET</code> — there is no code path for
-          anything else. The FUSE layer exposes no mutating callbacks, and the mount itself is
-          created with <code>-o ro</code>, so <code>touch</code>, <code>rm</code>,
-          <code>mkdir</code> and every other write fails in the kernel with
-          <code>EROFS</code> before it ever reaches userspace.
+          Every Management API request superblock makes is a <code>GET</code> — there is no code
+          path for anything else. The optional <code>database/</code> tree connects directly to
+          Postgres, where the only statements it issues are <code>SELECT</code> and
+          <code>information_schema</code> reads, all generated by superblock and never taken from
+          you. The FUSE layer exposes no mutating callbacks, and the mount itself is created with
+          <code>-o ro</code>, so <code>touch</code>, <code>rm</code>, <code>mkdir</code> and every
+          other write fails in the kernel with <code>EROFS</code> before it ever reaches userspace.
         </p>
       </div>
 
       <ul class="notes">
+        <li>Database URLs are stored per project in <code>~/.config/superblock/db.json</code>
+            (mode 0600), separate from the API token, with passwords masked in
+            <code>superblock db list</code>. Row browsing is opt-in per project via
+            <code>superblock db add</code>.</li>
         <li>The token lives in <code>~/.config/superblock/credentials</code> (mode 0600, dir 0700),
             is never logged, and shows up masked (<code>sbp_…f23a</code>) in <code>status</code>.</li>
         <li><code>api-keys/secret</code> renders as
