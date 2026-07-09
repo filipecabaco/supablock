@@ -1,23 +1,23 @@
 #!/bin/sh
-# superblock installer — https://filipecabaco.github.io/supablock
+# supablock installer — https://filipecabaco.github.io/supablock
 #
 #   curl -fsSL https://filipecabaco.github.io/supablock/install.sh | sh
 #
-# Downloads the single-file superblock binary for this platform from the
+# Downloads the single-file supablock binary for this platform from the
 # GitHub releases of filipecabaco/supablock and installs it. No Erlang or
 # Elixir needed; on Linux the FUSE userspace library is built in, on macOS
 # you additionally need macFUSE (https://macfuse.github.io) or FUSE-T.
 #
 # Environment overrides:
-#   SUPERBLOCK_VERSION      release tag to install (default: latest, falling
+#   SUPABLOCK_VERSION      release tag to install (default: latest, falling
 #                           back to the rolling "canary" prerelease)
-#   SUPERBLOCK_INSTALL_DIR  where to put the binary (default: ~/.local/bin)
+#   SUPABLOCK_INSTALL_DIR  where to put the binary (default: ~/.local/bin)
 
 set -eu
 
 REPO="filipecabaco/supablock"
-VERSION="${SUPERBLOCK_VERSION:-latest}"
-INSTALL_DIR="${SUPERBLOCK_INSTALL_DIR:-$HOME/.local/bin}"
+VERSION="${SUPABLOCK_VERSION:-latest}"
+INSTALL_DIR="${SUPABLOCK_INSTALL_DIR:-$HOME/.local/bin}"
 
 say() { printf '%s\n' "$*"; }
 fail() { printf 'error: %s\n' "$*" >&2; exit 1; }
@@ -27,7 +27,7 @@ command -v curl >/dev/null 2>&1 || fail "curl is required"
 case "$(uname -s)" in
     Linux) os="linux" ;;
     Darwin) os="macos" ;;
-    *) fail "unsupported OS: $(uname -s) (superblock runs on Linux and macOS)" ;;
+    *) fail "unsupported OS: $(uname -s) (supablock runs on Linux and macOS)" ;;
 esac
 
 case "$(uname -m)" in
@@ -43,7 +43,7 @@ if [ "$os" = "macos" ] && [ "$arch" = "x86_64" ]; then
   https://github.com/$REPO#building-from-source"
 fi
 
-asset="superblock-${os}-${arch}"
+asset="supablock-${os}-${arch}"
 
 url_for() {
     if [ "$1" = "latest" ]; then
@@ -68,9 +68,9 @@ if ! curl -fsSL "$(url_for "$VERSION")" -o "$tmp"; then
 fi
 
 mkdir -p "$INSTALL_DIR"
-install -m 755 "$tmp" "$INSTALL_DIR/superblock"
+install -m 755 "$tmp" "$INSTALL_DIR/supablock"
 
-say "installed $INSTALL_DIR/superblock"
+say "installed $INSTALL_DIR/supablock"
 
 case ":$PATH:" in
     *":$INSTALL_DIR:"*) ;;
@@ -84,6 +84,6 @@ fi
 
 say ""
 say "next steps:"
-say "  superblock doctor"
-say "  superblock login"
-say "  superblock mount"
+say "  supablock doctor"
+say "  supablock login"
+say "  supablock mount"
