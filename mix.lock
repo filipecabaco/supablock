@@ -1,8 +1,6 @@
 %{
   "bandit": {:git, "https://github.com/mtrudel/bandit.git", "40a1b8fc924694a0125bbaa7fee101fa43feeb52", [tag: "1.11.1"]},
   "burrito": {:git, "https://github.com/burrito-elixir/burrito.git", "ec6c8ccaf7a020c6711dda99d00b4cdd6922eb56", [tag: "v1.5.0"]},
-  "db_connection": {:git, "https://github.com/elixir-ecto/db_connection.git", "a5e19282c7fbda4754c40f271ada352dd9675762", [tag: "v2.7.0"]},
-  "decimal": {:git, "https://github.com/ericmj/decimal.git", "592d59ac4474933f91cdc3e8e037f137f7e008b0", [tag: "v2.3.0"]},
   "finch": {:git, "https://github.com/sneako/finch.git", "b0cde428304055acac5cf0ab1fa11becb9bac53b", [tag: "v0.20.0"]},
   "francis": {:git, "https://github.com/filipecabaco/francis.git", "62396718af13578be29869a3c4764eca57e6d8bf", [tag: "v0.3.3"]},
   "hpax": {:git, "https://github.com/elixir-mint/hpax.git", "8d9c57ab94651b3f076871eebe3b70fa208fe3e3", [tag: "v1.0.4"]},
@@ -13,7 +11,6 @@
   "nimble_pool": {:git, "https://github.com/dashbitco/nimble_pool.git", "9829f2753851694dd1b34682e0abede895966ca5", [tag: "v1.1.0"]},
   "plug": {:git, "https://github.com/elixir-plug/plug.git", "1fea083ea9a5bc1917fde321cd561debeee8f45a", [tag: "v1.20.1"]},
   "plug_crypto": {:git, "https://github.com/elixir-plug/plug_crypto.git", "70af9d89e6bcb6fa7c47d42ef608e5c76a50d7ff", [tag: "v2.1.1"]},
-  "postgrex": {:git, "https://github.com/elixir-ecto/postgrex.git", "c2af85d8eb584993114f748e8b1298a93f9d72a1", [tag: "v0.20.0"]},
   "req": {:git, "https://github.com/wojtekmach/req.git", "53c3b9912e815b22231dc2892ac2f47f0e119d9d", [tag: "v0.5.18"]},
   "telemetry": {:git, "https://github.com/beam-telemetry/telemetry.git", "8d8af76720856bcf26641ee1307658ad8f25e466", [tag: "v1.3.0"]},
   "thousand_island": {:git, "https://github.com/mtrudel/thousand_island.git", "92b177bc0a4811e556c1f0944af3db80de5acbe7", [tag: "1.4.3"]},

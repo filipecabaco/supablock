@@ -278,96 +278,11 @@ defmodule Superblock.SupabaseCliE2eTest do
     close_mount(mount_port)
   end
 
-  @tag :e2e
-  test "database/ tree serves seeded Postgres rows through the released binary", ctx do
-    db_url = System.get_env("SUPERBLOCK_E2E_DB_URL")
-
-    if db_url in [nil, ""] do
-      # No database wired in (CI sets SUPERBLOCK_E2E_DB_URL to the Postgres
-      # service). Nothing to cross-check here.
-      assert true
-    else
-      # The Management API has no row endpoint, so the supabase CLI cannot see
-      # table data — the database itself is the ground truth. Seed a known
-      # dataset, then assert the mounted tree reproduces it exactly.
-      ref = "projaone1234567890ab"
-      seed_db!(db_url)
-
-      {_out, 0} = superblock(ctx, ["login", "--token", ctx.token])
-
-      {add_out, 0} = superblock(ctx, ["db", "add", ref, "--url", db_url])
-      assert add_out =~ "Connected"
-
-      mount_port = start_mount(ctx)
-      assert wait_until(fn -> mounted?(ctx.mountpoint) end, 15_000), "mount did not appear"
-
-      db =
-        Path.join([ctx.mountpoint, "organizations", "org-alpha", "projects", ref, "database"])
-
-      # schema -> table folders exist
-      assert "e2e" in ls!(db)
-      assert "items" in ls!(Path.join(db, "e2e"))
-
-      items = Path.join([db, "e2e", "items"])
-
-      # 1200 rows at the default page size of 500 -> three page files
-      assert ls!(items) == ["rows-000000.csv", "rows-000500.csv", "rows-001000.csv"]
-
-      # every CSV page: exact stat size, correct header, and rows shaped as we
-      # seeded them (qty = id*10, label = "item-<id>")
-      page_ids =
-        for file <- ls!(items), reduce: MapSet.new() do
-          acc ->
-            path = Path.join(items, file)
-            body = File.read!(path)
-            assert File.stat!(path).size == byte_size(body)
-
-            [header | rows] = String.split(body, "\n", trim: true)
-            assert header == "id,label,qty"
-
-            Enum.reduce(rows, acc, fn row, ids ->
-              [id, label, qty] = String.split(row, ",")
-              assert label == "item-#{id}"
-              assert String.to_integer(qty) == String.to_integer(id) * 10
-              MapSet.put(ids, String.to_integer(id))
-            end)
-        end
-
-      # the pages together reproduce exactly the 1200 seeded rows
-      assert MapSet.equal?(page_ids, MapSet.new(1..1200))
-
-      # a JSON page is valid and carries typed values (id/qty numbers)
-      json_rows = Path.join(items, "rows-000000.json") |> File.read!() |> Jason.decode!()
-      assert length(json_rows) == 500
-
-      assert Enum.all?(json_rows, fn row ->
-               is_integer(row["id"]) and is_integer(row["qty"]) and
-                 row["qty"] == row["id"] * 10 and row["label"] == "item-#{row["id"]}"
-             end)
-
-      {_out, 0} = superblock(ctx, ["unmount"])
-      assert wait_until(fn -> not mounted?(ctx.mountpoint) end, 10_000), "unmount left the mount"
-      close_mount(mount_port)
-    end
-  end
-
-  # Seed a deterministic dataset via psql: schema `e2e`, table `items` with
-  # 1200 rows. Dropped-and-recreated so reruns are idempotent.
-  defp seed_db!(db_url) do
-    psql = System.find_executable("psql") || raise "database e2e needs psql on PATH"
-
-    sql = """
-    DROP SCHEMA IF EXISTS e2e CASCADE;
-    CREATE SCHEMA e2e;
-    CREATE TABLE e2e.items (id int primary key, label text, qty int);
-    INSERT INTO e2e.items SELECT g, 'item-' || g, g * 10 FROM generate_series(1, 1200) g;
-    """
-
-    {out, status} =
-      System.cmd(psql, [db_url, "-v", "ON_ERROR_STOP=1", "-c", sql], stderr_to_stdout: true)
-
-    assert status == 0, "seeding the e2e database failed:\n#{out}"
-  end
+  # The `database/` tree now reads through a project's Data API (PostgREST)
+  # rather than a direct Postgres connection, so it can no longer be exercised
+  # hermetically against a local Postgres from the released binary — it needs a
+  # live project's Data API. The tree is covered end-to-end against a stubbed
+  # Data API in the router, database and FUSE suites instead.
 
   ## superblock release driver
 

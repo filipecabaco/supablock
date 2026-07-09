@@ -10,8 +10,6 @@ defmodule Superblock.CLI do
       superblock mount [mountpoint] [--verbose]
       superblock unmount [mountpoint]
       superblock refresh [--check]
-      superblock db add <ref> [--url postgres://...]
-      superblock db list | db remove <ref>
       superblock help
 
   Exit codes: 0 ok · 1 usage error · 2 not authenticated · 3 API/network
@@ -22,14 +20,10 @@ defmodule Superblock.CLI do
     Auth,
     AuthCallback,
     BrowserLogin,
-    Client,
     Config,
     Control,
     Credentials,
-    Database,
-    DbCredentials,
     Doctor,
-    Endpoints,
     Fs,
     OAuth,
     Paths,
@@ -59,9 +53,6 @@ defmodule Superblock.CLI do
     superblock unmount [mountpoint]      Unmount a running superblock
     superblock refresh                   Flush the cache of a mounted superblock
     superblock refresh --check           Report cache staleness without flushing
-    superblock db add <ref> [--url ...]  Store a Postgres URL for a project's database/ tree
-    superblock db list                   List projects with a configured database URL
-    superblock db remove <ref>           Forget a project's database URL
     superblock service install           Auto-start the mount at login (systemd/launchd)
     superblock service uninstall         Remove the auto-start service
     superblock service status            Show the auto-start service state
@@ -117,7 +108,6 @@ defmodule Superblock.CLI do
       ["mount" | rest] -> mount(rest)
       ["unmount" | rest] -> unmount(rest)
       ["refresh" | rest] -> refresh(rest)
-      ["db" | rest] -> db(rest)
       ["service" | rest] -> service(rest)
       [unknown | _rest] -> usage_error("Unknown command: #{unknown}")
     end
@@ -754,144 +744,6 @@ defmodule Superblock.CLI do
       {n, _rest} -> n
       :error -> 0
     end
-  end
-
-  ## db (per-project Postgres connection for the database/ tree)
-
-  defp db(["add", ref | rest]) do
-    {opts, _rest, _invalid} = OptionParser.parse(rest, strict: [url: :string])
-
-    url =
-      case opts[:url] do
-        nil -> build_or_prompt_db_url(ref)
-        url -> url
-      end
-
-    case url do
-      nil ->
-        usage_error("No URL given.")
-
-      url ->
-        url = String.trim(url)
-        IO.puts("Checking connection…")
-
-        case Database.ping(url) do
-          :ok ->
-            :ok = DbCredentials.put(ref, url)
-            safe_forget(ref)
-            IO.puts("✓ Connected. Stored database URL for #{ref}.")
-            IO.puts("  Browse it under the project's database/ folder once mounted.")
-            0
-
-          {:error, message} ->
-            IO.puts(:stderr, "Could not connect: #{message}")
-            3
-        end
-    end
-  end
-
-  defp db(["list"]) do
-    case DbCredentials.refs() do
-      [] ->
-        IO.puts("No database URLs configured. Run: superblock db add <ref> --url postgres://…")
-        0
-
-      refs ->
-        Enum.each(refs, fn ref ->
-          case DbCredentials.fetch(ref) do
-            {:ok, url} -> IO.puts("#{ref}  #{DbCredentials.masked(url)}")
-            :missing -> IO.puts("#{ref}  (unset)")
-          end
-        end)
-
-        0
-    end
-  end
-
-  defp db(["remove", ref]), do: db_remove(ref)
-  defp db(["rm", ref]), do: db_remove(ref)
-
-  defp db(_other) do
-    usage_error("Usage: superblock db add <ref> [--url ...] | db list | db remove <ref>")
-  end
-
-  defp db_remove(ref) do
-    :ok = DbCredentials.delete(ref)
-    safe_forget(ref)
-    IO.puts("Removed database URL for #{ref}.")
-    0
-  end
-
-  # The Management API can tell us everything about the connection except
-  # the password (which it never returns, by design): build the URL from the
-  # project's database host and prompt only for the secret. Falls back to a
-  # full-URL prompt when the project can't be looked up.
-  defp build_or_prompt_db_url(ref) do
-    case Client.get(Endpoints.path(:project, %{ref: ref})) do
-      {:ok, %{"database" => %{"host" => host}} = project}
-      when is_binary(host) and host != "" ->
-        IO.puts("Project #{project["name"] || ref} — database host #{host}.")
-
-        case hidden_input("Database password (postgres user): ") do
-          "" -> nil
-          password -> "postgres://postgres:#{URI.encode_www_form(password)}@#{host}:5432/postgres"
-        end
-
-      _unavailable ->
-        prompt_db_url()
-    end
-  end
-
-  defp prompt_db_url do
-    case hidden_input("Postgres URL (postgres://user:pass@host:5432/postgres): ") do
-      "" -> nil
-      url -> url
-    end
-  end
-
-  # No-echo prompt: the URL embeds the database password, so it must not be
-  # echoed to the terminal (or scrollback).
-  defp hidden_input(prompt) do
-    IO.write(prompt)
-
-    input =
-      try do
-        case :io.get_password() do
-          data when is_list(data) or is_binary(data) -> to_string(data)
-          _other -> stty_input()
-        end
-      rescue
-        _any -> stty_input()
-      catch
-        _kind, _reason -> stty_input()
-      end
-
-    IO.write("\n")
-    String.trim(input)
-  end
-
-  defp stty_input do
-    System.cmd("stty", ["-echo"], stderr_to_stdout: true)
-
-    try do
-      case IO.gets("") do
-        :eof -> ""
-        {:error, _reason} -> ""
-        line -> to_string(line)
-      end
-    after
-      System.cmd("stty", ["echo"], stderr_to_stdout: true)
-    end
-  end
-
-  # Drop any live pool for this ref so the next read reconnects with the new
-  # URL. Harmless if the connection registry is not running (CLI without mount).
-  defp safe_forget(ref) do
-    Superblock.Database.Connections.forget(ref)
-  rescue
-    _any -> :ok
-  catch
-    _kind, _reason -> :ok
   end
 
   defp describe_error(:empty_code), do: "no code entered — copy it from the browser page"

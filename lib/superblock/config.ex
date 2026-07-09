@@ -13,7 +13,7 @@ defmodule Superblock.Config do
     "http_timeout_ms" => 8_000,
     "db_page_size" => 500,
     "db_format" => "csv",
-    "db_timeout_ms" => 15_000,
+    "db_key" => "secret",
     "ttl" => %{
       "orgs" => 60,
       "project" => 30,
@@ -29,7 +29,7 @@ defmodule Superblock.Config do
     "http_timeout_ms",
     "db_page_size",
     "db_format",
-    "db_timeout_ms",
+    "db_key",
     "oauth.client_id",
     "oauth.client_secret",
     "ttl.orgs",
@@ -110,6 +110,10 @@ defmodule Superblock.Config do
   defp coerce("db_format", value) when value in ~w(csv json), do: {:ok, value}
 
   defp coerce("db_format", _), do: {:error, "db_format must be csv or json"}
+
+  defp coerce("db_key", value) when value in ~w(secret publishable), do: {:ok, value}
+
+  defp coerce("db_key", _), do: {:error, "db_key must be secret or publishable"}
 
   defp coerce(key, value) do
     case Integer.parse(value) do

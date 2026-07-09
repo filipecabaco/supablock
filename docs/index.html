@@ -653,8 +653,8 @@
         <div class="fact">
           <span class="k"><svg class="icon" aria-hidden="true"><use href="#i-lock-closed"/></svg>mount -o ro</span>
           <p><strong>Read-only by construction.</strong> The Management API sees only GET; the
-             <code>database/</code> tree issues only <code>SELECT</code>; the kernel rejects every
-             write with <code>EROFS</code>.</p>
+             <code>database/</code> tree reads through the Data API with GET only; the kernel
+             rejects every write with <code>EROFS</code>.</p>
         </div>
         <div class="fact">
           <span class="k"><svg class="icon" aria-hidden="true"><use href="#i-arrow-path"/></svg>ttl + single-flight</span>
@@ -971,25 +971,16 @@ Mounted at ~/Supabase. Ctrl-C to unmount.</pre>
       <p class="sec-label"><svg class="icon" aria-hidden="true"><use href="#i-folder"/></svg>Table data</p>
       <h2>Rows as files, too</h2>
       <p class="body">
-        The Management API has no row endpoint, so table browsing connects straight to a
-        project's Postgres over a read-only connection. Point superblock at a database once and
-        the project grows a <span class="mono">database/</span> folder: one directory per schema,
-        one per table, and rows paged into <span class="mono">.csv</span> (default) or
-        <span class="mono">.json</span> files.
+        The Management API has no row endpoint, so table browsing reads through each project's
+        Data API (PostgREST) with GET requests only. There's nothing to set up and no database
+        password: every project already has a <span class="mono">database/</span> folder — one
+        directory per exposed schema, one per table, rows paged into
+        <span class="mono">.csv</span> (default) or <span class="mono">.json</span> files —
+        populated on first read with a key superblock fetches for you.
       </p>
 
       <div class="oneliner">
-        <p class="what"><strong>Connect a project's database (password is not echoed).</strong></p>
-        <div class="code">
-          <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
-          <pre><span class="p">$</span> superblock db add &lt;ref&gt;
-Project My App — database host db.&lt;ref&gt;.supabase.co.
-Database password (postgres user):</pre>
-        </div>
-      </div>
-
-      <div class="oneliner">
-        <p class="what"><strong>Browse schemas → tables → row pages.</strong></p>
+        <p class="what"><strong>Browse schemas → tables → row pages. No setup.</strong></p>
         <div class="code">
           <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
           <pre><span class="p">$</span> ls  /mnt/supabase/organizations/*/projects/&lt;ref&gt;/database/public/users
@@ -999,20 +990,22 @@ rows-000000.csv  rows-000500.csv  rows-001000.csv
       </div>
 
       <div class="oneliner">
-        <p class="what"><strong>Tune the format and page size.</strong></p>
+        <p class="what"><strong>Format, page size, and which key to read with.</strong></p>
         <div class="code">
           <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
           <pre><span class="p">$</span> superblock config set db_format json     <span class="c"># csv (default) | json</span>
-<span class="p">$</span> superblock config set db_page_size 1000  <span class="c"># rows per file (default 500)</span></pre>
+<span class="p">$</span> superblock config set db_page_size 1000  <span class="c"># rows per file (default 500)</span>
+<span class="p">$</span> superblock config set db_key publishable <span class="c"># secret (default) | publishable</span></pre>
         </div>
       </div>
 
       <p class="body" style="font-size: 13.5px;">
-        Pages are ordered by <code>ctid</code> so paging is stable; CSV is RFC-4180-quoted with
-        <code>NULL</code> as an empty field; JSON is an array of row objects in column order.
-        Only <code>SELECT</code> is ever issued, connections are reused, and database URLs live
-        per-project in <code>~/.config/superblock/db.json</code> (mode 0600), separate from your
-        API token.
+        By default rows are read with the project's <code>service_role</code> key, which bypasses
+        RLS so you see every row; <code>db_key publishable</code> switches to the <code>anon</code>
+        key and shows only what RLS allows. Pages are ordered by primary key so paging is stable;
+        CSV is RFC-4180-quoted with <code>NULL</code> as an empty field; JSON is an array of row
+        objects in column order. Only the project's exposed schemas appear, and every request is a
+        GET — no direct database connection, no extra credential.
       </p>
     </div>
   </section>
@@ -1032,13 +1025,11 @@ rows-000000.csv  rows-000500.csv  rows-001000.csv
             <tr><td><code>superblock logout</code></td><td>Delete the credential and revoke the OAuth grant.</td></tr>
             <tr><td><code>superblock status</code></td><td>Auth state (masked token), org count, mount state, last-seen rate limits.</td></tr>
             <tr><td><code>superblock doctor</code></td><td>Environment checks with a fix hint per failure.</td></tr>
-            <tr><td><code>superblock config set|get|list</code></td><td>Mountpoint, cache TTLs, <code>http_timeout_ms</code>, <code>expose_secrets</code>, <code>db_format</code>, <code>db_page_size</code>.</td></tr>
+            <tr><td><code>superblock config set|get|list</code></td><td>Mountpoint, cache TTLs, <code>http_timeout_ms</code>, <code>expose_secrets</code>, <code>db_format</code>, <code>db_page_size</code>, <code>db_key</code>.</td></tr>
             <tr><td><code>superblock mount [dir]</code></td><td>Mount in the foreground (default <code>~/Supabase</code>); recovers stale mounts automatically.</td></tr>
             <tr><td><code>superblock unmount [dir]</code></td><td>Unmount from another shell.</td></tr>
             <tr><td><code>superblock refresh</code></td><td>Flush the cache of a live mount; next reads re-fetch.</td></tr>
             <tr><td><code>superblock refresh --check</code></td><td>Report cache staleness (total / past-TTL entries) without flushing.</td></tr>
-            <tr><td><code>superblock db add &lt;ref&gt;</code></td><td>Connect a project's database: the URL is built from project info, you type only the password. <code>--url</code> overrides.</td></tr>
-            <tr><td><code>superblock db list | remove &lt;ref&gt;</code></td><td>List projects with a database URL (password masked), or forget one.</td></tr>
             <tr><td><code>superblock service install|uninstall|status</code></td><td>Auto-start the mount at login — systemd user unit (Linux) or launchd agent (macOS).</td></tr>
           </tbody>
         </table>
@@ -1060,8 +1051,8 @@ rows-000000.csv  rows-000500.csv  rows-001000.csv
         <h3><svg class="icon icon-lg" aria-hidden="true"><use href="#i-lock-closed"/></svg> The write path does not exist</h3>
         <p>
           Every Management API request is a <code>GET</code> — there is no code path for anything
-          else. The optional <code>database/</code> tree issues only <code>SELECT</code> and
-          <code>information_schema</code> reads, all generated by superblock. The FUSE layer exposes
+          else. The <code>database/</code> tree reads through the project's Data API (PostgREST)
+          with GET requests only, all generated by superblock. The FUSE layer exposes
           no mutating callbacks, and the mount is created with <code>-o ro</code>, so
           <code>touch</code>, <code>rm</code>, <code>mkdir</code> and every other write fails in the
           kernel with <code>EROFS</code> before it reaches userspace.
@@ -1069,10 +1060,10 @@ rows-000000.csv  rows-000500.csv  rows-001000.csv
       </div>
 
       <ul class="notes">
-        <li>Database URLs are stored per project in <code>~/.config/superblock/db.json</code>
-            (mode 0600), separate from the API token, with passwords masked in
-            <code>superblock db list</code>. Row browsing is opt-in per project via
-            <code>superblock db add</code>.</li>
+        <li>Row browsing needs no database password or extra credential: the <code>database/</code>
+            tree reuses a key superblock fetches from the Management API — <code>service_role</code>
+            by default (bypasses RLS), or <code>anon</code> with <code>db_key publishable</code>. The
+            key is used only for GETs to the Data API and is never written into the tree.</li>
         <li>The token lives in <code>~/.config/superblock/credentials</code> (mode 0600, dir 0700),
             is never logged, and shows up masked (<code>sbp_…f23a</code>) in <code>status</code>.</li>
         <li><code>api-keys/secret</code> renders as

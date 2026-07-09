@@ -11,7 +11,6 @@ defmodule Superblock.Application do
   def start(_type, _args) do
     children = [
       Superblock.Cache,
-      Superblock.Database.Connections,
       # Serializes credential reads + OAuth refresh (single-flight, and
       # single-use-safe for Supabase's one-shot refresh tokens).
       Superblock.TokenStore

@@ -29,6 +29,7 @@ defmodule Superblock.Endpoints do
           | :sso_providers
           | :third_party_auth
           | :api_keys
+          | :postgrest_config
           | :functions
           | :function
           | :function_body
@@ -58,6 +59,7 @@ defmodule Superblock.Endpoints do
   def path(:third_party_auth, %{ref: ref}), do: "/v1/projects/#{ref}/config/auth/third-party-auth"
   def path(:api_keys, %{ref: ref, reveal: true}), do: "/v1/projects/#{ref}/api-keys?reveal=true"
   def path(:api_keys, %{ref: ref}), do: "/v1/projects/#{ref}/api-keys"
+  def path(:postgrest_config, %{ref: ref}), do: "/v1/projects/#{ref}/postgrest"
   def path(:functions, %{ref: ref}), do: "/v1/projects/#{ref}/functions"
   def path(:function, %{ref: ref, fn_slug: fn_slug}), do: "/v1/projects/#{ref}/functions/#{fn_slug}"
 
@@ -79,6 +81,7 @@ defmodule Superblock.Endpoints do
       do: "project"
 
   def ttl_class(key) when key in [:functions, :function, :function_body, :branches], do: "project"
+  def ttl_class(:postgrest_config), do: "project"
   def ttl_class(:health), do: "health"
   def ttl_class(key) when key in [:api_keys, :regions], do: "static"
 end

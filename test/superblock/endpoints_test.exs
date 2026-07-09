@@ -20,6 +20,10 @@ defmodule Superblock.EndpointsTest do
              "/v1/projects/abc/api-keys?reveal=true"
   end
 
+  test "postgrest config drives the exposed-schema list" do
+    assert Endpoints.path(:postgrest_config, %{ref: "abc"}) == "/v1/projects/abc/postgrest"
+  end
+
   test "realtime, storage, bucket and auth-provider endpoints" do
     assert Endpoints.path(:realtime_config, %{ref: "abc"}) == "/v1/projects/abc/config/realtime"
     assert Endpoints.path(:storage_config, %{ref: "abc"}) == "/v1/projects/abc/config/storage"
@@ -44,7 +48,8 @@ defmodule Superblock.EndpointsTest do
       :buckets,
       :sso_providers,
       :third_party_auth,
-      :function_body
+      :function_body,
+      :postgrest_config
     ]
 
     for key <- keys do

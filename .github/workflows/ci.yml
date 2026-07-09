@@ -47,36 +47,19 @@ jobs:
         run: mix test
 
   # End-to-end: released binary + real FUSE mount, cross-checked against the
-  # supabase CLI and a real Postgres. GitHub-hosted runners expose /dev/fuse
-  # and allow non-root fusermount3 mounts, so no privileged container is
-  # needed.
+  # supabase CLI. GitHub-hosted runners expose /dev/fuse and allow non-root
+  # fusermount3 mounts, so no privileged container is needed. The database/
+  # tree reads through a project's Data API and is covered hermetically against
+  # a stubbed Data API in the FUSE suite — no Postgres service is needed.
   e2e:
     runs-on: ubuntu-24.04
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: postgres
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-    env:
-      # The database/ tree connects straight to the Postgres service; both the
-      # FUSE-level and released-binary e2e tests pick these up.
-      SUPERBLOCK_TEST_DB_URL: postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable
-      SUPERBLOCK_E2E_DB_URL: postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable
     steps:
       - uses: actions/checkout@v4
 
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libfuse3-dev fuse3 pkg-config postgresql-client \
+          sudo apt-get install -y libfuse3-dev fuse3 pkg-config \
             build-essential autoconf m4 libssl-dev libncurses-dev
 
       - uses: jdx/mise-action@v2
@@ -107,13 +90,11 @@ jobs:
           test -c /dev/fuse && echo "/dev/fuse present"
           fusermount3 --version || fusermount --version
           supabase --version
-          psql "$SUPERBLOCK_E2E_DB_URL" -c 'select 1' >/dev/null && echo "postgres reachable"
           # The release must ship the compiled FUSE port, or every mount fails.
           port=$(echo _build/prod/rel/superblock/lib/efuse-*/priv/efuse)
           test -x "$port" && echo "efuse port present: $port"
 
-      # FUSE mounts (database/ row tree over the real Postgres) + the released
-      # binary e2e (Management API tree vs the supabase CLI; database/ rows vs
-      # the seeded database).
+      # FUSE mounts (database/ row tree over a stubbed Data API) + the released
+      # binary e2e (Management API tree cross-checked against the supabase CLI).
       - name: FUSE + e2e tests
         run: mix test --include fuse --include e2e
