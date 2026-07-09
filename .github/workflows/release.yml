@@ -43,17 +43,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install FUSE build dependencies
-        run: sudo apt-get update && sudo apt-get install -y libfuse3-dev fuse3 pkg-config xz-utils
+      # libfuse for the port; the rest are kerl's requirements for the
+      # Erlang source build mise performs (cached across runs).
+      - name: Install FUSE and Erlang build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libfuse3-dev fuse3 pkg-config xz-utils \
+            build-essential autoconf m4 libssl-dev libncurses-dev
 
-      - uses: erlef/setup-beam@v1
+      # Installs the whole toolchain (Erlang, Elixir, Zig) from mise.toml.
+      - uses: jdx/mise-action@v2
         with:
-          otp-version: "27.3"
-          elixir-version: "1.18.4"
-
-      - uses: mlugg/setup-zig@v2
-        with:
-          version: "0.15.2"
+          cache: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
 
       - name: Build single-file binary
         run: |
@@ -85,25 +88,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Installs headers + libfuse dylib (2.9 API); the kext itself is not
-      # loadable in CI, but linking does not need it.
+      # macFUSE installs headers + the libfuse dylib (2.9 API); the kext
+      # itself is not loadable in CI, but linking does not need it. The rest
+      # are kerl's requirements for the Erlang source build mise performs
+      # (cached across runs).
       - name: Install macFUSE and build dependencies
         run: |
           brew install --cask macfuse
-          brew install pkg-config xz
+          brew install pkg-config xz autoconf openssl@3
 
-      # Official precompiled installer (elixir-lang.org); versions pinned to
-      # match .tool-versions.
-      - name: Install Erlang/Elixir (precompiled)
-        run: |
-          curl -fsSO https://elixir-lang.org/install.sh
-          sh install.sh elixir@1.18.4 otp@27.3
-          echo "$HOME/.elixir-install/installs/otp/27.3/bin" >> "$GITHUB_PATH"
-          echo "$HOME/.elixir-install/installs/elixir/1.18.4-otp-27/bin" >> "$GITHUB_PATH"
-
-      - uses: mlugg/setup-zig@v2
+      # Installs the whole toolchain (Erlang, Elixir, Zig) from mise.toml.
+      - uses: jdx/mise-action@v2
         with:
-          version: "0.15.2"
+          cache: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
 
       - name: Build single-file binary
         run: |

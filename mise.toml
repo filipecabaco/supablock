@@ -1,0 +1,14 @@
+# Toolchain pins — install everything with: mise install
+#
+# Elixir 1.18.x / OTP 27 match Burrito's own CI; zig 0.15.2 is the version
+# Burrito 1.5 requires for its wrapper.
+
+[tools]
+erlang = "27.3"
+elixir = "1.18.4-otp-27"
+zig = "0.15.2"
+
+[env]
+# Erlang is compiled from source (kerl); skip the GUI/observer extras that
+# need wxWidgets/Java and just slow the build down.
+KERL_CONFIGURE_OPTIONS = "--without-wx --without-javac --without-odbc --without-observer --without-debugger --without-et"

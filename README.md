@@ -53,8 +53,10 @@ the rolling `canary` build); `SUPERBLOCK_INSTALL_DIR` overrides the default
 
 Prerequisites:
 
-* Erlang/OTP 25+ and Elixir 1.17+ — Elixir **1.18.x** recommended, it is the
-  version Burrito's own CI tests against (see `.tool-versions`)
+* The toolchain is managed with [mise](https://mise.jdx.dev): `mise install`
+  gives you the pinned Erlang 27.3, Elixir 1.18.4 and Zig 0.15.2 from
+  `mise.toml`. (Without mise: Erlang/OTP 25+ and Elixir 1.17+ — Elixir
+  **1.18.x** recommended, it is the version Burrito's own CI tests against.)
 * Linux: `libfuse3-dev`, `fuse3` and `pkg-config` (Debian/Ubuntu:
   `apt install libfuse3-dev fuse3 pkg-config`); macOS: [macFUSE](https://macfuse.github.io)
 * a C compiler (the FUSE port is a small C program)
@@ -77,7 +79,7 @@ executable with [Burrito](https://github.com/burrito-elixir/burrito) — no
 Erlang/Elixir needed on the target machine (FUSE still is):
 
 ```bash
-# extra build prerequisites: zig 0.15.x and xz on PATH
+# extra build prerequisites: zig 0.15.x (mise install provides it) and xz
 MIX_ENV=prod mix release superblock_burrito
 ls burrito_out/    # -> superblock_burrito_native (~5 MB)
 ```
