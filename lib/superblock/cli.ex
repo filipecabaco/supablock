@@ -2,7 +2,7 @@ defmodule Superblock.CLI do
   @moduledoc """
   Command-line entry point.
 
-      superblock login [--token sbp_...]
+      superblock login [--token sbp_...] [--no-browser]
       superblock logout
       superblock status | whoami
       superblock doctor
@@ -20,6 +20,8 @@ defmodule Superblock.CLI do
 
   alias Superblock.{
     Auth,
+    AuthCallback,
+    BrowserLogin,
     Config,
     Control,
     Credentials,
@@ -27,6 +29,7 @@ defmodule Superblock.CLI do
     DbCredentials,
     Doctor,
     Fs,
+    OAuth,
     Paths,
     Service,
     Signals
@@ -36,8 +39,11 @@ defmodule Superblock.CLI do
   superblock — browse the Supabase Management API as a filesystem
 
   Usage:
-    superblock login [--token sbp_...]   Authenticate with a personal access token
-    superblock logout                    Delete the stored token
+    superblock login                     Browser login: OAuth2 + PKCE when an OAuth app
+                                         is configured, dashboard session flow otherwise
+    superblock login --token sbp_...     Authenticate with a personal access token
+    superblock login --no-browser        Print the login URL instead of opening it
+    superblock logout                    Delete (and revoke) the stored credential
     superblock status                    Auth, mount and rate-limit overview
     superblock whoami                    Alias of status
     superblock doctor                    Check the environment for FUSE readiness
@@ -125,87 +131,195 @@ defmodule Superblock.CLI do
   ## login / logout
 
   defp login(args) do
-    {opts, _rest, _invalid} = OptionParser.parse(args, strict: [token: :string])
+    {opts, _rest, _invalid} =
+      OptionParser.parse(args, strict: [token: :string, no_browser: :boolean])
 
-    token =
-      case opts[:token] do
-        nil -> prompt_token()
-        token -> token
-      end
+    no_browser? = opts[:no_browser] || false
 
-    case token do
-      nil ->
-        usage_error("No token given.")
+    cond do
+      is_binary(opts[:token]) ->
+        validate_and_store(String.trim(opts[:token]))
 
-      token ->
-        token = String.trim(token)
+      OAuth.configured?() ->
+        oauth_login(no_browser?)
 
-        case Auth.validate(token) do
-          {:ok, org_count} ->
-            :ok = Credentials.store(token)
-            IO.puts("✓ Token valid — authenticated, #{org_count} organizations found.")
-            IO.puts("  Stored in #{Paths.credentials_file()} (mode 0600).")
-            0
+      true ->
+        IO.puts("No OAuth app configured (oauth.client_id) — using the dashboard session flow.")
+        browser_login(no_browser?)
+    end
+  end
 
-          {:error, :unauthorized} ->
-            IO.puts(
-              :stderr,
-              "Token rejected — check it at app.supabase.com → Account → Access Tokens"
-            )
+  # The documented OAuth2 flow (PKCE S256 + state, loopback callback):
+  # tokens come back short-lived, scoped to what the app registration
+  # allows, and refresh automatically. See Superblock.OAuth.
+  defp oauth_login(no_browser?) do
+    request = OAuth.new_request()
 
-            2
+    case AuthCallback.start_listener(self()) do
+      {:ok, listener} ->
+        try do
+          IO.puts("Open this link in your browser to authorize superblock:\n")
+          IO.puts("  #{request.url}\n")
+
+          unless no_browser? do
+            BrowserLogin.open_browser(request.url)
+          end
+
+          IO.puts("Waiting for the callback on #{request.redirect_uri} …")
+          await_oauth_callback(request)
+        after
+          AuthCallback.stop_listener(listener)
+        end
+
+      {:error, :port_in_use} ->
+        IO.puts(
+          :stderr,
+          "Port #{OAuth.callback_port()} is in use — close whatever holds it, " <>
+            "or use: superblock login --token sbp_..."
+        )
+
+        4
+
+      {:error, reason} ->
+        IO.puts(:stderr, "Could not start the callback server: #{inspect(reason)}")
+        4
+    end
+  end
+
+  defp await_oauth_callback(request) do
+    receive do
+      {:oauth_callback, %{"error" => error} = params} ->
+        description = params["error_description"] || error
+        IO.puts(:stderr, "Authorization was not granted: #{description}")
+        2
+
+      {:oauth_callback, %{"code" => code, "state" => state}} when is_binary(code) ->
+        if Plug.Crypto.secure_compare(state || "", request.state) do
+          finish_oauth_login(request, code)
+        else
+          IO.puts(:stderr, "State mismatch on the OAuth callback — try again.")
+          2
+        end
+
+      {:oauth_callback, _params} ->
+        IO.puts(:stderr, "Malformed OAuth callback — try again.")
+        2
+    after
+      180_000 ->
+        IO.puts(:stderr, "No authorization within 3 minutes. Run: superblock login")
+        2
+    end
+  end
+
+  defp finish_oauth_login(request, code) do
+    with {:ok, tokens} <- OAuth.exchange_code(request, code),
+         {:ok, org_count} <- Auth.validate(tokens.access_token),
+         :ok <-
+           Credentials.store_oauth(tokens.access_token, tokens.refresh_token, tokens.expires_at) do
+      IO.puts("✓ Logged in via OAuth — authenticated, #{org_count} organizations found.")
+      IO.puts("  Stored in #{Paths.credentials_file()} (mode 0600).")
+      IO.puts("  Tokens are short-lived and refresh automatically.")
+      0
+    else
+      {:error, :unauthorized} ->
+        IO.puts(
+          :stderr,
+          "Token exchange rejected — check oauth.client_id / oauth.client_secret."
+        )
+
+        2
+
+      {:error, reason} ->
+        IO.puts(:stderr, "OAuth login failed: #{describe_error(reason)}")
+        3
+    end
+  end
+
+  # Replicates the official supabase CLI: dashboard session + verification
+  # code + end-to-end-encrypted token delivery (see Superblock.BrowserLogin).
+  defp browser_login(no_browser?) do
+    session = BrowserLogin.new_session()
+
+    IO.puts("Here is your login link, open it in the browser:\n")
+    IO.puts("  #{session.url}\n")
+
+    unless no_browser? do
+      BrowserLogin.open_browser(session.url)
+    end
+
+    prompt_code_and_fetch(session, 3)
+  end
+
+  defp prompt_code_and_fetch(_session, 0) do
+    IO.puts(:stderr, "Too many failed attempts. Run: superblock login")
+    2
+  end
+
+  defp prompt_code_and_fetch(session, attempts_left) do
+    case IO.gets("Enter your verification code: ") do
+      :eof ->
+        IO.puts(:stderr, "No verification code given.")
+        2
+
+      {:error, _reason} ->
+        IO.puts(:stderr, "Could not read the verification code.")
+        2
+
+      line ->
+        code = String.trim(to_string(line))
+
+        case code_to_token(session, code) do
+          {:ok, token} ->
+            validate_and_store(token)
 
           {:error, reason} ->
-            IO.puts(:stderr, "Could not reach the Supabase API: #{describe_error(reason)}")
-            IO.puts(:stderr, "Check your network and try again.")
-            3
+            IO.puts(:stderr, "Verification failed: #{describe_error(reason)}")
+            prompt_code_and_fetch(session, attempts_left - 1)
         end
     end
   end
 
-  defp prompt_token do
-    prompt = "Paste your Supabase personal access token (sbp_...): "
+  defp code_to_token(_session, ""), do: {:error, :empty_code}
+  defp code_to_token(session, code), do: BrowserLogin.fetch_token(session, code)
 
-    case hidden_input(prompt) do
-      "" -> nil
-      token -> token
-    end
-  end
+  defp validate_and_store(token) do
+    case Auth.validate(token) do
+      {:ok, org_count} ->
+        :ok = Credentials.store(token)
+        IO.puts("✓ Token valid — authenticated, #{org_count} organizations found.")
+        IO.puts("  Stored in #{Paths.credentials_file()} (mode 0600).")
+        0
 
-  defp hidden_input(prompt) do
-    IO.write(prompt)
+      {:error, :unauthorized} ->
+        IO.puts(
+          :stderr,
+          "Token rejected — check it at supabase.com/dashboard/account/tokens"
+        )
 
-    input =
-      try do
-        case :io.get_password() do
-          data when is_list(data) or is_binary(data) -> to_string(data)
-          _other -> stty_input()
-        end
-      rescue
-        _any -> stty_input()
-      catch
-        _kind, _reason -> stty_input()
-      end
+        2
 
-    IO.write("\n")
-    String.trim(input)
-  end
-
-  defp stty_input do
-    System.cmd("stty", ["-echo"], stderr_to_stdout: true)
-
-    try do
-      case IO.gets("") do
-        :eof -> ""
-        {:error, _reason} -> ""
-        line -> to_string(line)
-      end
-    after
-      System.cmd("stty", ["echo"], stderr_to_stdout: true)
+      {:error, reason} ->
+        IO.puts(:stderr, "Could not reach the Supabase API: #{describe_error(reason)}")
+        IO.puts(:stderr, "Check your network and try again.")
+        3
     end
   end
 
   defp logout do
+    # For an OAuth credential, also revoke the grant server-side (best
+    # effort — the local delete is what logs this machine out either way).
+    case Credentials.load_credential() do
+      {:ok, %Credentials.Credential{type: :oauth, refresh_token: refresh}}
+      when is_binary(refresh) ->
+        case OAuth.revoke(refresh) do
+          :ok -> IO.puts("Revoked the OAuth authorization.")
+          {:error, _reason} -> IO.puts("Could not revoke server-side; deleted locally.")
+        end
+
+      _other ->
+        :ok
+    end
+
     Credentials.delete()
     IO.puts("Logged out.")
     0
@@ -614,6 +728,41 @@ defmodule Superblock.CLI do
     end
   end
 
+  # No-echo prompt: the URL embeds the database password, so it must not be
+  # echoed to the terminal (or scrollback).
+  defp hidden_input(prompt) do
+    IO.write(prompt)
+
+    input =
+      try do
+        case :io.get_password() do
+          data when is_list(data) or is_binary(data) -> to_string(data)
+          _other -> stty_input()
+        end
+      rescue
+        _any -> stty_input()
+      catch
+        _kind, _reason -> stty_input()
+      end
+
+    IO.write("\n")
+    String.trim(input)
+  end
+
+  defp stty_input do
+    System.cmd("stty", ["-echo"], stderr_to_stdout: true)
+
+    try do
+      case IO.gets("") do
+        :eof -> ""
+        {:error, _reason} -> ""
+        line -> to_string(line)
+      end
+    after
+      System.cmd("stty", ["echo"], stderr_to_stdout: true)
+    end
+  end
+
   # Drop any live pool for this ref so the next read reconnects with the new
   # URL. Harmless if the connection registry is not running (CLI without mount).
   defp safe_forget(ref) do
@@ -624,6 +773,10 @@ defmodule Superblock.CLI do
     _kind, _reason -> :ok
   end
 
+  defp describe_error(:empty_code), do: "no code entered — copy it from the browser page"
+  defp describe_error(:not_found), do: "code not recognized — check it and try again"
+  defp describe_error(:decrypt_failed), do: "could not decrypt the token — restart the login"
+  defp describe_error(:unexpected_response), do: "unexpected API response — try again"
   defp describe_error(:timeout), do: "request timed out"
   defp describe_error(:rate_limited), do: "rate limited (429) — wait a moment and retry"
   defp describe_error(:forbidden), do: "access denied (403)"

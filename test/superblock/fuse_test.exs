@@ -60,7 +60,7 @@ defmodule Superblock.FuseTest do
   end
 
   test "ls and cat behave like a filesystem", %{mountpoint: mp} do
-    assert Enum.sort(File.ls!(mp)) == ["organizations", "regions.json"]
+    assert Enum.sort(File.ls!(mp)) == ["organizations"]
     assert Enum.sort(File.ls!(Path.join(mp, "organizations"))) == ["org-alpha", "org-beta"]
 
     info = File.read!(Path.join(mp, "organizations/org-alpha/info.json"))
@@ -85,10 +85,10 @@ defmodule Superblock.FuseTest do
 
     # Distinct endpoints behind the fixture tree; every one may be fetched
     # exactly once thanks to the cache:
-    #   orgs(1) projects(1) regions(1) org info+members(4)
+    #   orgs(1) projects(1) org info+members+regions(6)
     #   per project (x3): info health auth db api-keys functions branches (21)
     #   function info (2)
-    budget = 30
+    budget = 31
     assert TestEnv.total_hits() <= budget
 
     # walking again is free (everything within TTL)
@@ -218,6 +218,6 @@ defmodule Superblock.FuseTest do
     # a fresh mount over the same mountpoint works
     :ok = Fs.mount(mp)
     wait_mounted!(mp)
-    assert Enum.sort(File.ls!(mp)) == ["organizations", "regions.json"]
+    assert Enum.sort(File.ls!(mp)) == ["organizations"]
   end
 end

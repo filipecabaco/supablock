@@ -1,5 +1,21 @@
 # Plan: OAuth2 login with a Francis-powered localhost callback
 
+> **Status (2026-07): IMPLEMENTED.** `superblock login` now runs the
+> documented OAuth2 flow whenever an OAuth app is configured
+> (`oauth.client_id` / `oauth.client_secret`): PKCE S256 + `state`,
+> Francis/Bandit loopback callback on `127.0.0.1:53682`
+> (`Superblock.AuthCallback`), code exchange and single-use-safe refresh
+> via `POST /v1/oauth/token` (`Superblock.OAuth` +
+> `Superblock.TokenStore`), credentials v2 (atomic JSON, legacy PAT file
+> still loads), transparent refresh before expiry and once after a 401,
+> and `logout` revokes via `POST /v1/oauth/revoke`.
+>
+> Login ladder, in order: OAuth (when configured) → the supabase-CLI-style
+> dashboard session flow (`Superblock.BrowserLogin`, works with zero
+> setup) → `login --token sbp_…`. The owner action that unlocks OAuth is
+> registering the app (see "Prerequisite" below) and shipping its client
+> id/secret as config defaults.
+
 > Companion feature, already implemented: `superblock service
 > install|uninstall|status` auto-starts the mount at login via a systemd
 > user unit (Linux) or launchd agent (macOS) — see `Superblock.Service`.

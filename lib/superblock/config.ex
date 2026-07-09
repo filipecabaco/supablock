@@ -30,6 +30,8 @@ defmodule Superblock.Config do
     "db_page_size",
     "db_format",
     "db_timeout_ms",
+    "oauth.client_id",
+    "oauth.client_secret",
     "ttl.orgs",
     "ttl.project",
     "ttl.health",
@@ -86,6 +88,7 @@ defmodule Superblock.Config do
   end
 
   defp coerce("mountpoint", value), do: {:ok, value}
+  defp coerce("oauth." <> _key, value), do: {:ok, value}
 
   defp coerce("expose_secrets", value) when value in ~w(true false),
     do: {:ok, value == "true"}

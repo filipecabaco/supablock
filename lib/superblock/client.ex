@@ -16,7 +16,7 @@ defmodule Superblock.Client do
 
   require Logger
 
-  alias Superblock.{Config, Credentials}
+  alias Superblock.Config
 
   @base_url "https://api.supabase.com"
   @ratelimit_table :superblock_ratelimit
@@ -33,21 +33,56 @@ defmodule Superblock.Client do
   @spec get(String.t(), keyword) :: {:ok, term} | {:error, reason}
   def get(path, opts \\ []) do
     case fetch_token(opts) do
-      {:ok, token} -> get_with_token(path, token, opts)
-      :missing -> {:error, :unauthorized}
+      {:ok, token} ->
+        case get_with_token(path, token, opts) do
+          {:error, :unauthorized} = error ->
+            retry_after_refresh(path, token, opts, error)
+
+          result ->
+            result
+        end
+
+      :missing ->
+        {:error, :unauthorized}
+    end
+  end
+
+  # A stored OAuth token the API just rejected may simply have expired:
+  # rotate it once (single-flight via TokenStore) and retry. Explicit tokens
+  # and unauthenticated calls never retry.
+  defp retry_after_refresh(path, failed_token, opts, error) do
+    stored? =
+      is_binary(failed_token) and opts[:token] == nil and
+        not Keyword.get(opts, :unauthenticated, false)
+
+    with true <- stored?,
+         {:ok, new_token} when new_token != failed_token <-
+           Superblock.TokenStore.after_401(failed_token) do
+      get_with_token(path, new_token, opts)
+    else
+      _no_rotation -> error
     end
   end
 
   defp fetch_token(opts) do
-    case Keyword.fetch(opts, :token) do
-      {:ok, token} when is_binary(token) and token != "" -> {:ok, token}
-      _other -> Credentials.load()
+    cond do
+      Keyword.get(opts, :unauthenticated, false) ->
+        {:ok, nil}
+
+      is_binary(opts[:token]) and opts[:token] != "" ->
+        {:ok, opts[:token]}
+
+      true ->
+        # TokenStore (not Credentials directly): OAuth credentials refresh
+        # transparently, serialized through one process.
+        Superblock.TokenStore.access_token()
     end
   end
 
   # Testing escape hatch only: the e2e suite points the release at a local
   # stub API. Real usage never sets either override.
-  defp base_url do
+  @doc false
+  def base_url do
     case System.get_env("SUPERBLOCK_API_URL") do
       url when is_binary(url) and url != "" ->
         url
@@ -82,13 +117,16 @@ defmodule Superblock.Client do
       Req.new(
         base_url: base_url(),
         url: path,
-        auth: {:bearer, token},
         receive_timeout: budget_ms,
         connect_options: connect_options(budget_ms),
         retry: &retry_decision(&1, &2, deadline),
         retry_log_level: false,
         max_retries: 3
       )
+      |> then(fn req ->
+        # nil = deliberately unauthenticated (the login polling endpoint).
+        if token, do: Req.merge(req, auth: {:bearer, token}), else: req
+      end)
       |> apply_test_plug()
 
     case Req.request(req) do
@@ -116,7 +154,8 @@ defmodule Superblock.Client do
     end
   end
 
-  defp connect_options(budget_ms) do
+  @doc false
+  def connect_options(budget_ms) do
     base = [timeout: min(budget_ms, 5_000)]
 
     case proxy_from_env() do
@@ -282,6 +321,7 @@ defmodule Superblock.Client do
     |> then(fn s -> if token, do: String.replace(s, token, "sbp_…"), else: s end)
     |> String.replace(~r/Bearer\s+\S+/, "Bearer sbp_…")
     |> String.replace(~r/sbp_[A-Za-z0-9_-]+/, "sbp_…")
+    |> String.replace(~r/oauth_refresh_[A-Za-z0-9_-]+/, "oauth_refresh_…")
   end
 
   def redact(term, token) do

@@ -44,7 +44,7 @@ defmodule Superblock.CLITest do
         end)
       end)
 
-    assert stderr =~ "Token rejected — check it at app.supabase.com"
+    assert stderr =~ "Token rejected — check it at supabase.com/dashboard/account/tokens"
     assert Credentials.load() == :missing
     refute File.exists?(Paths.credentials_file())
   end
@@ -57,6 +57,275 @@ defmodule Superblock.CLITest do
         assert CLI.run(["login", "--token", "sbp_x0000000000000000000000000000000000000"]) == 3
       end)
     end)
+  end
+
+  # Plays the dashboard: ECDH + AES-256-GCM with the tag appended,
+  # exactly as api.supabase.com encrypts the minted token.
+  defp encrypt_for(public_key_hex, plaintext) do
+    {:ok, public_key} = Base.decode16(public_key_hex, case: :mixed)
+    {server_pub, server_priv} = :crypto.generate_key(:ecdh, :prime256v1)
+    secret = :crypto.compute_key(:ecdh, public_key, server_priv, :prime256v1)
+    nonce = :crypto.strong_rand_bytes(12)
+
+    {ciphertext, tag} =
+      :crypto.crypto_one_time_aead(:aes_256_gcm, secret, nonce, plaintext, <<>>, 16, true)
+
+    %{
+      "id" => "00000000-0000-4000-8000-000000000000",
+      "created_at" => "2026-01-01T00:00:00Z",
+      "access_token" => Base.encode16(ciphertext <> tag, case: :lower),
+      "public_key" => Base.encode16(server_pub, case: :lower),
+      "nonce" => Base.encode16(nonce, case: :lower)
+    }
+  end
+
+  # The dashboard learns our public key from the login URL the browser
+  # opens. Stand in for the browser: a fake xdg-open that records the URL.
+  defp fake_browser! do
+    dir = Path.join(System.tmp_dir!(), "superblock-browser-#{System.unique_integer([:positive])}")
+    File.mkdir_p!(dir)
+    url_file = Path.join(dir, "url")
+
+    opener = Path.join(dir, "xdg-open")
+    File.write!(opener, "#!/bin/sh\nprintf '%s' \"$1\" > #{url_file}\n")
+    File.chmod!(opener, 0o755)
+
+    original_path = System.get_env("PATH")
+    System.put_env("PATH", dir <> ":" <> original_path)
+
+    ExUnit.Callbacks.on_exit(fn ->
+      System.put_env("PATH", original_path)
+      File.rm_rf!(dir)
+    end)
+
+    url_file
+  end
+
+  defp await_file(path, retries \\ 200) do
+    case File.read(path) do
+      {:ok, body} when body != "" -> body
+      _missing when retries > 0 -> Process.sleep(10) && await_file(path, retries - 1)
+      _missing -> flunk("browser was never opened (no URL recorded)")
+    end
+  end
+
+  describe "browser login (no --token)" do
+    test "opens the browser, exchanges the code, and stores the token" do
+      url_file = fake_browser!()
+      fake_token = "sbp_" <> String.duplicate("f", 40)
+
+      routes =
+        Map.merge(Superblock.Fixtures.routes(), %{
+          {:prefix, "/platform/cli/login/"} => fn conn ->
+            url = await_file(url_file)
+            query = URI.decode_query(URI.parse(url).query)
+
+            conn = Plug.Conn.fetch_query_params(conn)
+            assert conn.query_params["device_code"] == "ABC123"
+            assert conn.request_path == "/platform/cli/login/" <> query["session_id"]
+            assert Plug.Conn.get_req_header(conn, "authorization") == []
+
+            conn
+            |> Plug.Conn.put_resp_content_type("application/json")
+            |> Plug.Conn.send_resp(200, Jason.encode!(encrypt_for(query["public_key"], fake_token)))
+          end
+        })
+
+      TestEnv.stub_api!(routes)
+
+      output =
+        capture_io([input: "ABC123\n"], fn ->
+          assert CLI.run(["login"]) == 0
+        end)
+
+      assert output =~ "Here is your login link"
+      assert output =~ "supabase.com/dashboard/cli/login?"
+      assert output =~ "✓ Token valid — authenticated, 2 organizations found."
+      assert {:ok, ^fake_token} = Credentials.load()
+
+      # the printed URL and the browser URL are the same session
+      url = await_file(url_file)
+      assert output =~ url
+    end
+
+    test "--no-browser prints the URL without spawning an opener" do
+      url_file = fake_browser!()
+
+      capture_io(:stderr, fn ->
+        output =
+          capture_io([input: ""], fn ->
+            assert CLI.run(["login", "--no-browser"]) == 2
+          end)
+
+        assert output =~ "Here is your login link"
+      end)
+
+      refute File.exists?(url_file)
+    end
+
+    test "wrong codes retry, then exit 2 after three failures" do
+      TestEnv.stub_api!(%{})
+
+      stderr =
+        capture_io(:stderr, fn ->
+          capture_io([input: "BAD1\nBAD2\nBAD3\n"], fn ->
+            assert CLI.run(["login", "--no-browser"]) == 2
+          end)
+        end)
+
+      assert stderr =~ "Verification failed: code not recognized"
+      assert stderr =~ "Too many failed attempts"
+      assert Credentials.load() == :missing
+    end
+
+    test "EOF at the code prompt exits 2 politely" do
+      stderr =
+        capture_io(:stderr, fn ->
+          capture_io([input: ""], fn ->
+            assert CLI.run(["login", "--no-browser"]) == 2
+          end)
+        end)
+
+      assert stderr =~ "No verification code given."
+    end
+  end
+
+  defp oauth_routes(test_pid) do
+    Map.merge(Superblock.Fixtures.routes(), %{
+      "/v1/oauth/token" => fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+        send(test_pid, {:token_form, URI.decode_query(body)})
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.send_resp(
+          200,
+          Jason.encode!(%{
+            "access_token" => "sbp_oauth_" <> String.duplicate("a", 40),
+            "refresh_token" => "oauth_refresh_" <> String.duplicate("b", 20),
+            "expires_in" => 3600,
+            "token_type" => "Bearer"
+          })
+        )
+      end
+    })
+  end
+
+  # GET the loopback callback, retrying while the listener is still coming up.
+  defp get_callback!(params, retries \\ 100) do
+    Req.get!("http://127.0.0.1:53682/callback", params: params, retry: false)
+  rescue
+    error in [Req.TransportError] ->
+      if retries > 0 do
+        Process.sleep(20)
+        get_callback!(params, retries - 1)
+      else
+        reraise error, __STACKTRACE__
+      end
+  end
+
+  describe "OAuth login (oauth.client_id configured)" do
+    setup do
+      :ok = Superblock.Config.set("oauth.client_id", "11111111-2222-4333-8444-555555555555")
+      :ok = Superblock.Config.set("oauth.client_secret", "sb_secret_test_client_secret")
+      :ok
+    end
+
+    test "full flow: browser consent, loopback callback, exchange, store" do
+      url_file = fake_browser!()
+      TestEnv.stub_api!(oauth_routes(self()))
+
+      login =
+        Task.async(fn ->
+          capture_io(fn -> assert CLI.run(["login"]) == 0 end)
+        end)
+
+      # stand in for the user's browser: read the authorize URL the CLI
+      # opened, approve, and follow the redirect to the loopback callback
+      authorize_url = await_file(url_file)
+      query = URI.decode_query(URI.parse(authorize_url).query)
+      assert URI.parse(authorize_url).path == "/v1/oauth/authorize"
+      assert query["code_challenge_method"] == "S256"
+      assert query["redirect_uri"] == "http://localhost:53682/callback"
+
+      response = get_callback!(code: "consented123", state: query["state"])
+      assert response.status == 200
+
+      output = Task.await(login, 15_000)
+      assert output =~ "✓ Logged in via OAuth — authenticated, 2 organizations found."
+      assert output =~ "refresh automatically"
+
+      assert_received {:token_form, form}
+      assert form["grant_type"] == "authorization_code"
+      assert form["code"] == "consented123"
+      assert is_binary(form["code_verifier"])
+
+      assert {:ok, credential} = Credentials.load_credential()
+      assert credential.type == :oauth
+      assert credential.refresh_token == "oauth_refresh_" <> String.duplicate("b", 20)
+    end
+
+    test "a state mismatch on the callback is rejected" do
+      url_file = fake_browser!()
+      TestEnv.stub_api!(oauth_routes(self()))
+
+      login =
+        Task.async(fn ->
+          capture_io(:stderr, fn ->
+            capture_io(fn -> assert CLI.run(["login"]) == 2 end)
+          end)
+        end)
+
+      await_file(url_file)
+      get_callback!(code: "stolen", state: "forged-state")
+
+      stderr = Task.await(login, 15_000)
+      assert stderr =~ "State mismatch"
+      refute_received {:token_form, _form}
+      assert Credentials.load() == :missing
+    end
+
+    test "a denied consent exits politely" do
+      TestEnv.stub_api!(oauth_routes(self()))
+
+      login =
+        Task.async(fn ->
+          capture_io(:stderr, fn ->
+            capture_io(fn -> assert CLI.run(["login", "--no-browser"]) == 2 end)
+          end)
+        end)
+
+      get_callback!(error: "access_denied", error_description: "User denied access")
+
+      stderr = Task.await(login, 15_000)
+      assert stderr =~ "Authorization was not granted: User denied access"
+      assert Credentials.load() == :missing
+    end
+
+    test "logout revokes the OAuth grant server-side" do
+      test_pid = self()
+
+      TestEnv.stub_api!(%{
+        "/v1/oauth/revoke" => fn conn ->
+          {:ok, body, conn} = Plug.Conn.read_body(conn)
+          send(test_pid, {:revoked, Jason.decode!(body)["refresh_token"]})
+          Plug.Conn.send_resp(conn, 204, "")
+        end
+      })
+
+      :ok =
+        Credentials.store_oauth(
+          "sbp_oauth_" <> String.duplicate("a", 40),
+          "oauth_refresh_gone",
+          System.os_time(:second) + 3600
+        )
+
+      output = capture_io(fn -> assert CLI.run(["logout"]) == 0 end)
+      assert output =~ "Revoked the OAuth authorization."
+      assert output =~ "Logged out."
+      assert_received {:revoked, "oauth_refresh_gone"}
+      assert Credentials.load() == :missing
+    end
   end
 
   test "logout deletes credentials and is idempotent" do

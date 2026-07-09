@@ -4,36 +4,36 @@ Browse your Supabase account as a filesystem.
 
 superblock is a **read-only FUSE filesystem** that mirrors the Supabase
 [Management API](https://supabase.com/docs/reference/api/introduction) as a
-directory tree. Authenticate once with a personal access token, mount, and
+directory tree. Log in once through the Supabase dashboard, mount, and
 inspect organizations, projects, config, keys and functions with ordinary
 Unix tools — `ls`, `cat`, `grep`, `find`, `diff`.
 
 ```
 /mnt/supabase
-├── organizations/
-│   └── my-org/
-│       ├── info.json
-│       ├── members.json
-│       └── projects/
-│           └── abcdefghijklmnopqrst/
-│               ├── info.json
-│               ├── health                  # "db: healthy" etc.
-│               ├── config/
-│               │   ├── auth.json
-│               │   └── database.json
-│               ├── api-keys/
-│               │   ├── publishable
-│               │   └── secret              # REDACTED unless you opt in
-│               ├── functions/
-│               │   └── hello/info.json
-│               ├── branches/
-│               │   └── main/info.json
-│               └── database/               # only when a DB URL is configured
-│                   └── public/             # one folder per schema
-│                       └── users/          # one folder per table
-│                           ├── rows-000000.csv   # rows 0–499
-│                           └── rows-000500.csv   # rows 500–999, …
-└── regions.json
+└── organizations/
+    └── my-org/
+        ├── info.json
+        ├── members.json
+        ├── regions.json
+        └── projects/
+            └── abcdefghijklmnopqrst/
+                ├── info.json
+                ├── health                  # "db: healthy" etc.
+                ├── config/
+                │   ├── auth.json
+                │   └── database.json
+                ├── api-keys/
+                │   ├── publishable
+                │   └── secret              # REDACTED unless you opt in
+                ├── functions/
+                │   └── hello/info.json
+                ├── branches/
+                │   └── main/info.json
+                └── database/               # only when a DB URL is configured
+                    └── public/             # one folder per schema
+                        └── users/          # one folder per table
+                            ├── rows-000000.csv   # rows 0–499
+                            └── rows-000500.csv   # rows 500–999, …
 ```
 
 The Management API half is `GET`-only: superblock physically cannot create,
@@ -135,10 +135,42 @@ More build notes:
 ## Quickstart
 
 ```bash
-superblock login          # paste a token from app.supabase.com → Account → Access Tokens
+superblock login          # opens the Supabase dashboard; type the code it shows
 superblock config set mountpoint /mnt/supabase
 superblock mount          # foreground; Ctrl-C unmounts
 ```
+
+### How login works
+
+`superblock login` picks the best available flow, in this order:
+
+1. **OAuth2 (recommended)** — used when an OAuth app is configured. The
+   browser opens the documented consent page
+   (`/v1/oauth/authorize`, PKCE S256 + `state`), Supabase redirects to a
+   loopback callback on `127.0.0.1:53682`, and the code is exchanged for
+   **short-lived, scoped tokens** that refresh automatically (Supabase
+   refresh tokens are single-use; rotation is atomic and serialized).
+   Register the app read-only and the read-only guarantee is enforced by
+   the server, not just this client. `logout` also revokes the grant
+   server-side. Configure once:
+
+   ```bash
+   superblock config set oauth.client_id <uuid from your OAuth app>
+   superblock config set oauth.client_secret <its secret>
+   ```
+
+   (Register the app under your org: dashboard → org settings → OAuth Apps,
+   redirect URI `http://localhost:53682/callback`, read-only scopes.)
+
+2. **Dashboard session flow** — with no OAuth app configured, `login`
+   replicates the official supabase CLI: it opens
+   `supabase.com/dashboard/cli/login`, the dashboard mints a personal
+   access token and shows a short verification code, you type the code at
+   the prompt, and the token arrives end-to-end encrypted
+   (ECDH P-256 + AES-256-GCM). Zero setup, works over SSH with
+   `--no-browser`.
+
+3. **Token paste** — `superblock login --token sbp_...` always works.
 
 From another shell:
 
@@ -227,11 +259,13 @@ superblock refresh --check
 ## Commands
 
 ```
-superblock login [--token sbp_...]   validate + store a token (0600)
-superblock logout                    delete the stored token
+superblock login                     browser login: OAuth2+PKCE, or dashboard session flow
+superblock login --token sbp_...     validate + store a pasted token instead
+superblock login --no-browser        print the login URL (SSH-friendly)
+superblock logout                    delete the credential (and revoke the OAuth grant)
 superblock status | whoami           auth, org count, mount state, rate limits
 superblock doctor                    environment checks with fix hints
-superblock config set|get|list       mountpoint, TTLs, timeouts, expose_secrets
+superblock config set|get|list       mountpoint, TTLs, timeouts, expose_secrets, oauth.*
 superblock mount [mountpoint]        mount in the foreground
 superblock unmount [mountpoint]      unmount from another shell
 superblock refresh                   drop the cache; next reads re-fetch
@@ -267,17 +301,29 @@ for free. Stopping the service unmounts cleanly (SIGTERM handling).
 Responses are cached in memory per endpoint (TTLs configurable:
 `ttl.orgs`=60s, `ttl.project`=30s, `ttl.health`=10s, `ttl.static`=300s), with
 single-flight de-duplication and negative caching, so `ls -R` costs a handful
-of requests, not hundreds. On `429` the filesystem degrades to `EAGAIN`
-(never hangs); request deadlines (`http_timeout_ms`, default 8000) turn slow
-calls into `EIO`. `superblock refresh` flushes the cache of a live mount.
+of requests, not hundreds. The Management API allows 120 requests/minute per
+user, tracked independently per project/organization — superblock records the
+`X-RateLimit-*` headers per scope (visible in `superblock status`) and on a
+`429` the filesystem degrades to `EAGAIN` (never hangs); request deadlines
+(`http_timeout_ms`, default 8000) turn slow calls into `EIO`.
+`superblock refresh` flushes the cache of a live mount.
 
 ## Security notes
 
-* The token lives in `~/.config/superblock/credentials`, mode `0600`, in a
-  `0700` directory. It is never logged, never rendered into the tree, and
-  `status` shows it masked (`sbp_…f23a`). `SUPERBLOCK_TOKEN` overrides the
-  stored token (CI escape hatch) — that is the only environment variable in
-  play.
+* The credential lives in `~/.config/superblock/credentials`, mode `0600`,
+  in a `0700` directory — a single-line PAT, or a JSON
+  `{access_token, refresh_token, expires_at}` for OAuth, written atomically
+  (tmp + rename) because Supabase refresh tokens are single-use. Tokens are
+  never logged, never rendered into the tree, and `status` shows them
+  masked (`sbp_…f23a`). `SUPERBLOCK_TOKEN` overrides the stored credential
+  (CI escape hatch) — that is the only environment variable in play.
+* The OAuth token POSTs (`/v1/oauth/token`, `/v1/oauth/revoke`) are the
+  only non-GET requests superblock ever makes; they manage the OAuth
+  session itself, never account resources. With read-only scopes on the
+  app registration, read-only is enforced server-side.
+* The OAuth client id/secret identify the app, not you; in a distributed
+  CLI they are not confidential (PKCE + the loopback-only redirect are
+  what protect the flow).
 * `api-keys/secret` renders as
   `REDACTED — run: superblock config set expose_secrets true` until you
   explicitly opt in. `api-keys/publishable` is always shown.
@@ -336,7 +382,7 @@ plus a pruned [castore](https://github.com/elixir-mint/castore)
 
 ## Out of scope (v1)
 
-No writes of any kind, no OAuth, no token refresh, no logs endpoints, no
-daemon mode — `mount` is foreground-only. Row browsing under `database/` is
-read-only and opt-in (per project, via `superblock db add`); superblock never
-issues anything but `SELECT`.
+No writes to account resources of any kind, no logs endpoints. `mount` runs
+in the foreground; use `superblock service install` for auto-start. Row
+browsing under `database/` is read-only and opt-in (per project, via
+`superblock db add`); superblock never issues anything but `SELECT`.

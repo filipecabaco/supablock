@@ -600,7 +600,7 @@
     <h1>Your Supabase account, <br>mounted at <span class="path mono">/mnt/supabase</span></h1>
     <p class="lede">
       superblock mirrors the Supabase Management API as a browsable directory tree.
-      Log in once with a personal access token, mount, and inspect organizations, projects,
+      Log in once through the Supabase dashboard, mount, and inspect organizations, projects,
       config, keys and functions — and browse table rows as CSV or JSON — with the tools you
       already trust —
       <strong class="mono">ls</strong>, <strong class="mono">cat</strong>,
@@ -711,15 +711,24 @@
           <span class="n">1</span>
           <div>
             <h3>Authenticate</h3>
-            <p>Create a personal access token at <strong>app.supabase.com → Account → Access
-               Tokens</strong>, then paste it at the hidden prompt. It's validated against the API
-               before anything is written, and stored at mode 0600.</p>
+            <p>With an OAuth app configured (<span class="mono">oauth.client_id</span> /
+               <span class="mono">oauth.client_secret</span>), <span class="mono">login</span>
+               runs the documented OAuth2 flow — PKCE&nbsp;S256, consent in the browser, a
+               loopback callback — and stores short-lived, scoped tokens that refresh
+               automatically. Without one, it falls back to the supabase-CLI-style dashboard
+               session flow (verification code, end-to-end-encrypted token delivery), and
+               <span class="mono">--token sbp_…</span> always works.</p>
             <div class="code">
               <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
               <pre><span class="p">$</span> superblock login
-Paste your Supabase personal access token (sbp_...):
-<span class="p">✓</span> Token valid — authenticated, 2 organizations found.
-  Stored in ~/.config/superblock/credentials (mode 0600).</pre>
+Open this link in your browser to authorize superblock:
+
+  https://api.supabase.com/v1/oauth/authorize?client_id=…&amp;code_challenge=…
+
+Waiting for the callback on http://localhost:53682/callback …
+<span class="p">✓</span> Logged in via OAuth — authenticated, 2 organizations found.
+  Stored in ~/.config/superblock/credentials (mode 0600).
+  Tokens are short-lived and refresh automatically.</pre>
             </div>
           </div>
         </div>
@@ -857,8 +866,8 @@ rows-000000.csv  rows-000500.csv  rows-001000.csv
             <tr><th>Command</th><th>What it does</th></tr>
           </thead>
           <tbody>
-            <tr><td><code>superblock login</code></td><td>Validate a token against the API and store it (0600). <code>--token sbp_…</code> skips the prompt.</td></tr>
-            <tr><td><code>superblock logout</code></td><td>Delete the stored token.</td></tr>
+            <tr><td><code>superblock login</code></td><td>Browser login: OAuth2 + PKCE with scoped, auto-refreshing tokens (when an OAuth app is configured), dashboard session flow otherwise. <code>--token sbp_…</code> pastes a token; <code>--no-browser</code> just prints the URL.</td></tr>
+            <tr><td><code>superblock logout</code></td><td>Delete the credential and revoke the OAuth grant.</td></tr>
             <tr><td><code>superblock status</code></td><td>Auth state (masked token), org count, mount state, last-seen rate limits.</td></tr>
             <tr><td><code>superblock doctor</code></td><td>Environment checks with a fix hint per failure.</td></tr>
             <tr><td><code>superblock config set|get|list</code></td><td>Mountpoint, cache TTLs, <code>http_timeout_ms</code>, <code>expose_secrets</code>, <code>db_format</code>, <code>db_page_size</code>.</td></tr>
@@ -868,6 +877,7 @@ rows-000000.csv  rows-000500.csv  rows-001000.csv
             <tr><td><code>superblock refresh --check</code></td><td>Report cache staleness (total / past-TTL entries) without flushing.</td></tr>
             <tr><td><code>superblock db add &lt;ref&gt;</code></td><td>Store a Postgres URL so the project grows a <code>database/</code> tree. <code>--url</code> skips the prompt.</td></tr>
             <tr><td><code>superblock db list | remove &lt;ref&gt;</code></td><td>List projects with a database URL (password masked), or forget one.</td></tr>
+            <tr><td><code>superblock service install|uninstall|status</code></td><td>Auto-start the mount at login — systemd user unit (Linux) or launchd agent (macOS).</td></tr>
           </tbody>
         </table>
       </div>

@@ -34,9 +34,12 @@ defmodule Superblock.TestEnv do
 
     * a JSON-encodable value (responds 200),
     * `{:status, code, json_value}`,
+    * `{:params, fun}` — fun takes the query params map, returns
+      `{code, json_value}` (also understood by `Superblock.StubServer`),
     * or a `conn -> conn` fun for full control.
 
-  Unknown paths get a 404. Every request bumps a per-path counter.
+  A `{:prefix, "/some/base/"}` key matches any path under it (exact keys
+  win). Unknown paths get a 404. Every request bumps a per-path counter.
   """
   def stub_api!(routes \\ Superblock.Fixtures.routes()) do
     reset_hits()
@@ -45,11 +48,16 @@ defmodule Superblock.TestEnv do
       path = conn.request_path
       :ets.update_counter(@hits, path, 1, {path, 0})
 
-      case Map.get(routes, path) do
+      case Map.get(routes, path) || prefix_route(routes, path) do
         nil ->
           json_resp(conn, 404, %{"message" => "not found"})
 
         {:status, code, value} ->
+          json_resp(conn, code, value)
+
+        {:params, fun} when is_function(fun, 1) ->
+          conn = Plug.Conn.fetch_query_params(conn)
+          {code, value} = fun.(conn.query_params)
           json_resp(conn, code, value)
 
         fun when is_function(fun, 1) ->
@@ -78,6 +86,13 @@ defmodule Superblock.TestEnv do
   @doc "Total requests seen by the stub."
   def total_hits do
     @hits |> :ets.tab2list() |> Enum.map(fn {_path, n} -> n end) |> Enum.sum()
+  end
+
+  defp prefix_route(routes, path) do
+    Enum.find_value(routes, fn
+      {{:prefix, prefix}, handler} -> if String.starts_with?(path, prefix), do: handler
+      _exact -> nil
+    end)
   end
 
   defp reset_hits do
