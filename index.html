@@ -599,7 +599,7 @@
     <h1>Your Supabase account, <br>mounted at <span class="path mono">/mnt/supabase</span></h1>
     <p class="lede">
       superblock mirrors the Supabase Management API as a browsable directory tree.
-      Log in once with a personal access token, mount, and inspect organizations, projects,
+      Log in once through the Supabase dashboard, mount, and inspect organizations, projects,
       config, keys and functions with the tools you already trust —
       <strong class="mono">ls</strong>, <strong class="mono">cat</strong>,
       <strong class="mono">grep</strong>, <strong class="mono">diff</strong>.
@@ -708,13 +708,20 @@
           <span class="n">1</span>
           <div>
             <h3>Authenticate</h3>
-            <p>Create a personal access token at <strong>app.supabase.com → Account → Access
-               Tokens</strong>, then paste it at the hidden prompt. It's validated against the API
-               before anything is written, and stored at mode 0600.</p>
+            <p>Same flow as the official supabase CLI: your browser opens the Supabase
+               dashboard, which mints a token and shows a short verification code. Type the
+               code at the prompt and the token arrives end-to-end encrypted
+               (ECDH&nbsp;P-256 + AES-256-GCM). Over SSH, use
+               <span class="mono">--no-browser</span> and open the printed URL anywhere;
+               <span class="mono">--token sbp_…</span> pastes a token directly.</p>
             <div class="code">
               <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
               <pre><span class="p">$</span> superblock login
-Paste your Supabase personal access token (sbp_...):
+Here is your login link, open it in the browser:
+
+  https://supabase.com/dashboard/cli/login?session_id=…
+
+Enter your verification code: a1b2c3
 <span class="p">✓</span> Token valid — authenticated, 2 organizations found.
   Stored in ~/.config/superblock/credentials (mode 0600).</pre>
             </div>
@@ -805,7 +812,7 @@ Mounted at /mnt/supabase. Ctrl-C to unmount.</pre>
             <tr><th>Command</th><th>What it does</th></tr>
           </thead>
           <tbody>
-            <tr><td><code>superblock login</code></td><td>Validate a token against the API and store it (0600). <code>--token sbp_…</code> skips the prompt.</td></tr>
+            <tr><td><code>superblock login</code></td><td>Browser login via the dashboard, encrypted token delivery. <code>--token sbp_…</code> pastes a token; <code>--no-browser</code> just prints the URL.</td></tr>
             <tr><td><code>superblock logout</code></td><td>Delete the stored token.</td></tr>
             <tr><td><code>superblock status</code></td><td>Auth state (masked token), org count, mount state, last-seen rate limits.</td></tr>
             <tr><td><code>superblock doctor</code></td><td>Environment checks with a fix hint per failure.</td></tr>
@@ -813,6 +820,7 @@ Mounted at /mnt/supabase. Ctrl-C to unmount.</pre>
             <tr><td><code>superblock mount [dir]</code></td><td>Mount in the foreground; recovers stale mounts automatically.</td></tr>
             <tr><td><code>superblock unmount [dir]</code></td><td>Unmount from another shell.</td></tr>
             <tr><td><code>superblock refresh</code></td><td>Flush the cache of a live mount; next reads re-fetch.</td></tr>
+            <tr><td><code>superblock service install|uninstall|status</code></td><td>Auto-start the mount at login — systemd user unit (Linux) or launchd agent (macOS).</td></tr>
           </tbody>
         </table>
       </div>
