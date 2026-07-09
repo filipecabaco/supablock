@@ -1,0 +1,43 @@
+# Publishes docs/ (the superblock landing page) to GitHub Pages:
+#   https://filipecabaco.github.io/supablock/
+#
+# `enablement: true` provisions the Pages site on first run, so no manual
+# repository-settings step is needed. Runs on pushes to the default branch
+# (Pages deploys are restricted to it) or manually via workflow_dispatch.
+
+name: pages
+
+on:
+  push:
+    branches: [main, master]
+    paths: ["docs/**", ".github/workflows/pages.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+
+      - id: deployment
+        uses: actions/deploy-pages@v4
