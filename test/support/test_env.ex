@@ -34,6 +34,8 @@ defmodule Superblock.TestEnv do
 
     * a JSON-encodable value (responds 200),
     * `{:status, code, json_value}`,
+    * `{:raw, content_type, body}` — responds 200 with verbatim bytes (for
+      non-JSON payloads such as an edge-function eszip body),
     * `{:params, fun}` — fun takes the query params map, returns
       `{code, json_value}` (also understood by `Superblock.StubServer`),
     * or a `conn -> conn` fun for full control.
@@ -54,6 +56,11 @@ defmodule Superblock.TestEnv do
 
         {:status, code, value} ->
           json_resp(conn, code, value)
+
+        {:raw, content_type, body} ->
+          conn
+          |> Plug.Conn.put_resp_content_type(content_type)
+          |> Plug.Conn.send_resp(200, body)
 
         {:params, fun} when is_function(fun, 1) ->
           conn = Plug.Conn.fetch_query_params(conn)

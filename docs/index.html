@@ -344,6 +344,28 @@
   .code .p { color: #3ecf8e; }
   .code .c { color: #6b6b6b; }
   .code .o { color: #9a9a9a; }
+  .code .d { color: #8ab4f8; }        /* directory */
+
+  /* tree map: an annotated directory listing */
+  .tree {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin: 18px 0 26px;
+    overflow-x: auto;
+  }
+
+  .tree pre {
+    margin: 0;
+    padding: 18px 20px;
+    font-size: 13px;
+    line-height: 1.72;
+    color: #cdcdcd;
+  }
+
+  .tree .d { color: #8ab4f8; }        /* directory */
+  .tree .c { color: #6b6b6b; }        /* annotation */
+  .tree .t { color: #4a4a4a; }        /* tree-drawing glyphs */
 
   .copy {
     position: absolute;
@@ -585,6 +607,7 @@
   <div class="wrap top-inner">
     <span class="wordmark mono"><span class="tick">$</span> superblock</span>
     <nav class="top-nav">
+      <a href="#tree">The tree</a>
       <a href="#install">Install</a>
       <a href="#quickstart">Quick start</a>
       <a href="#service">Auto-start</a>
@@ -601,8 +624,9 @@
     <h1>Your Supabase account, <br>mounted at <span class="path mono">/mnt/supabase</span></h1>
     <p class="lede">
       superblock mirrors the Supabase Management API as a browsable directory tree.
-      Log in once, mount, and inspect organizations, projects, config, keys and functions —
-      and browse table rows as CSV or JSON — with the tools you already trust:
+      Log in once, mount, and inspect <strong>organizations, projects, config, API keys,
+      edge functions, storage buckets, auth providers and realtime</strong> — plus table
+      rows as CSV or JSON — with the tools you already trust:
       <strong class="mono">ls</strong>, <strong class="mono">cat</strong>,
       <strong class="mono">grep</strong>, <strong class="mono">diff</strong>.
     </p>
@@ -641,6 +665,86 @@
           <span class="k"><svg class="icon" aria-hidden="true"><use href="#i-key"/></svg>sbp_…f23a</span>
           <p><strong>Token-safe.</strong> Stored at mode 0600, never logged, never rendered into
              the tree. Secret API keys stay redacted unless you opt in.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="tree">
+    <div class="wrap">
+      <p class="sec-label"><svg class="icon" aria-hidden="true"><use href="#i-folder"/></svg>What you can browse</p>
+      <h2>One tree, your whole account</h2>
+      <p class="body">
+        Every read-only surface of the Supabase Management API is a path. Organizations nest
+        projects; each project unfolds into its config, keys, edge functions, storage and auth —
+        and, if you opt in, its table rows. Directories are lazy and cached, so the tree only
+        talks to the API for the parts you actually open.
+      </p>
+
+      <div class="tree">
+<pre><span class="t">/</span>mnt/supabase
+<span class="t">└──</span> <span class="d">organizations/</span>&lt;org&gt;<span class="d">/</span>
+    <span class="t">├──</span> info.json  members.json  regions.json     <span class="c"># org metadata, members, regions</span>
+    <span class="t">└──</span> <span class="d">projects/</span>&lt;ref&gt;<span class="d">/</span>
+        <span class="t">├──</span> info.json                            <span class="c"># project metadata</span>
+        <span class="t">├──</span> health                               <span class="c"># auth · db · realtime · rest · storage</span>
+        <span class="t">├──</span> <span class="d">config/</span>
+        <span class="t">│   ├──</span> auth.json   database.json        <span class="c"># core project settings</span>
+        <span class="t">│   ├──</span> realtime.json   storage.json     <span class="c"># realtime & storage settings</span>
+        <span class="t">│   └──</span> <span class="d">auth/</span>
+        <span class="t">│       ├──</span> <span class="d">sso/</span>&lt;id&gt;<span class="d">/</span>info.json        <span class="c"># SAML SSO providers</span>
+        <span class="t">│       └──</span> <span class="d">third-party/</span>&lt;id&gt;<span class="d">/</span>info.json <span class="c"># Firebase · Auth0 · Cognito · …</span>
+        <span class="t">├──</span> <span class="d">api-keys/</span>
+        <span class="t">│   ├──</span> publishable                      <span class="c"># always shown</span>
+        <span class="t">│   └──</span> secret                           <span class="c"># redacted until you opt in</span>
+        <span class="t">├──</span> <span class="d">functions/</span>&lt;slug&gt;<span class="d">/</span>
+        <span class="t">│   ├──</span> info.json                        <span class="c"># metadata, verify_jwt, version…</span>
+        <span class="t">│   └──</span> body                             <span class="c"># the deployed eszip bundle</span>
+        <span class="t">├──</span> <span class="d">storage/</span><span class="d">buckets/</span>&lt;name&gt;<span class="d">/</span>info.json  <span class="c"># visibility, size limit, MIME types</span>
+        <span class="t">└──</span> <span class="d">database/</span>&lt;schema&gt;<span class="d">/</span>&lt;table&gt;<span class="d">/</span>rows-*.csv <span class="c"># opt-in — rows over read-only SQL</span></pre>
+      </div>
+
+      <p class="body">
+        The same six areas, and what each one gives you:
+      </p>
+
+      <div class="facts">
+        <div class="fact">
+          <span class="k"><svg class="icon" aria-hidden="true"><use href="#i-folder"/></svg>organizations · projects</span>
+          <p><strong>The account skeleton.</strong> Every org and project as a folder, with
+             metadata, members, available regions, and per-service <strong>health</strong>
+             (auth, db, realtime, rest, storage) in one <code>cat</code>.</p>
+        </div>
+        <div class="fact">
+          <span class="k"><svg class="icon" aria-hidden="true"><use href="#i-list-bullet"/></svg>config/</span>
+          <p><strong>Every project setting.</strong> <code>auth.json</code>,
+             <code>database.json</code>, and now <code>realtime.json</code> and
+             <code>storage.json</code> — sorted, pretty JSON that <code>diff</code>s cleanly
+             between projects.</p>
+        </div>
+        <div class="fact">
+          <span class="k"><svg class="icon" aria-hidden="true"><use href="#i-command-line"/></svg>functions/</span>
+          <p><strong>Edge functions, code and all.</strong> Each function's metadata under
+             <code>info.json</code>, plus <code>body</code> — the actual deployed eszip bundle,
+             served as raw bytes.</p>
+        </div>
+        <div class="fact">
+          <span class="k"><svg class="icon" aria-hidden="true"><use href="#i-arrow-down-tray"/></svg>storage/buckets/</span>
+          <p><strong>Every storage bucket.</strong> One folder per bucket exposing its
+             visibility, file-size limit and allowed MIME types — grep for public buckets across
+             the whole account.</p>
+        </div>
+        <div class="fact">
+          <span class="k"><svg class="icon" aria-hidden="true"><use href="#i-key"/></svg>config/auth/</span>
+          <p><strong>Identity providers.</strong> SAML <strong>SSO</strong> providers and
+             <strong>third-party auth</strong> integrations (Firebase, Auth0, Cognito, …), each
+             as its own <code>info.json</code>.</p>
+        </div>
+        <div class="fact">
+          <span class="k"><svg class="icon" aria-hidden="true"><use href="#i-magnifying-glass"/></svg>database/</span>
+          <p><strong>Table rows, opt-in.</strong> Connect a project's Postgres once and browse
+             schemas → tables → paged <code>.csv</code>/<code>.json</code> — the one tree that
+             reads past the Management API, over a read-only <code>SELECT</code>-only connection.</p>
         </div>
       </div>
     </div>
@@ -835,6 +939,30 @@ Mounted at ~/Supabase. Ctrl-C to unmount.</pre>
           <pre><span class="p">$</span> grep -r '"site_url"' /mnt/supabase/organizations/*/projects/*/config/auth.json</pre>
         </div>
       </div>
+
+      <div class="oneliner">
+        <p class="what"><strong>Which storage buckets are public?</strong></p>
+        <div class="code">
+          <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
+          <pre><span class="p">$</span> grep -l '"public": true' /mnt/supabase/organizations/*/projects/*/storage/buckets/*/info.json</pre>
+        </div>
+      </div>
+
+      <div class="oneliner">
+        <p class="what"><strong>Is realtime enabled, per project?</strong></p>
+        <div class="code">
+          <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
+          <pre><span class="p">$</span> grep -H '"enabled"' /mnt/supabase/organizations/*/projects/*/config/realtime.json</pre>
+        </div>
+      </div>
+
+      <div class="oneliner">
+        <p class="what"><strong>Unpack a deployed edge function's source</strong> (the body is an eszip bundle).</p>
+        <div class="code">
+          <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
+          <pre><span class="p">$</span> npx eszip extract .../projects/&lt;ref&gt;/functions/hello/body ./hello-src</pre>
+        </div>
+      </div>
     </div>
   </section>
 
@@ -1014,9 +1142,11 @@ rows-000000.csv  rows-000500.csv  rows-001000.csv
     { t: "prompt", s: "superblock mount /mnt/supabase" },
     { t: "out", s: "Mounted at <span class='p'>/mnt/supabase</span>. Ctrl-C to unmount.\n" },
     { t: "prompt", s: "ls /mnt/supabase/organizations/my-org/projects/abcdefghijklmnopqrst" },
-    { t: "out", s: "<span class='d'>api-keys</span>  <span class='d'>branches</span>  <span class='d'>config</span>  <span class='d'>functions</span>  health  info.json\n" },
+    { t: "out", s: "<span class='d'>api-keys</span>  <span class='d'>branches</span>  <span class='d'>config</span>  <span class='d'>functions</span>  <span class='d'>storage</span>  health  info.json\n" },
     { t: "prompt", s: "cat health" },
     { t: "out", s: "auth: <span class='p'>healthy</span>\ndb: <span class='p'>healthy</span>\nrealtime: <span class='p'>healthy</span>\nrest: <span class='p'>healthy</span>\nstorage: <span class='p'>healthy</span>\n" },
+    { t: "prompt", s: "cat storage/buckets/avatars/info.json" },
+    { t: "out", s: "{\n  \"name\": \"avatars\",\n  \"public\": <span class='p'>true</span>,\n  \"file_size_limit\": 52428800\n}\n" },
     { t: "prompt", s: "diff {staging,production}/config/auth.json" },
     { t: "out", s: "<span class='m'>@@ -4,7 +4,7 @@</span>\n<span class='w'>-  \"disable_signup\": false,</span>\n<span class='p'>+  \"disable_signup\": true,</span>\n" },
     { t: "prompt", s: "touch /mnt/supabase/oops" },

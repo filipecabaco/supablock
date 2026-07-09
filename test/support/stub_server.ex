@@ -137,6 +137,9 @@ defmodule Superblock.StubServer do
           {:status, code, value} ->
             send_json(socket, code, value)
 
+          {:raw, content_type, body} ->
+            send_raw(socket, content_type, body)
+
           {:params, fun} when is_function(fun, 1) ->
             {code, value} = fun.(params)
             send_json(socket, code, value)
@@ -206,6 +209,19 @@ defmodule Superblock.StubServer do
       socket,
       "HTTP/1.1 204 No Content\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
     )
+  end
+
+  defp send_raw(socket, content_type, body) do
+    response = [
+      "HTTP/1.1 200 OK\r\n",
+      "content-type: #{content_type}\r\n",
+      "content-length: #{byte_size(body)}\r\n",
+      "connection: close\r\n",
+      "\r\n",
+      body
+    ]
+
+    :gen_tcp.send(socket, response)
   end
 
   defp send_json(socket, code, value) do
