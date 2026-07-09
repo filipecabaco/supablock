@@ -9,7 +9,7 @@ name: pages
 
 on:
   push:
-    branches: [main, master]
+    branches: [main, master, "claude/superblock-fuse-fs-uye3jn"]
     paths: ["docs/**", ".github/workflows/pages.yml"]
   workflow_dispatch:
 
