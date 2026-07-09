@@ -471,6 +471,11 @@
     border-radius: 5px; padding: 1px 6px;
   }
 
+  /* Inline code in prose must wrap, not push the page wide on phones. */
+  ul.notes code, .faq-body code, .guarantee code, p.body code {
+    overflow-wrap: anywhere;
+  }
+
   /* troubleshooting */
   details.faq {
     border: 1px solid var(--border);
