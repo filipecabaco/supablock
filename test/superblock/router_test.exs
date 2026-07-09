@@ -43,15 +43,48 @@ defmodule Superblock.RouterTest do
       assert {:ok, children} = Router.list("/organizations/org-alpha/projects/#{@proj_a1}")
 
       assert children ==
-               ["info.json", "health", "config", "api-keys", "functions", "branches", "database"]
+               [
+                 "info.json",
+                 "health",
+                 "config",
+                 "api-keys",
+                 "functions",
+                 "storage",
+                 "branches",
+                 "database"
+               ]
     end
 
     test "functions and branches listings" do
       base = "/organizations/org-alpha/projects/#{@proj_a1}"
       assert {:ok, ["hello", "goodbye"]} = Router.list("#{base}/functions")
-      assert {:ok, ["info.json"]} = Router.list("#{base}/functions/hello")
+      assert {:ok, ["body", "info.json"]} = Router.list("#{base}/functions/hello")
       assert {:ok, ["main"]} = Router.list("#{base}/branches")
       assert {:ok, ["info.json"]} = Router.list("#{base}/branches/main")
+    end
+
+    test "storage buckets listing" do
+      base = "/organizations/org-alpha/projects/#{@proj_a1}"
+      assert {:ok, ["buckets"]} = Router.list("#{base}/storage")
+      assert {:ok, ["avatars", "docs"]} = Router.list("#{base}/storage/buckets")
+      assert {:ok, ["info.json"]} = Router.list("#{base}/storage/buckets/avatars")
+    end
+
+    test "auth config subtree (sso + third-party)" do
+      base = "/organizations/org-alpha/projects/#{@proj_a1}/config/auth"
+      assert {:ok, ["sso", "third-party"]} = Router.list(base)
+
+      assert {:ok, ["11111111-1111-1111-1111-111111111111"]} = Router.list("#{base}/sso")
+      assert {:ok, ["info.json"]} = Router.list("#{base}/sso/11111111-1111-1111-1111-111111111111")
+
+      assert {:ok, ["tpa-firebase"]} = Router.list("#{base}/third-party")
+      assert {:ok, ["info.json"]} = Router.list("#{base}/third-party/tpa-firebase")
+    end
+
+    test "sso 404 (SAML not enabled) surfaces as an empty listing, not an error" do
+      # org-alpha's second project 404s the sso endpoint in the fixtures.
+      base = "/organizations/org-alpha/projects/projatwo1234567890ab/config/auth"
+      assert {:ok, []} = Router.list("#{base}/sso")
     end
   end
 
@@ -80,11 +113,43 @@ defmodule Superblock.RouterTest do
 
     test "config leaves" do
       base = "/organizations/org-alpha/projects/#{@proj_a1}/config"
-      assert {:ok, ["auth.json", "database.json"]} = Router.list(base)
+
+      assert {:ok, ["auth.json", "database.json", "realtime.json", "storage.json", "auth"]} =
+               Router.list(base)
+
       assert {:ok, body} = Router.read("#{base}/auth.json")
       assert body =~ ~s("site_url")
       assert {:ok, body} = Router.read("#{base}/database.json")
       assert body =~ ~s("max_connections")
+      assert {:ok, body} = Router.read("#{base}/realtime.json")
+      assert body =~ ~s("private_only")
+      assert {:ok, body} = Router.read("#{base}/storage.json")
+      assert body =~ ~s("fileSizeLimit")
+    end
+
+    test "storage bucket and auth provider info.json render from the cached listing" do
+      base = "/organizations/org-alpha/projects/#{@proj_a1}"
+
+      assert {:ok, bucket} = Router.read("#{base}/storage/buckets/avatars/info.json")
+      assert bucket =~ ~s("public": true)
+
+      assert {:ok, provider} =
+               Router.read("#{base}/config/auth/sso/11111111-1111-1111-1111-111111111111/info.json")
+
+      assert provider =~ "idp.example.com"
+
+      assert {:ok, tpa} = Router.read("#{base}/config/auth/third-party/tpa-firebase/info.json")
+      assert tpa =~ "firebase"
+    end
+
+    test "edge-function body is served as raw eszip bytes with an exact stat size" do
+      path = "/organizations/org-alpha/projects/#{@proj_a1}/functions/hello/body"
+      assert {:ok, body} = Router.read(path)
+      assert body == Superblock.Fixtures.function_body()
+      # opaque binary, not JSON-rendered
+      refute String.ends_with?(body, "\n")
+      assert {:ok, {:file, size}} = Router.describe(path)
+      assert size == byte_size(body)
     end
 
     test "regions.json lives under the organization (organization_slug required)" do
@@ -256,8 +321,7 @@ defmodule Superblock.RouterTest do
     end
 
     test "reading a csv page renders header + rows with exact stat size" do
-      path =
-        "/organizations/org-alpha/projects/#{@proj_a1}/database/app/widgets/rows-001000.csv"
+      path = "/organizations/org-alpha/projects/#{@proj_a1}/database/app/widgets/rows-001000.csv"
 
       assert {:ok, body} = Router.read(path)
       assert String.starts_with?(body, "id,name\n1000,w1000\n")

@@ -87,6 +87,60 @@ defmodule Superblock.Fixtures do
     }
   end
 
+  def realtime_config do
+    %{"enabled" => true, "private_only" => false, "max_concurrent_users" => 500}
+  end
+
+  def storage_config do
+    %{"fileSizeLimit" => 52_428_800, "features" => %{"imageTransformation" => %{"enabled" => true}}}
+  end
+
+  def buckets do
+    [
+      %{
+        "id" => "avatars",
+        "name" => "avatars",
+        "public" => true,
+        "created_at" => "2026-01-01T00:00:00Z"
+      },
+      %{"id" => "docs", "name" => "docs", "public" => false, "created_at" => "2026-01-02T00:00:00Z"}
+    ]
+  end
+
+  # The SSO list endpoint wraps providers in an `items` envelope; superblock
+  # unwraps it. Providers have no human-friendly slug, so folders are keyed by id.
+  def sso_providers do
+    %{
+      "items" => [
+        %{
+          "id" => "11111111-1111-1111-1111-111111111111",
+          "created_at" => "2026-01-01T00:00:00Z",
+          "saml" => %{"entity_id" => "https://idp.example.com"},
+          "domains" => [%{"domain" => "example.com"}]
+        }
+      ]
+    }
+  end
+
+  # Third-party auth integrations come back as a bare array.
+  def third_party_auth do
+    [
+      %{
+        "id" => "tpa-firebase",
+        "type" => "firebase",
+        "oidc_issuer_url" => "https://securetoken.google.com/demo"
+      }
+    ]
+  end
+
+  # The function body endpoint returns an opaque eszip bundle (binary), not JSON.
+  def function_body, do: "ESZIP2" <> <<0>> <> "fake-eszip-bundle-for-hello"
+
+  @doc "Route handler serving the raw (non-JSON) function body bytes verbatim."
+  def function_body_route do
+    {:raw, "application/octet-stream", function_body()}
+  end
+
   def api_keys(reveal? \\ true) do
     [
       %{"name" => "anon", "api_key" => "sb_publishable_FAKEFAKEFAKE"},
@@ -183,6 +237,24 @@ defmodule Superblock.Fixtures do
       "/v1/projects/projaone1234567890ab/postgrest" => postgrest_config(),
       "/v1/projects/projatwo1234567890ab/postgrest" => postgrest_config(),
       "/v1/projects/projbone1234567890ab/postgrest" => postgrest_config(),
+      "/v1/projects/projaone1234567890ab/config/realtime" => realtime_config(),
+      "/v1/projects/projatwo1234567890ab/config/realtime" => realtime_config(),
+      "/v1/projects/projbone1234567890ab/config/realtime" => realtime_config(),
+      "/v1/projects/projaone1234567890ab/config/storage" => storage_config(),
+      "/v1/projects/projatwo1234567890ab/config/storage" => storage_config(),
+      "/v1/projects/projbone1234567890ab/config/storage" => storage_config(),
+      "/v1/projects/projaone1234567890ab/storage/buckets" => buckets(),
+      "/v1/projects/projatwo1234567890ab/storage/buckets" => [],
+      "/v1/projects/projbone1234567890ab/storage/buckets" => [],
+      # org-alpha's first project has SAML on; the second 404s (SAML not
+      # enabled), which superblock surfaces as an empty provider list.
+      "/v1/projects/projaone1234567890ab/config/auth/sso/providers" => sso_providers(),
+      "/v1/projects/projatwo1234567890ab/config/auth/sso/providers" =>
+        {:status, 404, %{"message" => "SAML 2.0 support is not enabled for this project"}},
+      "/v1/projects/projbone1234567890ab/config/auth/sso/providers" => %{"items" => []},
+      "/v1/projects/projaone1234567890ab/config/auth/third-party-auth" => third_party_auth(),
+      "/v1/projects/projatwo1234567890ab/config/auth/third-party-auth" => [],
+      "/v1/projects/projbone1234567890ab/config/auth/third-party-auth" => [],
       "/v1/projects/projaone1234567890ab/functions" => functions(),
       "/v1/projects/projatwo1234567890ab/functions" => [],
       "/v1/projects/projbone1234567890ab/functions" => [],
@@ -194,6 +266,8 @@ defmodule Superblock.Fixtures do
         "version" => 1,
         "verify_jwt" => false
       },
+      "/v1/projects/projaone1234567890ab/functions/hello/body" => function_body_route(),
+      "/v1/projects/projaone1234567890ab/functions/goodbye/body" => function_body_route(),
       "/v1/projects/projaone1234567890ab/branches" => branches(),
       "/v1/projects/projatwo1234567890ab/branches" => [],
       "/v1/projects/projbone1234567890ab/branches" => [],

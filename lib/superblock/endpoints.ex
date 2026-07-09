@@ -23,10 +23,16 @@ defmodule Superblock.Endpoints do
           | :health
           | :auth_config
           | :db_config
+          | :realtime_config
+          | :storage_config
+          | :buckets
+          | :sso_providers
+          | :third_party_auth
           | :api_keys
           | :postgrest_config
           | :functions
           | :function
+          | :function_body
           | :branches
           | :regions
 
@@ -46,11 +52,20 @@ defmodule Superblock.Endpoints do
 
   def path(:auth_config, %{ref: ref}), do: "/v1/projects/#{ref}/config/auth"
   def path(:db_config, %{ref: ref}), do: "/v1/projects/#{ref}/config/database/postgres"
+  def path(:realtime_config, %{ref: ref}), do: "/v1/projects/#{ref}/config/realtime"
+  def path(:storage_config, %{ref: ref}), do: "/v1/projects/#{ref}/config/storage"
+  def path(:buckets, %{ref: ref}), do: "/v1/projects/#{ref}/storage/buckets"
+  def path(:sso_providers, %{ref: ref}), do: "/v1/projects/#{ref}/config/auth/sso/providers"
+  def path(:third_party_auth, %{ref: ref}), do: "/v1/projects/#{ref}/config/auth/third-party-auth"
   def path(:api_keys, %{ref: ref, reveal: true}), do: "/v1/projects/#{ref}/api-keys?reveal=true"
   def path(:api_keys, %{ref: ref}), do: "/v1/projects/#{ref}/api-keys"
   def path(:postgrest_config, %{ref: ref}), do: "/v1/projects/#{ref}/postgrest"
   def path(:functions, %{ref: ref}), do: "/v1/projects/#{ref}/functions"
   def path(:function, %{ref: ref, fn_slug: fn_slug}), do: "/v1/projects/#{ref}/functions/#{fn_slug}"
+
+  def path(:function_body, %{ref: ref, fn_slug: fn_slug}),
+    do: "/v1/projects/#{ref}/functions/#{fn_slug}/body"
+
   def path(:branches, %{ref: ref}), do: "/v1/projects/#{ref}/branches"
 
   def path(:regions, %{slug: slug}),
@@ -61,9 +76,12 @@ defmodule Superblock.Endpoints do
   def ttl_class(key) when key in [:orgs, :org, :org_members], do: "orgs"
   def ttl_class(key) when key in [:projects, :project, :auth_config, :db_config], do: "project"
 
-  def ttl_class(key) when key in [:functions, :function, :branches, :postgrest_config],
-    do: "project"
+  def ttl_class(key)
+      when key in [:realtime_config, :storage_config, :buckets, :sso_providers, :third_party_auth],
+      do: "project"
 
+  def ttl_class(key) when key in [:functions, :function, :function_body, :branches], do: "project"
+  def ttl_class(:postgrest_config), do: "project"
   def ttl_class(:health), do: "health"
   def ttl_class(key) when key in [:api_keys, :regions], do: "static"
 end

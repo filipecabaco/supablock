@@ -21,12 +21,21 @@ Unix tools — `ls`, `cat`, `grep`, `find`, `diff`.
                 ├── health                  # "db: healthy" etc.
                 ├── config/
                 │   ├── auth.json
-                │   └── database.json
+                │   ├── database.json
+                │   ├── realtime.json
+                │   ├── storage.json
+                │   └── auth/
+                │       ├── sso/<provider-id>/info.json
+                │       └── third-party/<id>/info.json
                 ├── api-keys/
                 │   ├── publishable
                 │   └── secret              # REDACTED unless you opt in
                 ├── functions/
-                │   └── hello/info.json
+                │   └── hello/
+                │       ├── info.json
+                │       └── body            # raw eszip bundle
+                ├── storage/
+                │   └── buckets/<name>/info.json
                 ├── branches/
                 │   └── main/info.json
                 └── database/               # every project, via its Data API
@@ -228,7 +237,25 @@ grep '"region"' /mnt/supabase/organizations/*/projects/*/info.json
 
 # Site URLs across the whole account
 grep -r '"site_url"' /mnt/supabase/organizations/*/projects/*/config/auth.json
+
+# Which projects have a public storage bucket?
+grep -l '"public": true' /mnt/supabase/organizations/*/projects/*/storage/buckets/*/info.json
+
+# Realtime enabled per project
+grep -H '"enabled"' /mnt/supabase/organizations/*/projects/*/config/realtime.json
+
+# Unpack an edge function's source (the body is an eszip bundle)
+npx eszip extract \
+  /mnt/supabase/organizations/my-org/projects/<ref>/functions/hello/body ./hello-src
 ```
+
+Beyond the Management-API config already shown, each project now also exposes
+its **realtime** and **storage** configuration (`config/realtime.json`,
+`config/storage.json`), its **storage buckets**
+(`storage/buckets/<name>/info.json`), its **SSO** and **third-party auth**
+integrations (`config/auth/sso/…`, `config/auth/third-party/…`), and each
+**edge function's** deployed bundle (`functions/<slug>/body`, the raw eszip).
+All are `GET`-only, so the read-only guarantee is unchanged.
 
 Output is deterministic — JSON is pretty-printed with sorted keys — so
 `diff` between projects is clean and `stat` sizes are exact.
