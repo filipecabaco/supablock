@@ -137,9 +137,10 @@
 
   .top-inner {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     justify-content: space-between;
-    gap: 16px;
+    gap: 8px 16px;
     padding: 14px 0;
   }
 
@@ -148,13 +149,15 @@
     font-weight: 600;
     letter-spacing: 0.02em;
     color: var(--text);
+    white-space: nowrap;
   }
 
   .wordmark .tick { color: var(--brand); }
 
   .top-nav {
     display: flex;
-    gap: 20px;
+    flex-wrap: wrap;
+    gap: 8px 20px;
     font-size: 13.5px;
   }
 
@@ -180,12 +183,13 @@
   }
 
   h1 {
-    font-size: clamp(30px, 5.4vw, 46px);
+    font-size: clamp(28px, 5.4vw, 46px);
     line-height: 1.12;
     font-weight: 700;
     letter-spacing: -0.022em;
     margin: 0 0 18px;
     text-wrap: balance;
+    overflow-wrap: break-word;
   }
 
   h1 .path { color: var(--brand); }
@@ -329,7 +333,8 @@
 
   .code pre {
     margin: 0;
-    padding: 15px 18px;
+    /* right padding clears the absolutely-positioned copy button */
+    padding: 15px 84px 15px 18px;
     font-size: 13.5px;
     line-height: 1.6;
     color: #d6d6d6;
@@ -367,6 +372,10 @@
     grid-template-columns: 44px 1fr;
     gap: 16px;
   }
+
+  /* Grid items default to min-width auto: without this, the code blocks'
+     intrinsic width blows the column out past the viewport on phones. */
+  .step > div { min-width: 0; }
 
   .step .n {
     font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
@@ -462,6 +471,11 @@
     border-radius: 5px; padding: 1px 6px;
   }
 
+  /* Inline code in prose must wrap, not push the page wide on phones. */
+  ul.notes code, .faq-body code, .guarantee code, p.body code {
+    overflow-wrap: anywhere;
+  }
+
   /* troubleshooting */
   details.faq {
     border: 1px solid var(--border);
@@ -512,9 +526,17 @@
   footer .wrap { display: flex; flex-wrap: wrap; gap: 8px 24px; justify-content: space-between; }
 
   @media (max-width: 560px) {
-    .hero { padding-top: 48px; }
-    .step { grid-template-columns: 36px 1fr; gap: 12px; }
-    .step .n { width: 36px; height: 32px; }
+    .wrap { padding: 0 20px; }
+    .hero { padding-top: 44px; }
+    .step { grid-template-columns: 32px 1fr; gap: 12px; }
+    .step .n { width: 32px; height: 30px; font-size: 12px; }
+    /* let the headline wrap naturally on narrow screens */
+    h1 br { display: none; }
+    .lede { font-size: 16.5px; }
+    .term-body { min-height: 16em; font-size: 12.5px; padding: 14px 16px 18px; }
+    .code pre { font-size: 12.5px; padding: 13px 72px 13px 14px; }
+    .guarantee { padding: 18px 16px; }
+    section { padding: 36px 0 6px; }
   }
 </style>
 </head>
@@ -574,7 +596,7 @@
 <main>
   <div class="wrap hero">
     <span class="eyebrow">Read-only FUSE filesystem · Elixir</span>
-    <h1>Your Supabase account,<br>mounted at <span class="path mono">/mnt/supabase</span></h1>
+    <h1>Your Supabase account, <br>mounted at <span class="path mono">/mnt/supabase</span></h1>
     <p class="lede">
       superblock mirrors the Supabase Management API as a browsable directory tree.
       Log in once with a personal access token, mount, and inspect organizations, projects,
