@@ -22,15 +22,18 @@ defmodule Superblock.CLI do
     Auth,
     AuthCallback,
     BrowserLogin,
+    Client,
     Config,
     Control,
     Credentials,
     Database,
     DbCredentials,
     Doctor,
+    Endpoints,
     Fs,
     OAuth,
     Paths,
+    Profile,
     Service,
     Signals
   }
@@ -39,6 +42,8 @@ defmodule Superblock.CLI do
   superblock — browse the Supabase Management API as a filesystem
 
   Usage:
+    superblock setup [profile]           One-command onboarding: apply a team profile
+                                         (URL or file), log in, offer auto-start
     superblock login                     Browser login: OAuth2 + PKCE when an OAuth app
                                          is configured, dashboard session flow otherwise
     superblock login --token sbp_...     Authenticate with a personal access token
@@ -50,7 +55,7 @@ defmodule Superblock.CLI do
     superblock config set <key> <value>  Set a config key
     superblock config get <key>          Read a config key
     superblock config list               Show effective config
-    superblock mount [mountpoint]        Mount (foreground; Ctrl-C unmounts)
+    superblock mount [mountpoint]        Mount (foreground; Ctrl-C unmounts; default ~/Supabase)
     superblock unmount [mountpoint]      Unmount a running superblock
     superblock refresh                   Flush the cache of a mounted superblock
     superblock refresh --check           Report cache staleness without flushing
@@ -102,6 +107,7 @@ defmodule Superblock.CLI do
       ["help" | _rest] -> help()
       ["-h" | _rest] -> help()
       ["--help" | _rest] -> help()
+      ["setup" | rest] -> setup(rest)
       ["login" | rest] -> login(rest)
       ["logout" | _rest] -> logout()
       ["status" | _rest] -> status()
@@ -134,6 +140,10 @@ defmodule Superblock.CLI do
     {opts, _rest, _invalid} =
       OptionParser.parse(args, strict: [token: :string, no_browser: :boolean])
 
+    run_login(opts)
+  end
+
+  defp run_login(opts) do
     no_browser? = opts[:no_browser] || false
 
     cond do
@@ -147,6 +157,102 @@ defmodule Superblock.CLI do
         IO.puts("No OAuth app configured (oauth.client_id) — using the dashboard session flow.")
         browser_login(no_browser?)
     end
+  end
+
+  ## setup (one-command onboarding)
+
+  # Apply a shared team profile, make sure the user is logged in, offer the
+  # auto-start service. Everything is idempotent — rerunning is safe.
+  defp setup(args) do
+    {opts, rest, _invalid} =
+      OptionParser.parse(args,
+        strict: [service: :boolean, no_browser: :boolean, token: :string]
+      )
+
+    case apply_profile(List.first(rest)) do
+      :ok ->
+        case ensure_authenticated(opts) do
+          0 ->
+            maybe_install_service(opts[:service])
+            IO.puts("")
+            IO.puts("All set. Mount with: superblock mount   (default: #{Config.mountpoint()})")
+            0
+
+          code ->
+            code
+        end
+
+      {:error, message} ->
+        IO.puts(:stderr, message)
+        1
+    end
+  end
+
+  defp apply_profile(nil), do: :ok
+
+  defp apply_profile(source) do
+    IO.puts("Applying team profile from #{source} …")
+
+    with {:ok, profile} <- Profile.fetch(source),
+         {:ok, applied, skipped} <- Profile.apply(profile) do
+      Enum.each(applied, fn key -> IO.puts("  #{key} = #{display_config_value(key)}") end)
+      Enum.each(skipped, fn key -> IO.puts("  skipped unknown key: #{key}") end)
+      :ok
+    end
+  end
+
+  # never echo the app secret back
+  defp display_config_value("oauth.client_secret"), do: "(set)"
+  defp display_config_value(key), do: format_value(Config.get(key))
+
+  defp ensure_authenticated(opts) do
+    case Credentials.load() do
+      :missing ->
+        run_login(opts)
+
+      {:ok, _token} ->
+        case Auth.validate() do
+          {:ok, org_count} ->
+            IO.puts("Already authenticated — #{org_count} organizations found.")
+            0
+
+          {:error, :unauthorized} ->
+            IO.puts("Stored credential no longer valid — logging in again.")
+            run_login(opts)
+
+          {:error, reason} ->
+            # a network hiccup is not a reason to redo the login
+            IO.puts(:stderr, "Could not verify authentication: #{describe_error(reason)}")
+            3
+        end
+    end
+  end
+
+  defp maybe_install_service(false), do: :ok
+  defp maybe_install_service(true), do: install_service_quietly()
+
+  defp maybe_install_service(nil) do
+    case IO.gets("Install the auto-start service (mounts at login)? [y/N] ") do
+      line when is_binary(line) ->
+        if String.downcase(String.trim(line)) in ["y", "yes"] do
+          install_service_quietly()
+        else
+          :ok
+        end
+
+      _eof ->
+        :ok
+    end
+  end
+
+  # setup should not fail as a whole when only the service step does
+  defp install_service_quietly do
+    case Service.install() do
+      {:ok, messages} -> Enum.each(messages, &IO.puts("  " <> &1))
+      {:error, message} -> IO.puts(:stderr, "  service install failed: #{message}")
+    end
+
+    :ok
   end
 
   # The documented OAuth2 flow (PKCE S256 + state, loopback callback):
@@ -445,8 +551,8 @@ defmodule Superblock.CLI do
       Logger.configure(level: :debug)
     end
 
-    with {:ok, mountpoint} <- resolve_mountpoint(rest),
-         :authed <- require_auth() do
+    with :authed <- require_auth(),
+         {:ok, mountpoint} <- resolve_mountpoint(rest) do
       attach_file_logger()
       Signals.install()
 
@@ -466,25 +572,20 @@ defmodule Superblock.CLI do
     end
   end
 
+  # Explicit argument > configured value > ~/Supabase (a real default, so a
+  # fresh install mounts with zero config). The directory is created if
+  # missing — an empty mountpoint dir is exactly what FUSE wants.
   defp resolve_mountpoint(args) do
-    case args do
-      [mountpoint | _rest] ->
-        {:ok, mountpoint}
+    mountpoint =
+      case args do
+        [mountpoint | _rest] -> mountpoint
+        [] -> Config.mountpoint()
+      end
 
-      [] ->
-        case Config.get("mountpoint") do
-          mountpoint when is_binary(mountpoint) and mountpoint != "" ->
-            {:ok, mountpoint}
-
-          _unset ->
-            IO.puts(
-              :stderr,
-              "No mountpoint. Pass one or run: superblock config set mountpoint /mnt/supabase"
-            )
-
-            {:exit, 1}
-        end
-    end
+    # Best effort: a stale mount makes mkdir_p fail, and Fs.mount both
+    # recovers stale mounts and reports real errors with a doctor hint.
+    _ = File.mkdir_p(mountpoint)
+    {:ok, mountpoint}
   end
 
   # Mirror the mount's log output into <state_dir>/superblock.log using the
@@ -662,7 +763,7 @@ defmodule Superblock.CLI do
 
     url =
       case opts[:url] do
-        nil -> prompt_db_url()
+        nil -> build_or_prompt_db_url(ref)
         url -> url
       end
 
@@ -719,6 +820,26 @@ defmodule Superblock.CLI do
     safe_forget(ref)
     IO.puts("Removed database URL for #{ref}.")
     0
+  end
+
+  # The Management API can tell us everything about the connection except
+  # the password (which it never returns, by design): build the URL from the
+  # project's database host and prompt only for the secret. Falls back to a
+  # full-URL prompt when the project can't be looked up.
+  defp build_or_prompt_db_url(ref) do
+    case Client.get(Endpoints.path(:project, %{ref: ref})) do
+      {:ok, %{"database" => %{"host" => host}} = project}
+      when is_binary(host) and host != "" ->
+        IO.puts("Project #{project["name"] || ref} — database host #{host}.")
+
+        case hidden_input("Database password (postgres user): ") do
+          "" -> nil
+          password -> "postgres://postgres:#{URI.encode_www_form(password)}@#{host}:5432/postgres"
+        end
+
+      _unavailable ->
+        prompt_db_url()
+    end
   end
 
   defp prompt_db_url do

@@ -56,6 +56,17 @@ defmodule Superblock.Config do
     end
   end
 
+  @doc """
+  The effective mountpoint: the configured one, or `~/Supabase` — a real
+  default so a fresh install can `login` and `mount` with zero config.
+  """
+  def mountpoint do
+    case get("mountpoint") do
+      configured when is_binary(configured) and configured != "" -> configured
+      _unset -> Path.join(System.user_home!(), "Supabase")
+    end
+  end
+
   @doc "TTL for a class (\"orgs\" | \"project\" | \"health\" | \"static\"), in ms."
   def ttl_ms(class) when is_binary(class) do
     seconds = get_in_path(["ttl", class]) || 30

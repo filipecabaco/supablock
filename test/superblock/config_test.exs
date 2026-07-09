@@ -75,4 +75,11 @@ defmodule Superblock.ConfigTest do
     :ok = Config.set("ttl.orgs", "2")
     assert Config.ttl_ms("orgs") == 2_000
   end
+
+  test "mountpoint defaults to ~/Supabase and honours the configured value" do
+    assert Config.mountpoint() == Path.join(System.user_home!(), "Supabase")
+
+    :ok = Config.set("mountpoint", "/mnt/team")
+    assert Config.mountpoint() == "/mnt/team"
+  end
 end

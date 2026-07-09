@@ -13,9 +13,13 @@ defmodule Superblock.ServiceTest do
     {:ok, base: base}
   end
 
-  test "install requires a configured mountpoint" do
-    assert {:error, message} = Service.install()
-    assert message =~ "no mountpoint configured"
+  test "install without a configured mountpoint uses the ~/Supabase default", %{base: base} do
+    assert {:ok, _messages} = Service.install()
+
+    unit_path = Path.join([base, "config", "systemd", "user", "superblock.service"])
+    assert File.read!(unit_path) =~ Path.join(System.user_home!(), "Supabase")
+
+    assert {:ok, _messages} = Service.uninstall()
   end
 
   test "install writes a systemd user unit under XDG_CONFIG_HOME", %{base: base} do
@@ -45,10 +49,5 @@ defmodule Superblock.ServiceTest do
 
     assert capture_io(:stderr, fn -> assert CLI.run(["service", "bogus"]) == 1 end) =~
              "Usage: superblock service"
-  end
-
-  test "cli service install surfaces missing mountpoint as an error" do
-    stderr = capture_io(:stderr, fn -> assert CLI.run(["service", "install"]) == 1 end)
-    assert stderr =~ "no mountpoint configured"
   end
 end

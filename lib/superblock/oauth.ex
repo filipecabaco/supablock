@@ -18,9 +18,12 @@ defmodule Superblock.OAuth do
 
   The client id/secret identify the app, not the user; in a distributed CLI
   they are not confidential (standard public-client reality — PKCE and the
-  loopback-only redirect are what protect the flow). They come from
-  `superblock config set oauth.client_id/…client_secret`, with
-  `SUPERBLOCK_OAUTH_CLIENT_ID`/`_SECRET` as overrides.
+  loopback-only redirect are what protect the flow). Resolution order:
+  `superblock config set oauth.client_id/…client_secret` → the
+  `SUPERBLOCK_OAUTH_CLIENT_ID`/`_SECRET` environment variables → the app
+  identity **baked in at build time** (CI injects the released superblock
+  OAuth app's credentials, so `superblock login` needs zero configuration —
+  the same way gh/gcloud ship theirs).
   """
 
   alias Superblock.{Client, Config}
@@ -28,6 +31,10 @@ defmodule Superblock.OAuth do
   @callback_port 53682
   @redirect_path "/callback"
   @timeout_ms 8_000
+
+  # Captured at compile time from the build environment (CI secrets).
+  @baked_client_id System.get_env("SUPERBLOCK_OAUTH_CLIENT_ID")
+  @baked_client_secret System.get_env("SUPERBLOCK_OAUTH_CLIENT_SECRET")
 
   defstruct [:state, :verifier, :url, :redirect_uri]
 
@@ -200,13 +207,15 @@ defmodule Superblock.OAuth do
   @doc false
   def client_id do
     presence(Config.get("oauth.client_id")) ||
-      presence(System.get_env("SUPERBLOCK_OAUTH_CLIENT_ID"))
+      presence(System.get_env("SUPERBLOCK_OAUTH_CLIENT_ID")) ||
+      presence(@baked_client_id)
   end
 
   @doc false
   def client_secret do
     presence(Config.get("oauth.client_secret")) ||
-      presence(System.get_env("SUPERBLOCK_OAUTH_CLIENT_SECRET"))
+      presence(System.get_env("SUPERBLOCK_OAUTH_CLIENT_SECRET")) ||
+      presence(@baked_client_secret)
   end
 
   defp presence(value) when is_binary(value) and value != "", do: value

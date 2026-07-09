@@ -20,14 +20,27 @@ name: release
 on:
   push:
     tags: ["v*"]
-    branches: [main, master, "claude/superblock-fuse-fs-uye3jn"]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: write
 
+# macOS runners are scarce: without this, branch pushes pile up runs that
+# all wait hours for the same queue. Newest push wins; tag builds are never
+# cancelled (their group is the unique tag ref).
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
 env:
   MIX_ENV: prod
+  # Baked into the binary at compile time (Superblock.OAuth): the released
+  # superblock OAuth app identity, so `superblock login` works with zero
+  # configuration. Empty (repo secrets unset) simply falls back to the
+  # dashboard session flow — nothing breaks.
+  SUPERBLOCK_OAUTH_CLIENT_ID: ${{ secrets.SUPERBLOCK_OAUTH_CLIENT_ID }}
+  SUPERBLOCK_OAUTH_CLIENT_SECRET: ${{ secrets.SUPERBLOCK_OAUTH_CLIENT_SECRET }}
 
 jobs:
   linux:
@@ -40,6 +53,7 @@ jobs:
           - runner: ubuntu-24.04-arm
             arch: aarch64
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
@@ -75,16 +89,21 @@ jobs:
           name: superblock-linux-${{ matrix.arch }}
           path: superblock-linux-${{ matrix.arch }}
 
+  # One macOS job, arm64 only: Macs have been arm-only since 2020, and macOS
+  # runner capacity is the scarce resource (macos-13 was retired — jobs
+  # targeting it queued forever, starving the publish job — and macos-14
+  # entered deprecation on 2026-07-06 with hours-long queues; macos-15 is the
+  # current macos-latest fleet). Intel-Mac users build from source; the
+  # installer says so.
   macos:
     strategy:
       fail-fast: false
       matrix:
         include:
-          - runner: macos-13
-            arch: x86_64
-          - runner: macos-14
+          - runner: macos-15
             arch: aarch64
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
 
@@ -125,7 +144,9 @@ jobs:
   # whatever was built.
   publish:
     needs: [linux, macos]
-    if: always() && (startsWith(github.ref, 'refs/tags/') || github.ref_name == github.event.repository.default_branch)
+    # Compare against the literal ref: the event payload's default_branch
+    # proved stale during a branch rename, silently skipping publish.
+    if: always() && (startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4

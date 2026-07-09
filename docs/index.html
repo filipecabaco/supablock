@@ -703,17 +703,19 @@
   <section id="quickstart">
     <div class="wrap">
       <p class="sec-label"><svg class="icon" aria-hidden="true"><use href="#i-command-line"/></svg>Quick start</p>
-      <h2>Three commands to a mounted account</h2>
+      <h2>Two commands to a mounted account</h2>
 
       <div class="steps">
         <div class="step">
           <span class="n">1</span>
           <div>
             <h3>Authenticate</h3>
-            <p>With an OAuth app configured, <span class="mono">login</span> runs the OAuth2 flow —
-               PKCE&nbsp;S256, browser consent, loopback callback — and stores short-lived, scoped
-               tokens that refresh automatically. Otherwise it falls back to the supabase-CLI-style
-               dashboard session flow, and <span class="mono">--token sbp_…</span> always works.</p>
+            <p>Released binaries carry the superblock OAuth app identity, so
+               <span class="mono">login</span> just works: the OAuth2 flow — PKCE&nbsp;S256, browser
+               consent, loopback callback — storing short-lived, scoped tokens that refresh
+               automatically. Teams can override the app via config; without any OAuth identity it
+               falls back to the supabase-CLI-style dashboard session flow, and
+               <span class="mono">--token sbp_…</span> always works.</p>
             <div class="code">
               <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
               <pre><span class="p">$</span> superblock login
@@ -732,27 +734,32 @@ Waiting for the callback on http://localhost:53682/callback …
         <div class="step">
           <span class="n">2</span>
           <div>
-            <h3>Pick a mountpoint</h3>
-            <p>Set it once in config, or pass it to <span class="mono">mount</span> each time —
-               the command-line argument always wins.</p>
+            <h3>Mount and browse</h3>
+            <p>The mountpoint defaults to <span class="mono">~/Supabase</span> (created on
+               demand) — override it with <span class="mono">config set mountpoint</span> or a
+               command-line argument. <span class="mono">mount</span> runs in the foreground;
+               <strong>Ctrl-C unmounts cleanly</strong> (so do SIGTERM and even
+               <span class="mono">kill&nbsp;-9</span> — a watchdog in the FUSE port never
+               leaves a stale mount). Explore from any other shell.</p>
             <div class="code">
               <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
-              <pre><span class="p">$</span> superblock config set mountpoint /mnt/supabase</pre>
+              <pre><span class="p">$</span> superblock mount
+Mounted at ~/Supabase. Ctrl-C to unmount.</pre>
             </div>
           </div>
         </div>
 
         <div class="step">
-          <span class="n">3</span>
+          <span class="n">＋</span>
           <div>
-            <h3>Mount and browse</h3>
-            <p><span class="mono">mount</span> runs in the foreground; <strong>Ctrl-C unmounts
-               cleanly</strong> (so do SIGTERM and even <span class="mono">kill&nbsp;-9</span> —
-               a watchdog in the FUSE port never leaves a stale mount). Explore from any other shell.</p>
+            <h3>Onboarding a whole team?</h3>
+            <p>One command applies a shared profile (a flat JSON of config keys your team
+               commits to its dotfiles or wiki — OAuth app, mountpoint convention, TTLs),
+               logs in, and offers the auto-start service. Only known config keys are
+               applied; secrets and tokens never belong in a profile.</p>
             <div class="code">
               <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
-              <pre><span class="p">$</span> superblock mount
-Mounted at /mnt/supabase. Ctrl-C to unmount.</pre>
+              <pre><span class="p">$</span> superblock setup https://team.example.com/superblock.json</pre>
             </div>
           </div>
         </div>
@@ -847,7 +854,9 @@ Mounted at /mnt/supabase. Ctrl-C to unmount.</pre>
         <p class="what"><strong>Connect a project's database (password is not echoed).</strong></p>
         <div class="code">
           <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
-          <pre><span class="p">$</span> superblock db add &lt;ref&gt; --url 'postgres://postgres.&lt;ref&gt;:&lt;pw&gt;@…pooler.supabase.com:6543/postgres'</pre>
+          <pre><span class="p">$</span> superblock db add &lt;ref&gt;
+Project My App — database host db.&lt;ref&gt;.supabase.co.
+Database password (postgres user):</pre>
         </div>
       </div>
 
@@ -890,16 +899,17 @@ rows-000000.csv  rows-000500.csv  rows-001000.csv
             <tr><th>Command</th><th>What it does</th></tr>
           </thead>
           <tbody>
-            <tr><td><code>superblock login</code></td><td>Browser login: OAuth2 + PKCE with scoped, auto-refreshing tokens (when an OAuth app is configured), dashboard session flow otherwise. <code>--token sbp_…</code> pastes a token; <code>--no-browser</code> just prints the URL.</td></tr>
+            <tr><td><code>superblock setup [profile]</code></td><td>One-command onboarding: apply a shared team profile (URL or file), log in, offer the auto-start service.</td></tr>
+            <tr><td><code>superblock login</code></td><td>Browser login: OAuth2 + PKCE with scoped, auto-refreshing tokens (app identity baked into released binaries), dashboard session flow otherwise. <code>--token sbp_…</code> pastes a token; <code>--no-browser</code> just prints the URL.</td></tr>
             <tr><td><code>superblock logout</code></td><td>Delete the credential and revoke the OAuth grant.</td></tr>
             <tr><td><code>superblock status</code></td><td>Auth state (masked token), org count, mount state, last-seen rate limits.</td></tr>
             <tr><td><code>superblock doctor</code></td><td>Environment checks with a fix hint per failure.</td></tr>
             <tr><td><code>superblock config set|get|list</code></td><td>Mountpoint, cache TTLs, <code>http_timeout_ms</code>, <code>expose_secrets</code>, <code>db_format</code>, <code>db_page_size</code>.</td></tr>
-            <tr><td><code>superblock mount [dir]</code></td><td>Mount in the foreground; recovers stale mounts automatically.</td></tr>
+            <tr><td><code>superblock mount [dir]</code></td><td>Mount in the foreground (default <code>~/Supabase</code>); recovers stale mounts automatically.</td></tr>
             <tr><td><code>superblock unmount [dir]</code></td><td>Unmount from another shell.</td></tr>
             <tr><td><code>superblock refresh</code></td><td>Flush the cache of a live mount; next reads re-fetch.</td></tr>
             <tr><td><code>superblock refresh --check</code></td><td>Report cache staleness (total / past-TTL entries) without flushing.</td></tr>
-            <tr><td><code>superblock db add &lt;ref&gt;</code></td><td>Store a Postgres URL so the project grows a <code>database/</code> tree. <code>--url</code> skips the prompt.</td></tr>
+            <tr><td><code>superblock db add &lt;ref&gt;</code></td><td>Connect a project's database: the URL is built from project info, you type only the password. <code>--url</code> overrides.</td></tr>
             <tr><td><code>superblock db list | remove &lt;ref&gt;</code></td><td>List projects with a database URL (password masked), or forget one.</td></tr>
             <tr><td><code>superblock service install|uninstall|status</code></td><td>Auto-start the mount at login — systemd user unit (Linux) or launchd agent (macOS).</td></tr>
           </tbody>
