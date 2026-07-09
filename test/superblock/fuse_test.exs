@@ -86,9 +86,10 @@ defmodule Superblock.FuseTest do
     # Distinct endpoints behind the fixture tree; every one may be fetched
     # exactly once thanks to the cache:
     #   orgs(1) projects(1) org info+members+regions(6)
-    #   per project (x3): info health auth db api-keys functions branches (21)
-    #   function info (2)
-    budget = 31
+    #   per project (x3): info health auth db api-keys functions branches
+    #     realtime-config storage-config buckets sso third-party (12 -> 36)
+    #   per function (x2): info + body (4)
+    budget = 48
     assert TestEnv.total_hits() <= budget
 
     # walking again is free (everything within TTL)

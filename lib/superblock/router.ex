@@ -17,9 +17,15 @@ defmodule Superblock.Router do
                 health
                 config/auth.json
                 config/database.json
+                config/realtime.json
+                config/storage.json
+                config/auth/sso/<provider-id>/info.json
+                config/auth/third-party/<integration-id>/info.json
                 api-keys/publishable
                 api-keys/secret
                 functions/<fn-slug>/info.json
+                functions/<fn-slug>/body       # raw eszip bundle
+                storage/buckets/<bucket>/info.json
                 branches/<branch>/info.json
                 database/                    # only when a DB URL is configured
                   <schema>/
@@ -40,8 +46,9 @@ defmodule Superblock.Router do
   @type node_kind :: :dir | {:file, non_neg_integer}
   @type error :: :enoent | :eio | :eagain | :eacces
 
-  @project_children ~w(info.json health config api-keys functions branches)
-  @config_children ~w(auth.json database.json)
+  @project_children ~w(info.json health config api-keys functions storage branches)
+  @config_children ~w(auth.json database.json realtime.json storage.json auth)
+  @auth_config_children ~w(sso third-party)
   @api_key_children ~w(publishable secret)
 
   @redacted_body "REDACTED — run: superblock config set expose_secrets true\n"
@@ -139,6 +146,36 @@ defmodule Superblock.Router do
   defp resolve_project(project, ["config", "database.json"]),
     do: file(:db_config, %{ref: project_ref(project)}, &Render.json/1)
 
+  defp resolve_project(project, ["config", "realtime.json"]),
+    do: file(:realtime_config, %{ref: project_ref(project)}, &Render.json/1)
+
+  defp resolve_project(project, ["config", "storage.json"]),
+    do: file(:storage_config, %{ref: project_ref(project)}, &Render.json/1)
+
+  defp resolve_project(_project, ["config", "auth"]) do
+    {:dir, fn -> {:ok, @auth_config_children} end}
+  end
+
+  defp resolve_project(project, ["config", "auth", "sso"]) do
+    {:dir, fn -> with {:ok, entries} <- sso_entries(project), do: {:ok, names(entries)} end}
+  end
+
+  defp resolve_project(project, ["config", "auth", "sso", provider_id | rest]) do
+    with_entry(sso_entries(project), provider_id, fn provider ->
+      resolve_listed(provider, rest)
+    end)
+  end
+
+  defp resolve_project(project, ["config", "auth", "third-party"]) do
+    {:dir, fn -> with {:ok, entries} <- tpa_entries(project), do: {:ok, names(entries)} end}
+  end
+
+  defp resolve_project(project, ["config", "auth", "third-party", integration_id | rest]) do
+    with_entry(tpa_entries(project), integration_id, fn integration ->
+      resolve_listed(integration, rest)
+    end)
+  end
+
   defp resolve_project(_project, ["api-keys"]) do
     {:dir, fn -> {:ok, @api_key_children} end}
   end
@@ -165,6 +202,22 @@ defmodule Superblock.Router do
       resolve_function(project, function, rest)
     end)
   end
+
+  defp resolve_project(_project, ["storage"]) do
+    {:dir, fn -> {:ok, ["buckets"]} end}
+  end
+
+  defp resolve_project(project, ["storage", "buckets"]) do
+    {:dir, fn -> with {:ok, entries} <- bucket_entries(project), do: {:ok, names(entries)} end}
+  end
+
+  defp resolve_project(project, ["storage", "buckets", bucket_name | rest]) do
+    with_entry(bucket_entries(project), bucket_name, fn bucket ->
+      resolve_listed(bucket, rest)
+    end)
+  end
+
+  defp resolve_project(_project, ["storage" | _rest]), do: {:error, :enoent}
 
   defp resolve_project(project, ["branches"]) do
     {:dir, fn -> with {:ok, entries} <- branch_entries(project), do: {:ok, names(entries)} end}
@@ -287,15 +340,40 @@ defmodule Superblock.Router do
   end
 
   defp resolve_function(_project, _function, []) do
-    {:dir, fn -> {:ok, ["info.json"]} end}
+    {:dir, fn -> {:ok, ["body", "info.json"]} end}
   end
 
   defp resolve_function(project, function, ["info.json"]) do
-    args = %{ref: project_ref(project), fn_slug: to_string(function["slug"] || function["id"])}
-    file(:function, args, &Render.json/1)
+    file(:function, function_args(project, function), &Render.json/1)
+  end
+
+  # The eszip bundle the API returns for a function is opaque binary — passed
+  # through verbatim rather than JSON-rendered.
+  defp resolve_function(project, function, ["body"]) do
+    file(:function_body, function_args(project, function), &raw_body/1)
   end
 
   defp resolve_function(_project, _function, _rest), do: {:error, :enoent}
+
+  defp function_args(project, function) do
+    %{ref: project_ref(project), fn_slug: to_string(function["slug"] || function["id"])}
+  end
+
+  defp raw_body(body) when is_binary(body), do: body
+  defp raw_body(body), do: Render.json(body)
+
+  # SSO providers, third-party integrations and storage buckets have no child
+  # resources and no per-item endpoint: each is rendered straight from its
+  # already-cached parent listing, exactly like a branch.
+  defp resolve_listed(_item, []) do
+    {:dir, fn -> {:ok, ["info.json"]} end}
+  end
+
+  defp resolve_listed(item, ["info.json"]) do
+    {:file, fn -> {:ok, Render.json(item)} end}
+  end
+
+  defp resolve_listed(_item, _rest), do: {:error, :enoent}
 
   defp resolve_branch(_branch, []) do
     {:dir, fn -> {:ok, ["info.json"]} end}
@@ -382,6 +460,35 @@ defmodule Superblock.Router do
       {:ok, entries(branches, fn b -> to_string(b["name"] || b["id"]) end)}
     end
   end
+
+  defp bucket_entries(project) do
+    with {:ok, buckets} <- fetch(:buckets, %{ref: project_ref(project)}) do
+      {:ok, entries(to_list(buckets), fn b -> to_string(b["name"] || b["id"]) end)}
+    end
+  end
+
+  # SSO is a SAML-only feature: the endpoint 404s on projects without SAML
+  # enabled, which we surface as an empty provider list rather than a missing
+  # directory.
+  defp sso_entries(project) do
+    case fetch(:sso_providers, %{ref: project_ref(project)}) do
+      {:ok, providers} -> {:ok, entries(to_list(providers), &to_string(&1["id"]))}
+      {:error, :enoent} -> {:ok, []}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp tpa_entries(project) do
+    with {:ok, integrations} <- fetch(:third_party_auth, %{ref: project_ref(project)}) do
+      {:ok, entries(to_list(integrations), &to_string(&1["id"]))}
+    end
+  end
+
+  # These listings come back either as a bare array or wrapped in an `items`
+  # envelope depending on the endpoint; normalise both to a plain list.
+  defp to_list(list) when is_list(list), do: list
+  defp to_list(%{"items" => list}) when is_list(list), do: list
+  defp to_list(_other), do: []
 
   defp org_slug(org), do: to_string(org["slug"] || org["id"])
   defp project_ref(project), do: to_string(project["id"] || project["ref"])
