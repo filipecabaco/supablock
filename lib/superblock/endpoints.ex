@@ -60,8 +60,10 @@ defmodule Superblock.Endpoints do
   @spec ttl_class(key) :: String.t()
   def ttl_class(key) when key in [:orgs, :org, :org_members], do: "orgs"
   def ttl_class(key) when key in [:projects, :project, :auth_config, :db_config], do: "project"
+
   def ttl_class(key) when key in [:functions, :function, :branches, :postgrest_config],
     do: "project"
+
   def ttl_class(:health), do: "health"
   def ttl_class(key) when key in [:api_keys, :regions], do: "static"
 end
