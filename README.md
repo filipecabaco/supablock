@@ -309,10 +309,16 @@ MIX_ENV=prod mix release # the e2e suite drives the released binary...
 mix test --include e2e   # ...and cross-checks the mounted tree against the
                          # official supabase CLI (must be on PATH)
 
-# The database/ tree has a real Postgres end-to-end (tagged :fuse), skipped
-# unless SUPERBLOCK_TEST_DB_URL points at a database with an app.widgets table:
+# The database/ tree has real-Postgres end-to-ends (skipped unless a DB URL is
+# given; the tests seed their own data, so any empty Postgres works):
 SUPERBLOCK_TEST_DB_URL=postgres://user:pass@localhost/db mix test --include fuse
+SUPERBLOCK_E2E_DB_URL=postgres://user:pass@localhost/db  mix test --include e2e
 ```
+
+CI (`.github/workflows/ci.yml`) runs the unit suite on every push, and a
+separate job runs the FUSE + supabase-CLI end-to-ends against a Postgres
+service — the same commands as above, with the CLI installed and the
+release prebuilt.
 
 The e2e suite runs hermetically by default: a local stub Management API
 serves canned fixtures, the supabase CLI is pointed at it with a custom

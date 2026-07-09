@@ -144,6 +144,7 @@ defmodule Superblock.FuseTest do
 
   # Real end-to-end for the database/ tree: needs a reachable Postgres, so it
   # only runs when SUPERBLOCK_TEST_DB_URL points at one (see README dev notes).
+  # It seeds its own data, so any empty Postgres works.
   test "database tree serves real rows over the mount", %{mountpoint: mp} do
     case System.get_env("SUPERBLOCK_TEST_DB_URL") do
       nil ->
@@ -151,6 +152,7 @@ defmodule Superblock.FuseTest do
         assert true
 
       url ->
+        seed_widgets!(url)
         :ok = Superblock.DbCredentials.put(@proj_a1, url)
         :ok = Superblock.Control.send_cmd("flush") |> then(fn {:ok, "ok"} -> :ok end)
 
@@ -169,6 +171,35 @@ defmodule Superblock.FuseTest do
         assert String.starts_with?(body, "id,name,price,tags,meta,created_at,active\n")
         # stat size matches the rendered bytes
         assert File.stat!(page).size == byte_size(body)
+    end
+  end
+
+  # Seed a deterministic app.widgets table (varied column types) directly over
+  # Postgrex, so the test is hermetic against any empty database.
+  defp seed_widgets!(url) do
+    {:ok, opts} = Superblock.Database.Connections.Opts.parse(url)
+    {:ok, conn} = Postgrex.start_link(opts)
+
+    try do
+      Postgrex.query!(conn, "DROP SCHEMA IF EXISTS app CASCADE", [])
+      Postgrex.query!(conn, "CREATE SCHEMA app", [])
+
+      Postgrex.query!(
+        conn,
+        "CREATE TABLE app.widgets (id serial primary key, name text, price numeric(10,2), " <>
+          "tags text[], meta jsonb, created_at timestamptz, active boolean)",
+        []
+      )
+
+      Postgrex.query!(
+        conn,
+        "INSERT INTO app.widgets (name, price, tags, meta, created_at, active) " <>
+          "SELECT 'w' || g, (g * 1.5)::numeric(10,2), ARRAY['a', 'b' || g], " <>
+          "jsonb_build_object('n', g), now(), (g % 2 = 0) FROM generate_series(1, 3) g",
+        []
+      )
+    after
+      GenServer.stop(conn)
     end
   end
 
