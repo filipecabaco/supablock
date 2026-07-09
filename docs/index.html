@@ -624,12 +624,25 @@
   <section id="install">
     <div class="wrap">
       <p class="sec-label"><svg class="icon" aria-hidden="true"><use href="#i-arrow-down-tray"/></svg>Install</p>
-      <h2>Build once, symlink anywhere</h2>
+      <h2>One line — or build from source</h2>
       <p class="body">
-        You need <strong>Erlang/OTP 25+</strong> and <strong>Elixir 1.17+</strong>, a C compiler,
-        and FUSE — on Linux that's <span class="mono">libfuse3-dev</span>, <span class="mono">fuse3</span>
-        and <span class="mono">pkg-config</span>; on macOS install
-        <a href="https://macfuse.github.io" rel="noopener">macFUSE</a>.
+        The quickest path is the installer: it downloads the single-file binary for your
+        platform from the GitHub releases (built by CI, no Erlang/Elixir needed). On Linux the
+        FUSE userspace library is built in; on macOS install
+        <a href="https://macfuse.github.io" rel="noopener">macFUSE</a> or
+        <a href="https://www.fuse-t.org" rel="noopener">FUSE-T</a> first.
+      </p>
+
+      <div class="code">
+        <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
+        <pre><span class="p">$</span> curl -fsSL https://filipecabaco.github.io/supablock/install.sh | sh</pre>
+      </div>
+
+      <p class="body">
+        Building from source instead? You need <strong>Erlang/OTP 25+</strong> and
+        <strong>Elixir 1.17+</strong> (1.18 recommended), a C compiler, and FUSE — on Linux
+        that's <span class="mono">libfuse3-dev</span>, <span class="mono">fuse3</span>
+        and <span class="mono">pkg-config</span>.
       </p>
 
       <div class="code">

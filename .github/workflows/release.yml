@@ -1,5 +1,11 @@
-# Builds the single-file Burrito binaries per platform and attaches them to
-# the GitHub release, so neither users nor maintainers run make locally.
+# Builds the single-file Burrito binaries per platform and publishes them as
+# GitHub release assets — the download source for the one-line installer:
+#
+#   curl -fsSL https://filipecabaco.github.io/supablock/install.sh | sh
+#
+# Tag pushes (v*) publish a versioned release; pushes to the default branch
+# refresh the rolling "canary" prerelease, so the installer works before any
+# stable tag exists.
 #
 # The Linux binaries statically link libfuse3 (the Makefile's default when
 # libfuse3.a is present): they need no FUSE package on the target machine
@@ -14,7 +20,11 @@ name: release
 on:
   push:
     tags: ["v*"]
+    branches: [main, master, "claude/superblock-fuse-fs-uye3jn"]
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 env:
   MIX_ENV: prod
@@ -61,12 +71,6 @@ jobs:
           name: superblock-linux-${{ matrix.arch }}
           path: superblock-linux-${{ matrix.arch }}
 
-      - name: Attach to release
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: superblock-linux-${{ matrix.arch }}
-
   macos:
     strategy:
       matrix:
@@ -109,8 +113,40 @@ jobs:
           name: superblock-macos-${{ matrix.arch }}
           path: superblock-macos-${{ matrix.arch }}
 
-      - name: Attach to release
+  # One publish job (instead of per-matrix uploads) so concurrent jobs never
+  # race creating the same release. Runs even if a platform failed, shipping
+  # whatever was built.
+  publish:
+    needs: [linux, macos]
+    if: always() && (startsWith(github.ref, 'refs/tags/') || github.ref_name == github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: superblock-*
+          merge-multiple: true
+
+      - name: List built binaries
+        run: ls -la dist/
+
+      - name: Publish versioned release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: superblock-macos-${{ matrix.arch }}
+          files: dist/*
+
+      - name: Refresh canary prerelease
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: canary
+          name: canary (rolling)
+          prerelease: true
+          make_latest: false
+          body: |
+            Rolling build of the default branch (${{ github.sha }}).
+            Install with:
+
+                curl -fsSL https://filipecabaco.github.io/supablock/install.sh | sh
+          files: dist/*

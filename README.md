@@ -37,6 +37,20 @@ at the kernel level (`-o ro` — any write attempt fails with `EROFS`).
 
 ## Install
 
+One line (downloads the CI-built single-file binary from GitHub releases —
+no Erlang/Elixir needed; macOS additionally needs
+[macFUSE](https://macfuse.github.io) or [FUSE-T](https://www.fuse-t.org)):
+
+```bash
+curl -fsSL https://filipecabaco.github.io/supablock/install.sh | sh
+```
+
+`SUPERBLOCK_VERSION` picks a release tag (default: latest, falling back to
+the rolling `canary` build); `SUPERBLOCK_INSTALL_DIR` overrides the default
+`~/.local/bin`.
+
+### Building from source
+
 Prerequisites:
 
 * Erlang/OTP 25+ and Elixir 1.17+ — Elixir **1.18.x** recommended, it is the
