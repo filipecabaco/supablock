@@ -102,12 +102,15 @@ jobs:
       - name: Build the release
         run: MIX_ENV=prod mix release
 
-      - name: Sanity-check FUSE and the CLI
+      - name: Sanity-check FUSE, the CLI, and the release
         run: |
           test -c /dev/fuse && echo "/dev/fuse present"
           fusermount3 --version || fusermount --version
           supabase --version
           psql "$SUPERBLOCK_E2E_DB_URL" -c 'select 1' >/dev/null && echo "postgres reachable"
+          # The release must ship the compiled FUSE port, or every mount fails.
+          port=$(echo _build/prod/rel/superblock/lib/efuse-*/priv/efuse)
+          test -x "$port" && echo "efuse port present: $port"
 
       # FUSE mounts (database/ row tree over the real Postgres) + the released
       # binary e2e (Management API tree vs the supabase CLI; database/ rows vs
