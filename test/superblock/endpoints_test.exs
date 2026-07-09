@@ -19,4 +19,8 @@ defmodule Superblock.EndpointsTest do
     assert Endpoints.path(:api_keys, %{ref: "abc", reveal: true}) ==
              "/v1/projects/abc/api-keys?reveal=true"
   end
+
+  test "postgrest config drives the exposed-schema list" do
+    assert Endpoints.path(:postgrest_config, %{ref: "abc"}) == "/v1/projects/abc/postgrest"
+  end
 end

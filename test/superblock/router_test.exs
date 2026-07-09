@@ -41,7 +41,9 @@ defmodule Superblock.RouterTest do
 
     test "project dir children" do
       assert {:ok, children} = Router.list("/organizations/org-alpha/projects/#{@proj_a1}")
-      assert children == ["info.json", "health", "config", "api-keys", "functions", "branches"]
+
+      assert children ==
+               ["info.json", "health", "config", "api-keys", "functions", "branches", "database"]
     end
 
     test "functions and branches listings" do
@@ -200,47 +202,37 @@ defmodule Superblock.RouterTest do
 
   describe "database tree" do
     setup do
-      Superblock.DbCredentials.put(@proj_a1, "postgres://u:p@localhost/postgres?sslmode=disable")
-      Application.put_env(:superblock, :db_query_fun, &fake_db/3)
+      # Exposed schemas come from the stubbed Management API PostgREST config
+      # (org-alpha fixtures expose "app, public"); row data comes from the
+      # in-memory Data API stub below.
+      Application.put_env(:superblock, :data_api_fun, Superblock.DataApiStub.fun(db_model()))
       Cache.flush()
-      on_exit(fn -> Application.delete_env(:superblock, :db_query_fun) end)
+      on_exit(fn -> Application.delete_env(:superblock, :data_api_fun) end)
       :ok
     end
 
-    # Models one table: app.widgets with 1200 rows.
-    defp fake_db(_ref, sql, params) do
-      cond do
-        sql =~ "information_schema.schemata" ->
-          {:ok, %{columns: ["schema_name"], rows: [["app"], ["public"]]}}
-
-        sql =~ "information_schema.tables" ->
-          case params do
-            ["app"] -> {:ok, %{columns: ["table_name"], rows: [["empty"], ["widgets"]]}}
-            _other -> {:ok, %{columns: ["table_name"], rows: []}}
-          end
-
-        sql =~ ~s("empty") ->
-          {:ok, %{columns: ["count"], rows: [[0]]}}
-
-        sql =~ "count(*)" ->
-          {:ok, %{columns: ["count"], rows: [[1200]]}}
-
-        sql =~ "SELECT *" ->
-          [limit, offset] = params
-          hi = min(offset + limit, 1200)
-          rows = for i <- offset..(hi - 1)//1, do: [i, "w#{i}"]
-          {:ok, %{columns: ["id", "name"], rows: rows}}
-      end
+    # Models app.widgets (1200 rows) and app.empty (0 rows); public has none.
+    defp db_model do
+      %{
+        "app" => %{
+          "widgets" => %{
+            columns: ["id", "name"],
+            pk: ["id"],
+            rows: for(i <- 0..1199, do: %{"id" => i, "name" => "w#{i}"})
+          },
+          "empty" => %{columns: ["id"], pk: ["id"], rows: []}
+        },
+        "public" => %{}
+      }
     end
 
-    test "database appears in project children only when configured" do
+    test "database appears in every project's children" do
       assert {:ok, children} = Router.list("/organizations/org-alpha/projects/#{@proj_a1}")
       assert "database" in children
 
-      # a project without a stored URL keeps the plain tree
       other = "/organizations/org-alpha/projects/projatwo1234567890ab"
       assert {:ok, children2} = Router.list(other)
-      refute "database" in children2
+      assert "database" in children2
     end
 
     test "schemas and tables are listed" do

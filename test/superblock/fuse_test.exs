@@ -142,65 +142,42 @@ defmodule Superblock.FuseTest do
     assert TestEnv.hits("/v1/organizations/org-alpha") == 2
   end
 
-  # Real end-to-end for the database/ tree: needs a reachable Postgres, so it
-  # only runs when SUPERBLOCK_TEST_DB_URL points at one (see README dev notes).
-  # It seeds its own data, so any empty Postgres works.
-  test "database tree serves real rows over the mount", %{mountpoint: mp} do
-    case System.get_env("SUPERBLOCK_TEST_DB_URL") do
-      nil ->
-        # No database provided; nothing to assert here.
-        assert true
+  # End-to-end for the database/ tree over a real mount: the rows come from a
+  # stubbed Data API (Superblock.DataApiStub), so this is hermetic — no network,
+  # no database. Exposed schemas still come from the stubbed Management API.
+  test "database tree serves rows over the mount", %{mountpoint: mp} do
+    Application.put_env(:superblock, :data_api_fun, Superblock.DataApiStub.fun(fuse_db_model()))
+    on_exit(fn -> Application.delete_env(:superblock, :data_api_fun) end)
+    {:ok, "ok"} = Superblock.Control.send_cmd("flush")
 
-      url ->
-        seed_widgets!(url)
-        :ok = Superblock.DbCredentials.put(@proj_a1, url)
-        :ok = Superblock.Control.send_cmd("flush") |> then(fn {:ok, "ok"} -> :ok end)
+    project = Path.join(mp, "organizations/org-alpha/projects/#{@proj_a1}")
+    db = Path.join(project, "database")
 
-        db = Path.join(mp, "organizations/org-alpha/projects/#{@proj_a1}/database")
+    assert "database" in File.ls!(project)
+    assert "app" in File.ls!(db)
+    assert "widgets" in File.ls!(Path.join(db, "app"))
 
-        assert "database" in File.ls!(Path.join(mp, "organizations/org-alpha/projects/#{@proj_a1}"))
-        assert "app" in File.ls!(db)
-        assert "widgets" in File.ls!(Path.join(db, "app"))
+    widgets = Path.join(db, "app/widgets")
+    assert "rows-000000.csv" in File.ls!(widgets)
 
-        widgets = Path.join(db, "app/widgets")
-        pages = Enum.sort(File.ls!(widgets))
-        assert "rows-000000.csv" in pages
-
-        page = Path.join(widgets, "rows-000000.csv")
-        body = File.read!(page)
-        assert String.starts_with?(body, "id,name,price,tags,meta,created_at,active\n")
-        # stat size matches the rendered bytes
-        assert File.stat!(page).size == byte_size(body)
-    end
+    page = Path.join(widgets, "rows-000000.csv")
+    body = File.read!(page)
+    assert String.starts_with?(body, "id,name\n0,w0\n")
+    # stat size matches the rendered bytes
+    assert File.stat!(page).size == byte_size(body)
   end
 
-  # Seed a deterministic app.widgets table (varied column types) directly over
-  # Postgrex, so the test is hermetic against any empty database.
-  defp seed_widgets!(url) do
-    {:ok, opts} = Superblock.Database.Connections.Opts.parse(url)
-    {:ok, conn} = Postgrex.start_link(opts)
-
-    try do
-      Postgrex.query!(conn, "DROP SCHEMA IF EXISTS app CASCADE", [])
-      Postgrex.query!(conn, "CREATE SCHEMA app", [])
-
-      Postgrex.query!(
-        conn,
-        "CREATE TABLE app.widgets (id serial primary key, name text, price numeric(10,2), " <>
-          "tags text[], meta jsonb, created_at timestamptz, active boolean)",
-        []
-      )
-
-      Postgrex.query!(
-        conn,
-        "INSERT INTO app.widgets (name, price, tags, meta, created_at, active) " <>
-          "SELECT 'w' || g, (g * 1.5)::numeric(10,2), ARRAY['a', 'b' || g], " <>
-          "jsonb_build_object('n', g), now(), (g % 2 = 0) FROM generate_series(1, 3) g",
-        []
-      )
-    after
-      GenServer.stop(conn)
-    end
+  defp fuse_db_model do
+    %{
+      "app" => %{
+        "widgets" => %{
+          columns: ["id", "name"],
+          pk: ["id"],
+          rows: for(i <- 0..2, do: %{"id" => i, "name" => "w#{i}"})
+        }
+      },
+      "public" => %{}
+    }
   end
 
   test "kill -9 of the port leaves a recoverable state", %{mountpoint: mp} do

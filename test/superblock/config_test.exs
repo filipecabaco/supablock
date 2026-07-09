@@ -19,7 +19,7 @@ defmodule Superblock.ConfigTest do
     assert Config.get("ttl.db") == 30
     assert Config.get("db_page_size") == 500
     assert Config.get("db_format") == "csv"
-    assert Config.get("db_timeout_ms") == 15_000
+    assert Config.get("db_key") == "secret"
   end
 
   test "db_page_size and db_format coerce and validate" do
@@ -33,6 +33,15 @@ defmodule Superblock.ConfigTest do
     assert :ok = Config.set("db_format", "csv")
     assert {:error, message} = Config.set("db_format", "yaml")
     assert message =~ "db_format must be csv or json"
+  end
+
+  test "db_key coerces and validates" do
+    assert :ok = Config.set("db_key", "publishable")
+    assert Config.get("db_key") == "publishable"
+    assert :ok = Config.set("db_key", "secret")
+    assert Config.get("db_key") == "secret"
+    assert {:error, message} = Config.set("db_key", "anon")
+    assert message =~ "db_key must be secret or publishable"
   end
 
   test "set/get round-trips with type coercion" do

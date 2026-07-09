@@ -78,6 +78,11 @@ defmodule Superblock.Fixtures do
     %{"max_connections" => 100, "statement_timeout" => "2min"}
   end
 
+  @doc "PostgREST config: the exposed schemas drive the `database/` tree."
+  def postgrest_config do
+    %{"db_schema" => "app, public", "max_rows" => 1000, "db_extra_search_path" => "public, extensions"}
+  end
+
   def api_keys(reveal? \\ true) do
     [
       %{"name" => "anon", "api_key" => "sb_publishable_FAKEFAKEFAKE"},
@@ -171,6 +176,9 @@ defmodule Superblock.Fixtures do
       "/v1/projects/projaone1234567890ab/api-keys" => api_keys_route(),
       "/v1/projects/projatwo1234567890ab/api-keys" => api_keys_route(),
       "/v1/projects/projbone1234567890ab/api-keys" => api_keys_route(),
+      "/v1/projects/projaone1234567890ab/postgrest" => postgrest_config(),
+      "/v1/projects/projatwo1234567890ab/postgrest" => postgrest_config(),
+      "/v1/projects/projbone1234567890ab/postgrest" => postgrest_config(),
       "/v1/projects/projaone1234567890ab/functions" => functions(),
       "/v1/projects/projatwo1234567890ab/functions" => [],
       "/v1/projects/projbone1234567890ab/functions" => [],

@@ -24,6 +24,7 @@ defmodule Superblock.Endpoints do
           | :auth_config
           | :db_config
           | :api_keys
+          | :postgrest_config
           | :functions
           | :function
           | :branches
@@ -47,6 +48,7 @@ defmodule Superblock.Endpoints do
   def path(:db_config, %{ref: ref}), do: "/v1/projects/#{ref}/config/database/postgres"
   def path(:api_keys, %{ref: ref, reveal: true}), do: "/v1/projects/#{ref}/api-keys?reveal=true"
   def path(:api_keys, %{ref: ref}), do: "/v1/projects/#{ref}/api-keys"
+  def path(:postgrest_config, %{ref: ref}), do: "/v1/projects/#{ref}/postgrest"
   def path(:functions, %{ref: ref}), do: "/v1/projects/#{ref}/functions"
   def path(:function, %{ref: ref, fn_slug: fn_slug}), do: "/v1/projects/#{ref}/functions/#{fn_slug}"
   def path(:branches, %{ref: ref}), do: "/v1/projects/#{ref}/branches"
@@ -58,7 +60,7 @@ defmodule Superblock.Endpoints do
   @spec ttl_class(key) :: String.t()
   def ttl_class(key) when key in [:orgs, :org, :org_members], do: "orgs"
   def ttl_class(key) when key in [:projects, :project, :auth_config, :db_config], do: "project"
-  def ttl_class(key) when key in [:functions, :function, :branches], do: "project"
+  def ttl_class(key) when key in [:functions, :function, :branches, :postgrest_config], do: "project"
   def ttl_class(:health), do: "health"
   def ttl_class(key) when key in [:api_keys, :regions], do: "static"
 end

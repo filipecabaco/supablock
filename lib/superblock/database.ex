@@ -1,62 +1,60 @@
 defmodule Superblock.Database do
   @moduledoc """
-  Reads schemas, tables and row pages straight from a project's Postgres
-  database and renders them as CSV or JSON.
+  Reads schemas, tables and row pages through a project's **Data API**
+  (PostgREST) and renders them as CSV or JSON.
 
-  This is the one place superblock touches something other than the `GET`-only
-  Management API: row data has no API endpoint, so it comes from a direct,
-  read-only Postgres connection using the URL stored via `superblock db add`.
-  Only `SELECT` (and `information_schema` introspection) is ever issued — the
-  SQL is generated here and never taken from the user — so the connection
-  cannot write.
+  Row data has no Management API endpoint, so it used to come from a direct
+  Postgres connection with a password the user supplied via `superblock db add`.
+  It now comes from the project's Data API instead — reusing a key superblock can
+  already fetch from the `GET`-only Management API (`service_role` by default,
+  or `anon` when `db_key` is `publishable`). No extra credential is required, and
+  every request is a `GET`, so the tree stays strictly read-only.
+
+  What the Data API can show is what PostgREST exposes: the project's *exposed
+  schemas* (`db_schema` in its config, default `public`) and the tables/views in
+  them. Non-exposed schemas are invisible; if the Data API is disabled the tree
+  simply errors on read. Rows are ordered by primary key for stable paging;
+  a table without a primary key has no guaranteed page order.
 
   Results are cached (the `ttl.db` class) and single-flighted through
-  `Superblock.Cache`, so an `ls -R` over a schema costs a handful of queries,
-  not one per file. The executor is swappable for tests via the
-  `:superblock, :db_query_fun` application env (a `(ref, sql, params) ->
-  {:ok, %{columns: [...], rows: [[...]]}} | {:error, reason}` fun).
+  `Superblock.Cache`. The HTTP request seam is swappable for tests via the
+  `:superblock, :data_api_fun` application env — see `Superblock.Database.DataApi`.
   """
 
-  alias Superblock.{Cache, Config, DbCredentials}
-  alias Superblock.Database.Connections
+  alias Superblock.{Cache, Client, Config, Endpoints}
+  alias Superblock.Database.DataApi
 
   @type errno :: :enoent | :eio | :eagain | :eacces
   @type result :: %{columns: [String.t()], rows: [[term]]}
-
-  @system_schemas ~w(pg_catalog information_schema pg_toast)
+  @type schema_desc :: %{optional(String.t()) => %{columns: [String.t()], pk: [String.t()]}}
 
   ## Public API used by the Router
 
-  @doc "Whether row browsing is available for `ref` (a DB URL is configured)."
-  @spec configured?(String.t()) :: boolean
-  def configured?(ref), do: DbCredentials.configured?(ref)
-
-  @doc "Non-system schema names for `ref`."
+  @doc "Exposed (PostgREST) schema names for `ref`."
   @spec schemas(String.t()) :: {:ok, [String.t()]} | {:error, errno}
   def schemas(ref) do
-    cached({:db, ref, :schemas}, fn ->
-      with {:ok, %{rows: rows}} <- query(ref, schemas_sql(), []) do
-        {:ok, Enum.map(rows, fn [name] -> name end)}
-      end
-    end)
+    cached({:db, ref, :schemas}, fn -> exposed_schemas(ref) end)
   end
 
-  @doc "Base-table names in `schema`."
+  @doc "Table/view names exposed in `schema`."
   @spec tables(String.t(), String.t()) :: {:ok, [String.t()]} | {:error, errno}
   def tables(ref, schema) do
-    cached({:db, ref, :tables, schema}, fn ->
-      with {:ok, %{rows: rows}} <- query(ref, tables_sql(), [schema]) do
-        {:ok, Enum.map(rows, fn [name] -> name end)}
-      end
-    end)
+    with {:ok, desc} <- describe_schema(ref, schema) do
+      {:ok, desc |> Map.keys() |> Enum.sort()}
+    end
   end
 
-  @doc "Exact row count of `schema.table`."
+  @doc "Exact row count of `schema.table` (via PostgREST `count=exact`)."
   @spec row_count(String.t(), String.t(), String.t()) :: {:ok, non_neg_integer} | {:error, errno}
   def row_count(ref, schema, table) do
     cached({:db, ref, :count, schema, table}, fn ->
-      with {:ok, %{rows: [[count]]}} <- query(ref, count_sql(schema, table), []) do
-        {:ok, to_int(count)}
+      headers = [{"accept-profile", schema}, {"prefer", "count=exact"}, {"range", "0-0"}]
+
+      case DataApi.get(ref, "/rest/v1/#{encode(table)}?select=*", headers) do
+        {:ok, %{status: status, headers: h}} when status in [200, 206] -> parse_count(h)
+        {:ok, %{status: 404}} -> {:error, :enoent}
+        {:ok, %{status: status}} -> {:error, http_errno(status)}
+        {:error, reason} -> {:error, errno(reason)}
       end
     end)
   end
@@ -66,7 +64,26 @@ defmodule Superblock.Database do
           {:ok, result} | {:error, errno}
   def rows(ref, schema, table, offset, limit) do
     cached({:db, ref, :rows, schema, table, offset, limit}, fn ->
-      query(ref, rows_sql(schema, table), [limit, offset])
+      with {:ok, desc} <- describe_schema(ref, schema),
+           {:ok, columns} <- columns_for(desc, table) do
+        query =
+          "/rest/v1/#{encode(table)}?select=*&limit=#{limit}&offset=#{offset}" <>
+            order_clause(desc, table)
+
+        case DataApi.get(ref, query, [{"accept-profile", schema}]) do
+          {:ok, %{status: status, body: body}} when status in [200, 206] ->
+            {:ok, %{columns: columns, rows: decode_rows(body, columns)}}
+
+          {:ok, %{status: 404}} ->
+            {:error, :enoent}
+
+          {:ok, %{status: status}} ->
+            {:error, http_errno(status)}
+
+          {:error, reason} ->
+            {:error, errno(reason)}
+        end
+      end
     end)
   end
 
@@ -99,141 +116,181 @@ defmodule Superblock.Database do
     end
   end
 
-  @doc """
-  Validate a connection URL by opening it and running `SELECT 1`.
-  Returns `:ok` or `{:error, message}`. Used by `superblock db add`.
-  """
-  @spec ping(String.t()) :: :ok | {:error, String.t()}
-  def ping(url) do
-    # Postgrex logs every failed connect attempt; ping turns failures into a
-    # single clean message, so silence the logger for the probe's duration.
-    previous = Logger.level()
-    Logger.configure(level: :none)
+  ## Key selection (shared with the Data API transport)
 
-    try do
-      do_ping(url)
-    after
-      Logger.configure(level: previous)
+  @doc "Which API key the Data API path uses: `:secret` (default) or `:publishable`."
+  @spec key_kind() :: :secret | :publishable
+  def key_kind do
+    case Config.get("db_key") do
+      "publishable" -> :publishable
+      "anon" -> :publishable
+      _secret -> :secret
     end
   end
 
-  defp do_ping(url) do
-    parent = self()
-
-    # A failed Postgrex pool exits and would take a linked caller down with
-    # it, so run the probe in an isolated, monitored process that traps that
-    # exit and reports a plain error instead.
-    {pid, ref} = spawn_monitor(fn -> send(parent, {:ping, self(), run_probe(url)}) end)
-
-    receive do
-      {:ping, ^pid, result} ->
-        Process.demonitor(ref, [:flush])
-        result
-
-      {:DOWN, ^ref, :process, ^pid, reason} ->
-        {:error, human_error(reason)}
-    after
-      probe_timeout() + 5_000 ->
-        Process.exit(pid, :kill)
-        {:error, "connection timed out"}
+  @doc "Pick the `api_key` string of the given `kind` from an api-keys list."
+  @spec select_key([map], :secret | :publishable) :: String.t() | nil
+  def select_key(keys, kind) when is_list(keys) do
+    case Enum.find(keys, fn key -> classify_key(key) == kind end) do
+      nil -> nil
+      key -> to_string(key["api_key"] || "")
     end
   end
 
-  defp run_probe(url) do
-    Process.flag(:trap_exit, true)
+  def select_key(_other, _kind), do: nil
 
-    with {:ok, opts} <- Connections.Opts.parse(url),
-         {:ok, pid} <- start_probe(opts) do
-      try do
-        case Postgrex.query(pid, "SELECT 1", [], timeout: probe_timeout()) do
-          {:ok, _result} -> :ok
-          {:error, reason} -> {:error, human_error(reason)}
-        end
-      after
-        stop_probe(pid)
+  @doc false
+  def classify_key(key) do
+    name = to_string(key["name"] || "")
+    type = to_string(key["type"] || "")
+
+    cond do
+      type == "publishable" or name in ["anon", "publishable"] -> :publishable
+      type == "secret" or name in ["service_role", "secret"] -> :secret
+      true -> :other
+    end
+  end
+
+  ## Schema discovery + introspection
+
+  # Exposed schemas come from the Management API's PostgREST config
+  # (`db_schema`, a comma-separated list). Anything unexpected degrades to the
+  # default single `public` schema so the tree still works.
+  defp exposed_schemas(ref) do
+    case Client.get(Endpoints.path(:postgrest_config, %{ref: ref})) do
+      {:ok, %{"db_schema" => db_schema}} when is_binary(db_schema) ->
+        {:ok, parse_schema_list(db_schema)}
+
+      {:ok, _other} ->
+        {:ok, ["public"]}
+
+      {:error, reason} when reason in [:unauthorized, :forbidden] ->
+        {:error, :eacces}
+
+      {:error, _other} ->
+        {:ok, ["public"]}
+    end
+  end
+
+  defp parse_schema_list(csv) do
+    csv
+    |> String.split(",")
+    |> Enum.map(&String.trim/1)
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.uniq()
+    |> Enum.sort()
+  end
+
+  # Table names, ordered column lists, and primary keys for a schema, read from
+  # the PostgREST OpenAPI spec (root `/rest/v1/`, one profile per request).
+  @spec describe_schema(String.t(), String.t()) :: {:ok, schema_desc} | {:error, errno}
+  defp describe_schema(ref, schema) do
+    cached({:db, ref, :describe, schema}, fn ->
+      case DataApi.get(ref, "/rest/v1/", [{"accept-profile", schema}]) do
+        {:ok, %{status: 200, body: body}} -> {:ok, parse_openapi(body)}
+        {:ok, %{status: status}} -> {:error, http_errno(status)}
+        {:error, reason} -> {:error, errno(reason)}
       end
+    end)
+  end
+
+  # PostgREST's Swagger doc: `definitions.<table>.properties` lists columns in
+  # ordinal order (decoded as ordered objects to keep it), and a primary-key
+  # column's description carries the `<pk/>` marker.
+  defp parse_openapi(body) do
+    case Jason.decode(body, objects: :ordered_objects) do
+      {:ok, %Jason.OrderedObject{} = doc} ->
+        doc
+        |> ordered_get("definitions")
+        |> build_tables()
+
+      _other ->
+        %{}
+    end
+  end
+
+  defp build_tables(%Jason.OrderedObject{values: values}) do
+    Map.new(values, fn {table, tdef} ->
+      {columns, pk} = columns_and_pk(ordered_get(tdef, "properties"))
+      {table, %{columns: columns, pk: pk}}
+    end)
+  end
+
+  defp build_tables(_other), do: %{}
+
+  defp columns_and_pk(%Jason.OrderedObject{values: values}) do
+    columns = Enum.map(values, fn {name, _def} -> name end)
+
+    pk =
+      values
+      |> Enum.filter(fn {_name, def} -> primary_key?(def) end)
+      |> Enum.map(fn {name, _def} -> name end)
+
+    {columns, pk}
+  end
+
+  defp columns_and_pk(_other), do: {[], []}
+
+  defp primary_key?(def) do
+    case ordered_get(def, "description") do
+      desc when is_binary(desc) -> String.contains?(desc, "<pk/>")
+      _other -> false
+    end
+  end
+
+  defp ordered_get(%Jason.OrderedObject{values: values}, key) do
+    case List.keyfind(values, key, 0) do
+      {^key, value} -> value
+      nil -> nil
+    end
+  end
+
+  defp ordered_get(_other, _key), do: nil
+
+  defp columns_for(desc, table) do
+    case Map.get(desc, table) do
+      %{columns: columns} -> {:ok, columns}
+      _missing -> {:error, :enoent}
+    end
+  end
+
+  # Order by primary key for stable offset paging; without one, PostgREST's
+  # order is unspecified (documented caveat) and we send no `order`.
+  defp order_clause(desc, table) do
+    case Map.get(desc, table) do
+      %{pk: [_ | _] = pk} -> "&order=" <> Enum.map_join(pk, ",", &encode/1)
+      _none -> ""
+    end
+  end
+
+  # PostgREST returns rows as JSON objects; align them to the (ordered) column
+  # list so rendering keeps the table's column order. Missing keys become nil.
+  defp decode_rows(body, columns) do
+    case Jason.decode(body) do
+      {:ok, objects} when is_list(objects) ->
+        Enum.map(objects, fn object ->
+          Enum.map(columns, fn column -> Map.get(object, column) end)
+        end)
+
+      _other ->
+        []
+    end
+  end
+
+  # PostgREST reports the total in `Content-Range: <start>-<end>/<total>`
+  # (or `*/0` for an empty table). `*` as the total means the count was not
+  # returned.
+  defp parse_count(headers) do
+    with range when is_binary(range) <- Map.get(headers, "content-range"),
+         [_range, total] <- String.split(range, "/", parts: 2),
+         {count, _rest} <- Integer.parse(total) do
+      {:ok, count}
     else
-      {:error, reason} -> {:error, human_error(reason)}
+      _no_count -> {:error, :eio}
     end
   end
 
-  defp probe_timeout, do: min(Config.get("db_timeout_ms") || 15_000, 8_000)
-
-  ## Query execution (real or injected)
-
-  @doc false
-  @spec query(String.t(), String.t(), [term]) :: {:ok, result} | {:error, term}
-  def query(ref, sql, params) do
-    case Application.get_env(:superblock, :db_query_fun) do
-      fun when is_function(fun, 3) -> fun.(ref, sql, params)
-      _unset -> real_query(ref, sql, params)
-    end
-  end
-
-  defp real_query(ref, sql, params) do
-    with {:ok, pid} <- Connections.get(ref) do
-      case Postgrex.query(pid, sql, params, timeout: Config.get("db_timeout_ms") || 15_000) do
-        {:ok, %Postgrex.Result{columns: columns, rows: rows}} ->
-          {:ok, %{columns: columns || [], rows: rows || []}}
-
-        {:error, reason} ->
-          {:error, reason}
-      end
-    end
-  end
-
-  defp start_probe(opts) do
-    Postgrex.start_link(Keyword.merge(opts, pool_size: 1, backoff_type: :stop, sync_connect: true))
-  rescue
-    error -> {:error, error}
-  end
-
-  defp stop_probe(pid) do
-    GenServer.stop(pid, :normal, 2_000)
-  catch
-    :exit, _reason -> :ok
-  end
-
-  ## SQL builders (pure)
-
-  @doc false
-  def schemas_sql do
-    placeholders = @system_schemas |> Enum.map(&"'#{&1}'") |> Enum.join(", ")
-
-    """
-    SELECT schema_name FROM information_schema.schemata
-    WHERE schema_name NOT IN (#{placeholders})
-      AND schema_name NOT LIKE 'pg_temp_%'
-      AND schema_name NOT LIKE 'pg_toast_temp_%'
-    ORDER BY schema_name
-    """
-  end
-
-  @doc false
-  def tables_sql do
-    """
-    SELECT table_name FROM information_schema.tables
-    WHERE table_schema = $1 AND table_type = 'BASE TABLE'
-    ORDER BY table_name
-    """
-  end
-
-  @doc false
-  def count_sql(schema, table), do: "SELECT count(*) FROM #{qualify(schema, table)}"
-
-  @doc false
-  def rows_sql(schema, table) do
-    "SELECT * FROM #{qualify(schema, table)} ORDER BY ctid LIMIT $1 OFFSET $2"
-  end
-
-  @doc false
-  def qualify(schema, table), do: quote_ident(schema) <> "." <> quote_ident(table)
-
-  @doc "Quote a Postgres identifier, doubling embedded double-quotes."
-  @spec quote_ident(String.t()) :: String.t()
-  def quote_ident(name) do
-    ~s(") <> String.replace(to_string(name), ~s("), ~s("")) <> ~s(")
-  end
+  defp encode(name), do: URI.encode(to_string(name), &URI.char_unreserved?/1)
 
   ## Rendering (pure)
 
@@ -280,7 +337,7 @@ defmodule Superblock.Database do
     end
   end
 
-  # A scalar string for CSV, or nil for SQL NULL.
+  # A scalar string for CSV, or nil for a JSON/SQL null.
   defp scalar(nil), do: nil
   defp scalar(value) when is_binary(value), do: printable(value)
   defp scalar(value) when is_boolean(value), do: to_string(value)
@@ -293,7 +350,7 @@ defmodule Superblock.Database do
   defp scalar(value) when is_struct(value), do: struct_string(value)
   defp scalar(value), do: inspect(value)
 
-  # A JSON-encodable term for a decoded Postgres value.
+  # A JSON-encodable term for a decoded value.
   defp json_value(nil), do: nil
   defp json_value(value) when is_binary(value), do: printable(value)
   defp json_value(value) when is_number(value) or is_boolean(value), do: value
@@ -308,15 +365,13 @@ defmodule Superblock.Database do
   defp json_value(value) when is_struct(value), do: struct_string(value)
   defp json_value(value), do: inspect(value)
 
-  # Dates, times, Decimal, INET, etc. — all implement String.Chars; fall back
-  # to inspect for anything exotic that does not.
   defp struct_string(value) do
     to_string(value)
   rescue
     Protocol.UndefinedError -> inspect(value)
   end
 
-  # Keep valid UTF-8 as-is; render bytea and other raw binaries as \xHEX.
+  # Keep valid UTF-8 as-is; render raw binaries as \xHEX.
   defp printable(value) do
     if String.valid?(value), do: value, else: "\\x" <> Base.encode16(value, case: :lower)
   end
@@ -324,43 +379,23 @@ defmodule Superblock.Database do
   ## Cache + error mapping
 
   defp cached(key, fun) do
-    Cache.fetch(key, Config.ttl_ms("db"), fn -> map_errors(fun.()) end)
+    Cache.fetch(key, Config.ttl_ms("db"), fun)
   end
 
-  defp map_errors({:ok, _value} = ok), do: ok
-  defp map_errors({:error, reason}), do: {:error, db_errno(reason)}
+  defp http_errno(401), do: :eacces
+  defp http_errno(403), do: :eacces
+  defp http_errno(404), do: :enoent
+  defp http_errno(406), do: :enoent
+  defp http_errno(429), do: :eagain
+  defp http_errno(status) when status in 500..599, do: :eagain
+  defp http_errno(_other), do: :eio
 
-  defp db_errno(%Postgrex.Error{postgres: %{code: code}})
-       when code in [:undefined_table, :undefined_schema, :undefined_column],
-       do: :enoent
-
-  defp db_errno(%Postgrex.Error{postgres: %{code: code}})
-       when code in [
-              :insufficient_privilege,
-              :invalid_password,
-              :invalid_authorization_specification
-            ],
-       do: :eacces
-
-  defp db_errno(%Postgrex.Error{}), do: :eio
-  defp db_errno(%DBConnection.ConnectionError{}), do: :eagain
-  defp db_errno(:not_configured), do: :enoent
-  defp db_errno(:invalid_url), do: :eio
-  defp db_errno(_other), do: :eio
-
-  defp human_error(%Postgrex.Error{} = error), do: Exception.message(error)
-  defp human_error(%DBConnection.ConnectionError{} = error), do: Exception.message(error)
-  defp human_error(:invalid_url), do: "not a valid postgres:// URL"
-  defp human_error(:not_configured), do: "no connection URL configured"
-  defp human_error(reason) when is_binary(reason), do: reason
-
-  # The pool reports a failed connect as a killed-checkout tuple, which hides
-  # the underlying cause (bad password, host, port, sslmode). Postgres logs
-  # the specifics; give the user the actionable checklist here.
-  defp human_error(_reason),
-    do: "could not connect — check the host, port, database, user, password and sslmode in the URL"
-
-  defp to_int(value) when is_integer(value), do: value
-  defp to_int(%Decimal{} = value), do: Decimal.to_integer(value)
-  defp to_int(value) when is_binary(value), do: String.to_integer(value)
+  defp errno(:unauthorized), do: :eacces
+  defp errno(:forbidden), do: :eacces
+  defp errno(:no_key), do: :eacces
+  defp errno(:not_found), do: :enoent
+  defp errno(:rate_limited), do: :eagain
+  defp errno(:timeout), do: :eagain
+  defp errno({:transport, _reason}), do: :eagain
+  defp errno(_other), do: :eio
 end

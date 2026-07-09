@@ -21,7 +21,7 @@ defmodule Superblock.Router do
                 api-keys/secret
                 functions/<fn-slug>/info.json
                 branches/<branch>/info.json
-                database/                    # only when a DB URL is configured
+                database/                    # every project; served via its Data API
                   <schema>/
                     <table>/
                       rows-000000.csv        # rows 0..page_size-1
@@ -40,7 +40,7 @@ defmodule Superblock.Router do
   @type node_kind :: :dir | {:file, non_neg_integer}
   @type error :: :enoent | :eio | :eagain | :eacces
 
-  @project_children ~w(info.json health config api-keys functions branches)
+  @project_children ~w(info.json health config api-keys functions branches database)
   @config_children ~w(auth.json database.json)
   @api_key_children ~w(publishable secret)
 
@@ -119,8 +119,8 @@ defmodule Superblock.Router do
 
   defp resolve_org(_org, _rest), do: {:error, :enoent}
 
-  defp resolve_project(project, []) do
-    {:dir, fn -> {:ok, project_children(project)} end}
+  defp resolve_project(_project, []) do
+    {:dir, fn -> {:ok, @project_children} end}
   end
 
   defp resolve_project(project, ["info.json"]),
@@ -176,26 +176,14 @@ defmodule Superblock.Router do
     end)
   end
 
+  # `database` is shown for every project and populated lazily from the
+  # project's Data API on first read — no per-project setup, and no request is
+  # made until someone descends into the folder.
   defp resolve_project(project, ["database" | rest]) do
-    ref = project_ref(project)
-
-    if Database.configured?(ref) do
-      resolve_database(ref, rest)
-    else
-      {:error, :enoent}
-    end
+    resolve_database(project_ref(project), rest)
   end
 
   defp resolve_project(_project, _rest), do: {:error, :enoent}
-
-  # `database` appears only when a Postgres URL is configured for the ref, so
-  # projects without one keep the pure Management-API tree (and no connection
-  # is ever attempted for them).
-  defp project_children(project) do
-    if Database.configured?(project_ref(project)),
-      do: @project_children ++ ["database"],
-      else: @project_children
-  end
 
   ## database/<schema>/<table>/rows-<offset>.<ext>
 
