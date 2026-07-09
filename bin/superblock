@@ -23,4 +23,9 @@ fi
 SUPERBLOCK_ARGV="$(printf '%s\037' "$@")"
 export SUPERBLOCK_ARGV
 
+# Absolute path of this launcher, used by `superblock service install` as
+# the program the systemd/launchd service should run.
+SUPERBLOCK_BIN="$SELF/$(basename "$0")"
+export SUPERBLOCK_BIN
+
 exec "$RELEASE_ROOT/bin/superblock" eval "Superblock.CLI.main()"

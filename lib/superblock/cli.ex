@@ -16,7 +16,7 @@ defmodule Superblock.CLI do
   error · 4 environment error.
   """
 
-  alias Superblock.{Auth, Config, Control, Credentials, Doctor, Fs, Paths, Signals}
+  alias Superblock.{Auth, Config, Control, Credentials, Doctor, Fs, Paths, Service, Signals}
 
   @usage """
   superblock — browse the Supabase Management API as a filesystem
@@ -33,6 +33,9 @@ defmodule Superblock.CLI do
     superblock mount [mountpoint]        Mount (foreground; Ctrl-C unmounts)
     superblock unmount [mountpoint]      Unmount a running superblock
     superblock refresh                   Flush the cache of a mounted superblock
+    superblock service install           Auto-start the mount at login (systemd/launchd)
+    superblock service uninstall         Remove the auto-start service
+    superblock service status            Show the auto-start service state
     superblock help                      This help
 
   Config keys: #{Enum.join(Superblock.Config.valid_keys(), ", ")}
@@ -84,6 +87,7 @@ defmodule Superblock.CLI do
       ["mount" | rest] -> mount(rest)
       ["unmount" | rest] -> unmount(rest)
       ["refresh" | _rest] -> refresh()
+      ["service" | rest] -> service(rest)
       [unknown | _rest] -> usage_error("Unknown command: #{unknown}")
     end
   end
@@ -423,6 +427,43 @@ defmodule Superblock.CLI do
     end)
 
     :ok
+  end
+
+  ## service (auto-start)
+
+  defp service(["install"]) do
+    case Service.install() do
+      {:ok, messages} ->
+        Enum.each(messages, &IO.puts/1)
+        0
+
+      {:error, message} ->
+        IO.puts(:stderr, message)
+        1
+    end
+  end
+
+  defp service(["uninstall"]) do
+    {:ok, messages} = Service.uninstall()
+    Enum.each(messages, &IO.puts/1)
+    0
+  end
+
+  defp service(["status"]) do
+    case Service.status() do
+      {:installed, path, state} ->
+        IO.puts("Service installed: #{path}")
+        IO.puts("State: #{state}")
+        0
+
+      :not_installed ->
+        IO.puts("Service not installed. Run: superblock service install")
+        1
+    end
+  end
+
+  defp service(_other) do
+    usage_error("Usage: superblock service install | uninstall | status")
   end
 
   defp refresh do

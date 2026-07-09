@@ -173,6 +173,24 @@ superblock refresh                   drop the cache; next reads re-fetch
 Exit codes: `0` ok · `1` usage · `2` not authenticated · `3` API/network ·
 `4` environment (doctor-detectable).
 
+## Auto-start (service)
+
+To have the mount come up at login and restart on failure:
+
+```bash
+superblock config set mountpoint /mnt/supabase
+superblock service install     # systemd user unit (Linux) / launchd agent (macOS)
+superblock service status
+superblock service uninstall
+```
+
+Everything is per-user — no root: the unit lands in
+`~/.config/systemd/user/superblock.service` (Linux) or
+`~/Library/LaunchAgents/io.github.filipecabaco.superblock.plist` (macOS)
+and runs `superblock mount` in the foreground under the service manager,
+which also gives you `systemctl --user status superblock` / log collection
+for free. Stopping the service unmounts cleanly (SIGTERM handling).
+
 ## Caching and rate limits
 
 Responses are cached in memory per endpoint (TTLs configurable:
