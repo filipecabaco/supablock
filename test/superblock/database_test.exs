@@ -134,10 +134,11 @@ defmodule Superblock.DatabaseTest do
 
     test "rows returns ordered columns and a page window" do
       stub_data_api()
-      assert {:ok, %{columns: ["id", "name"], rows: rows}} = Database.rows(@ref, "app", "widgets", 0, 500)
-      assert length(rows) == 500
-      assert hd(rows) == [0, "w0"]
-      assert List.last(rows) == [499, "w499"]
+      assert {:ok, page} = Database.rows(@ref, "app", "widgets", 0, 500)
+      assert page.columns == ["id", "name"]
+      assert length(page.rows) == 500
+      assert hd(page.rows) == [0, "w0"]
+      assert List.last(page.rows) == [499, "w499"]
     end
 
     test "render_page uses the configured page size as the limit" do
@@ -157,21 +158,15 @@ defmodule Superblock.DatabaseTest do
       assert {:error, :enoent} = Database.rows(@ref, "app", "gone", 0, 500)
     end
 
-    test "HTTP statuses map to filesystem errnos" do
-      Application.put_env(:superblock, :data_api_fun, fn _ref, path, _headers ->
-        cond do
-          String.starts_with?(path, "/rest/v1/") and path != "/rest/v1/" ->
-            {:ok, %{status: 403, headers: %{}, body: ""}}
-
-          true ->
-            {:ok, %{status: 200, headers: %{}, body: ~s({"definitions":{"t":{"properties":{"id":{}}}}})}
-        end
+    test "a forbidden Data API response maps to eacces" do
+      Application.put_env(:superblock, :data_api_fun, fn _ref, _path, _headers ->
+        {:ok, %{status: 403, headers: %{}, body: ""}}
       end)
 
-      assert {:error, :eacces} = Database.row_count(@ref, "app", "t")
+      assert {:error, :eacces} = Database.row_count(@ref, "app", "widgets")
+    end
 
-      Cache.flush()
-
+    test "a transport error maps to eagain" do
       Application.put_env(:superblock, :data_api_fun, fn _ref, _path, _headers ->
         {:error, :timeout}
       end)

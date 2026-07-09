@@ -62,7 +62,10 @@ defmodule Superblock.Database.DataApi do
           {:ok, %{status: status, headers: normalize_headers(resp_headers), body: to_body(body)}}
 
         {:error, %{__exception__: true} = error} ->
-          Logger.debug("superblock: data-api #{path} failed: #{Client.redact(Exception.message(error), key)}")
+          Logger.debug(
+            "superblock: data-api #{path} failed: #{Client.redact(Exception.message(error), key)}"
+          )
+
           {:error, transport_reason(error)}
       end
     end

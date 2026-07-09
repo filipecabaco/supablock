@@ -80,7 +80,11 @@ defmodule Superblock.Fixtures do
 
   @doc "PostgREST config: the exposed schemas drive the `database/` tree."
   def postgrest_config do
-    %{"db_schema" => "app, public", "max_rows" => 1000, "db_extra_search_path" => "public, extensions"}
+    %{
+      "db_schema" => "app, public",
+      "max_rows" => 1000,
+      "db_extra_search_path" => "public, extensions"
+    }
   end
 
   def api_keys(reveal? \\ true) do
