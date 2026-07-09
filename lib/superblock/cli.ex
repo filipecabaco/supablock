@@ -9,7 +9,9 @@ defmodule Superblock.CLI do
       superblock config set <key> <value> | config get <key> | config list
       superblock mount [mountpoint] [--verbose]
       superblock unmount [mountpoint]
-      superblock refresh
+      superblock refresh [--check]
+      superblock db add <ref> [--url postgres://...]
+      superblock db list | db remove <ref>
       superblock help
 
   Exit codes: 0 ok · 1 usage error · 2 not authenticated · 3 API/network
@@ -23,6 +25,8 @@ defmodule Superblock.CLI do
     Config,
     Control,
     Credentials,
+    Database,
+    DbCredentials,
     Doctor,
     Fs,
     OAuth,
@@ -49,6 +53,10 @@ defmodule Superblock.CLI do
     superblock mount [mountpoint]        Mount (foreground; Ctrl-C unmounts)
     superblock unmount [mountpoint]      Unmount a running superblock
     superblock refresh                   Flush the cache of a mounted superblock
+    superblock refresh --check           Report cache staleness without flushing
+    superblock db add <ref> [--url ...]  Store a Postgres URL for a project's database/ tree
+    superblock db list                   List projects with a configured database URL
+    superblock db remove <ref>           Forget a project's database URL
     superblock service install           Auto-start the mount at login (systemd/launchd)
     superblock service uninstall         Remove the auto-start service
     superblock service status            Show the auto-start service state
@@ -102,7 +110,8 @@ defmodule Superblock.CLI do
       ["config" | rest] -> config(rest)
       ["mount" | rest] -> mount(rest)
       ["unmount" | rest] -> unmount(rest)
-      ["refresh" | _rest] -> refresh()
+      ["refresh" | rest] -> refresh(rest)
+      ["db" | rest] -> db(rest)
       ["service" | rest] -> service(rest)
       [unknown | _rest] -> usage_error("Unknown command: #{unknown}")
     end
@@ -590,7 +599,10 @@ defmodule Superblock.CLI do
     usage_error("Usage: superblock service install | uninstall | status")
   end
 
-  defp refresh do
+  defp refresh(["--check" | _rest]), do: refresh_check()
+  defp refresh(["check" | _rest]), do: refresh_check()
+
+  defp refresh(_flush) do
     case Control.send_cmd("flush") do
       {:ok, "ok"} ->
         IO.puts("Cache flushed.")
@@ -600,6 +612,165 @@ defmodule Superblock.CLI do
         IO.puts(:stderr, "Not mounted.")
         1
     end
+  end
+
+  defp refresh_check do
+    case Control.send_cmd("check") do
+      {:ok, "ok " <> stats} ->
+        {entries, stale} = parse_check(stats)
+        IO.puts("Cache: #{entries} entries, #{stale} stale (past TTL).")
+
+        if stale > 0 do
+          IO.puts("Stale data present — run: superblock refresh")
+        else
+          IO.puts("Cache is fresh — no refresh needed.")
+        end
+
+        0
+
+      _not_mounted ->
+        IO.puts("Not mounted — nothing is cached.")
+        0
+    end
+  end
+
+  defp parse_check(stats) do
+    fields =
+      stats
+      |> String.split(" ", trim: true)
+      |> Map.new(fn pair ->
+        case String.split(pair, "=", parts: 2) do
+          [key, value] -> {key, value}
+          [key] -> {key, ""}
+        end
+      end)
+
+    {to_int(fields["entries"]), to_int(fields["stale"])}
+  end
+
+  defp to_int(value) do
+    case Integer.parse(value || "") do
+      {n, _rest} -> n
+      :error -> 0
+    end
+  end
+
+  ## db (per-project Postgres connection for the database/ tree)
+
+  defp db(["add", ref | rest]) do
+    {opts, _rest, _invalid} = OptionParser.parse(rest, strict: [url: :string])
+
+    url =
+      case opts[:url] do
+        nil -> prompt_db_url()
+        url -> url
+      end
+
+    case url do
+      nil ->
+        usage_error("No URL given.")
+
+      url ->
+        url = String.trim(url)
+        IO.puts("Checking connection…")
+
+        case Database.ping(url) do
+          :ok ->
+            :ok = DbCredentials.put(ref, url)
+            safe_forget(ref)
+            IO.puts("✓ Connected. Stored database URL for #{ref}.")
+            IO.puts("  Browse it under the project's database/ folder once mounted.")
+            0
+
+          {:error, message} ->
+            IO.puts(:stderr, "Could not connect: #{message}")
+            3
+        end
+    end
+  end
+
+  defp db(["list"]) do
+    case DbCredentials.refs() do
+      [] ->
+        IO.puts("No database URLs configured. Run: superblock db add <ref> --url postgres://…")
+        0
+
+      refs ->
+        Enum.each(refs, fn ref ->
+          case DbCredentials.fetch(ref) do
+            {:ok, url} -> IO.puts("#{ref}  #{DbCredentials.masked(url)}")
+            :missing -> IO.puts("#{ref}  (unset)")
+          end
+        end)
+
+        0
+    end
+  end
+
+  defp db(["remove", ref]), do: db_remove(ref)
+  defp db(["rm", ref]), do: db_remove(ref)
+
+  defp db(_other) do
+    usage_error("Usage: superblock db add <ref> [--url ...] | db list | db remove <ref>")
+  end
+
+  defp db_remove(ref) do
+    :ok = DbCredentials.delete(ref)
+    safe_forget(ref)
+    IO.puts("Removed database URL for #{ref}.")
+    0
+  end
+
+  defp prompt_db_url do
+    case hidden_input("Postgres URL (postgres://user:pass@host:5432/postgres): ") do
+      "" -> nil
+      url -> url
+    end
+  end
+
+  # No-echo prompt: the URL embeds the database password, so it must not be
+  # echoed to the terminal (or scrollback).
+  defp hidden_input(prompt) do
+    IO.write(prompt)
+
+    input =
+      try do
+        case :io.get_password() do
+          data when is_list(data) or is_binary(data) -> to_string(data)
+          _other -> stty_input()
+        end
+      rescue
+        _any -> stty_input()
+      catch
+        _kind, _reason -> stty_input()
+      end
+
+    IO.write("\n")
+    String.trim(input)
+  end
+
+  defp stty_input do
+    System.cmd("stty", ["-echo"], stderr_to_stdout: true)
+
+    try do
+      case IO.gets("") do
+        :eof -> ""
+        {:error, _reason} -> ""
+        line -> to_string(line)
+      end
+    after
+      System.cmd("stty", ["echo"], stderr_to_stdout: true)
+    end
+  end
+
+  # Drop any live pool for this ref so the next read reconnects with the new
+  # URL. Harmless if the connection registry is not running (CLI without mount).
+  defp safe_forget(ref) do
+    Superblock.Database.Connections.forget(ref)
+  rescue
+    _any -> :ok
+  catch
+    _kind, _reason -> :ok
   end
 
   defp describe_error(:empty_code), do: "no code entered — copy it from the browser page"

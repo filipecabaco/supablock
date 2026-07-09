@@ -1,0 +1,8 @@
+# Keep this directory present in a fresh clone. `mix release` symlinks a dep's
+# priv/ into the build only if it exists when the build structure is set up —
+# which happens before the :efuse_make compiler builds the port into here. If
+# the directory is missing at that point (fresh clone), the compiled port never
+# makes it into the release and `mount` fails with a missing-port error.
+#
+# The built port itself is not tracked.
+efuse

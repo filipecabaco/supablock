@@ -4,14 +4,18 @@ defmodule Superblock.Fixtures do
   org B), 2 functions, 1 branch.
   """
 
+  # `slug` mirrors `id` here: superblock names org folders by slug || id, so
+  # keeping them equal leaves the tree unchanged, while satisfying the supabase
+  # CLI's schema (its `orgs list` requires a slug on every organization).
   def orgs do
     [
-      %{"id" => "org-alpha", "name" => "Alpha Org"},
-      %{"id" => "org-beta", "name" => "Beta Org"}
+      %{"id" => "org-alpha", "slug" => "org-alpha", "name" => "Alpha Org"},
+      %{"id" => "org-beta", "slug" => "org-beta", "name" => "Beta Org"}
     ]
   end
 
-  def org_alpha, do: %{"id" => "org-alpha", "name" => "Alpha Org", "plan" => "pro"}
+  def org_alpha,
+    do: %{"id" => "org-alpha", "slug" => "org-alpha", "name" => "Alpha Org", "plan" => "pro"}
 
   def org_members do
     [
@@ -144,7 +148,12 @@ defmodule Superblock.Fixtures do
       "/v1/organizations" => orgs(),
       "/v1/organizations/org-alpha" => org_alpha(),
       "/v1/organizations/org-alpha/members" => org_members(),
-      "/v1/organizations/org-beta" => %{"id" => "org-beta", "name" => "Beta Org", "plan" => "free"},
+      "/v1/organizations/org-beta" => %{
+        "id" => "org-beta",
+        "slug" => "org-beta",
+        "name" => "Beta Org",
+        "plan" => "free"
+      },
       "/v1/organizations/org-beta/members" => [],
       "/v1/projects" => projects(),
       "/v1/projects/projaone1234567890ab" => project("projaone1234567890ab"),

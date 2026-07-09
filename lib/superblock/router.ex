@@ -21,6 +21,11 @@ defmodule Superblock.Router do
                 api-keys/secret
                 functions/<fn-slug>/info.json
                 branches/<branch>/info.json
+                database/                    # only when a DB URL is configured
+                  <schema>/
+                    <table>/
+                      rows-000000.csv        # rows 0..page_size-1
+                      rows-000500.csv        # ...
 
   Dynamic segments are validated against the cached parent listing, so a
   bogus name is a cheap `:enoent` (plus negative caching) rather than an API
@@ -30,7 +35,7 @@ defmodule Superblock.Router do
 
   require Logger
 
-  alias Superblock.{Cache, Client, Config, Endpoints, Render}
+  alias Superblock.{Cache, Client, Config, Database, Endpoints, Render}
 
   @type node_kind :: :dir | {:file, non_neg_integer}
   @type error :: :enoent | :eio | :eagain | :eacces
@@ -114,8 +119,8 @@ defmodule Superblock.Router do
 
   defp resolve_org(_org, _rest), do: {:error, :enoent}
 
-  defp resolve_project(_project, []) do
-    {:dir, fn -> {:ok, @project_children} end}
+  defp resolve_project(project, []) do
+    {:dir, fn -> {:ok, project_children(project)} end}
   end
 
   defp resolve_project(project, ["info.json"]),
@@ -171,7 +176,115 @@ defmodule Superblock.Router do
     end)
   end
 
+  defp resolve_project(project, ["database" | rest]) do
+    ref = project_ref(project)
+
+    if Database.configured?(ref) do
+      resolve_database(ref, rest)
+    else
+      {:error, :enoent}
+    end
+  end
+
   defp resolve_project(_project, _rest), do: {:error, :enoent}
+
+  # `database` appears only when a Postgres URL is configured for the ref, so
+  # projects without one keep the pure Management-API tree (and no connection
+  # is ever attempted for them).
+  defp project_children(project) do
+    if Database.configured?(project_ref(project)),
+      do: @project_children ++ ["database"],
+      else: @project_children
+  end
+
+  ## database/<schema>/<table>/rows-<offset>.<ext>
+
+  defp resolve_database(ref, []) do
+    {:dir, fn -> with {:ok, schemas} <- Database.schemas(ref), do: {:ok, string_names(schemas)} end}
+  end
+
+  defp resolve_database(ref, [schema_seg | rest]) do
+    with {:ok, schemas} <- Database.schemas(ref),
+         {:ok, schema} <- pick(schemas, schema_seg) do
+      resolve_schema(ref, schema, rest)
+    end
+  end
+
+  defp resolve_schema(ref, schema, []) do
+    {:dir,
+     fn -> with {:ok, tables} <- Database.tables(ref, schema), do: {:ok, string_names(tables)} end}
+  end
+
+  defp resolve_schema(ref, schema, [table_seg | rest]) do
+    with {:ok, tables} <- Database.tables(ref, schema),
+         {:ok, table} <- pick(tables, table_seg) do
+      resolve_table(ref, schema, table, rest)
+    end
+  end
+
+  defp resolve_table(ref, schema, table, []) do
+    {:dir,
+     fn ->
+       with {:ok, count} <- Database.row_count(ref, schema, table) do
+         {:ok, page_filenames(count)}
+       end
+     end}
+  end
+
+  defp resolve_table(ref, schema, table, [file]) do
+    with {:ok, format, offset} <- parse_page_file(file),
+         {:ok, count} <- Database.row_count(ref, schema, table),
+         true <- valid_offset?(offset, count) do
+      {:file, fn -> Database.render_page(ref, schema, table, offset, format) end}
+    else
+      {:error, reason} when reason in [:eio, :eagain, :eacces, :enoent] -> {:error, reason}
+      _other -> {:error, :enoent}
+    end
+  end
+
+  defp resolve_table(_ref, _schema, _table, _rest), do: {:error, :enoent}
+
+  # Sanitize + de-collide DB names the same way API names are handled, so a
+  # table called `a/b` shows up as `a_b` and still routes back to the original.
+  defp string_entries(names), do: entries(names, & &1)
+  defp string_names(names), do: names(string_entries(names))
+
+  defp pick(names, seg) do
+    case List.keyfind(string_entries(names), seg, 0) do
+      {^seg, name} -> {:ok, name}
+      nil -> {:error, :enoent}
+    end
+  end
+
+  # rows-<offset>.<ext> — offset is a page boundary (multiple of page_size).
+  defp page_filenames(count) do
+    size = Database.page_size()
+    pages = div(count + size - 1, size)
+    max_offset = if pages <= 1, do: 0, else: (pages - 1) * size
+    width = max(6, String.length(Integer.to_string(max_offset)))
+    ext = to_string(Database.format())
+
+    for page <- 0..(pages - 1)//1 do
+      offset = page * size
+      "rows-" <> String.pad_leading(Integer.to_string(offset), width, "0") <> "." <> ext
+    end
+  end
+
+  defp parse_page_file(file) do
+    case Regex.run(~r/^rows-(\d+)\.(csv|json)$/, file) do
+      [_all, digits, "csv"] -> {:ok, :csv, String.to_integer(digits)}
+      [_all, digits, "json"] -> {:ok, :json, String.to_integer(digits)}
+      _no_match -> {:error, :enoent}
+    end
+  end
+
+  # A page file exists iff its offset is a page boundary that a listed page
+  # covers: `0 <= offset < count`. Empty tables therefore expose no page file,
+  # matching page_filenames/1.
+  defp valid_offset?(offset, count) do
+    size = Database.page_size()
+    rem(offset, size) == 0 and offset >= 0 and offset < count
+  end
 
   defp resolve_function(_project, _function, []) do
     {:dir, fn -> {:ok, ["info.json"]} end}

@@ -86,6 +86,14 @@ defmodule Superblock.MixProject do
       {:efuse, path: "vendor/efuse", override: true, runtime: false},
       {:req, git: "https://github.com/wojtekmach/req.git", tag: "v0.5.18", override: true},
       {:jason, git: "https://github.com/michalmuskala/jason.git", tag: "v1.4.4", override: true},
+      # Direct Postgres access for the `database/` tree (row viewing). The
+      # Management API is still GET-only; row contents come straight from the
+      # user's database over a read-only connection.
+      {:postgrex,
+       git: "https://github.com/elixir-ecto/postgrex.git", tag: "v0.20.0", override: true},
+      {:db_connection,
+       git: "https://github.com/elixir-ecto/db_connection.git", tag: "v2.7.0", override: true},
+      {:decimal, git: "https://github.com/ericmj/decimal.git", tag: "v2.3.0", override: true},
       {:finch, git: "https://github.com/sneako/finch.git", tag: "v0.20.0", override: true},
       {:mint, git: "https://github.com/elixir-mint/mint.git", tag: "v1.9.1", override: true},
       {:hpax, git: "https://github.com/elixir-mint/hpax.git", tag: "v1.0.4", override: true},

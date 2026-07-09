@@ -3,8 +3,9 @@ defmodule Superblock.Control do
   Control socket for a mounted superblock: a Unix domain socket in the state
   directory speaking a newline-terminated protocol.
 
-      flush\\n    -> ok\\n     (drop the cache)
-      unmount\\n  -> ok\\n     (then unmount and stop the VM)
+      flush\\n    -> ok\\n                       (drop the cache)
+      check\\n    -> ok entries=N stale=M\\n     (cache occupancy; no flush)
+      unmount\\n  -> ok\\n                       (then unmount and stop the VM)
       <else>\\n   -> err unknown\\n
 
   The socket file exists only while mounted; `superblock status` uses its
@@ -112,6 +113,12 @@ defmodule Superblock.Control do
   defp handle_command("flush", socket, _state) do
     Superblock.Cache.flush()
     :gen_tcp.send(socket, "ok\n")
+    :gen_tcp.close(socket)
+  end
+
+  defp handle_command("check", socket, _state) do
+    %{entries: entries, stale: stale} = Superblock.Cache.stats()
+    :gen_tcp.send(socket, "ok entries=#{entries} stale=#{stale}\n")
     :gen_tcp.close(socket)
   end
 

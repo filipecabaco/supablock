@@ -8,6 +8,18 @@ defmodule Superblock.CacheTest do
     :ok
   end
 
+  test "stats counts total and stale entries" do
+    assert Cache.stats() == %{entries: 0, stale: 0}
+
+    Cache.fetch(:fresh, 60_000, fn -> {:ok, 1} end)
+    Cache.fetch(:stale, 0, fn -> {:ok, 2} end)
+
+    stats = Cache.stats()
+    assert stats.entries == 2
+    # the zero-TTL entry is immediately past its deadline
+    assert stats.stale == 1
+  end
+
   test "hit within TTL returns the stored value without re-running the fun" do
     counter = :counters.new(1, [])
 
