@@ -7,7 +7,8 @@ defmodule Superblock.StubServer do
 
   GET-only. Requests without a Bearer token get a 401, mirroring the real
   API. Route values follow `Superblock.TestEnv.stub_api!/1`: a JSON-encodable
-  value (200) or `{:status, code, value}`.
+  value (200), `{:status, code, value}`, or `{:params, fun}` where fun takes
+  the query params map and returns `{code, value}`.
   """
 
   @doc "Start the server; returns `{:ok, port}`. Stops when `stop/0` is called."
@@ -95,7 +96,7 @@ defmodule Superblock.StubServer do
   end
 
   defp respond(socket, "GET", target, headers, routes) do
-    path = target |> String.split("?", parts: 2) |> hd()
+    {path, params} = split_target(target)
     bump(path)
 
     cond do
@@ -104,10 +105,26 @@ defmodule Superblock.StubServer do
 
       true ->
         case Map.get(routes, path) do
-          nil -> send_json(socket, 404, %{"message" => "not found"})
-          {:status, code, value} -> send_json(socket, code, value)
-          value -> send_json(socket, 200, value)
+          nil ->
+            send_json(socket, 404, %{"message" => "not found"})
+
+          {:status, code, value} ->
+            send_json(socket, code, value)
+
+          {:params, fun} when is_function(fun, 1) ->
+            {code, value} = fun.(params)
+            send_json(socket, code, value)
+
+          value ->
+            send_json(socket, 200, value)
         end
+    end
+  end
+
+  defp split_target(target) do
+    case String.split(target, "?", parts: 2) do
+      [path] -> {path, %{}}
+      [path, query] -> {path, URI.decode_query(query)}
     end
   end
 

@@ -186,7 +186,7 @@ defmodule Superblock.CLI do
       {:error, :unauthorized} ->
         IO.puts(
           :stderr,
-          "Token rejected — check it at app.supabase.com → Account → Access Tokens"
+          "Token rejected — check it at supabase.com/dashboard/account/tokens"
         )
 
         2

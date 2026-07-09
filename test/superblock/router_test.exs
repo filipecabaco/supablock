@@ -16,7 +16,7 @@ defmodule Superblock.RouterTest do
   describe "describe/list on directories" do
     test "root" do
       assert {:ok, :dir} = Router.describe("/")
-      assert {:ok, ["organizations", "regions.json"]} = Router.list("/")
+      assert {:ok, ["organizations"]} = Router.list("/")
     end
 
     test "organizations listing" do
@@ -27,7 +27,7 @@ defmodule Superblock.RouterTest do
     test "org dir and children" do
       assert {:ok, :dir} = Router.describe("/organizations/org-alpha")
 
-      assert {:ok, ["info.json", "members.json", "projects"]} =
+      assert {:ok, ["info.json", "members.json", "projects", "regions.json"]} =
                Router.list("/organizations/org-alpha")
     end
 
@@ -85,15 +85,19 @@ defmodule Superblock.RouterTest do
       assert body =~ ~s("max_connections")
     end
 
-    test "regions.json" do
-      assert {:ok, {:file, _size}} = Router.describe("/regions.json")
-      assert {:ok, body} = Router.read("/regions.json")
+    test "regions.json lives under the organization (organization_slug required)" do
+      path = "/organizations/org-alpha/regions.json"
+      assert {:ok, {:file, _size}} = Router.describe(path)
+      assert {:ok, body} = Router.read(path)
       assert body =~ "americas"
+
+      # the root no longer exposes regions.json (the endpoint needs a slug)
+      assert {:error, :enoent} = Router.describe("/regions.json")
     end
 
     test "reading a directory is an error" do
       assert {:error, :eio} = Router.read("/organizations")
-      assert {:error, :eio} = Router.list("/regions.json")
+      assert {:error, :eio} = Router.list("/organizations/org-alpha/regions.json")
     end
   end
 
@@ -140,7 +144,7 @@ defmodule Superblock.RouterTest do
 
     test "404 endpoints surface as :enoent (leaf effectively dropped)" do
       TestEnv.stub_api!(Map.delete(Superblock.Fixtures.routes(), "/v1/projects/available-regions"))
-      assert {:error, :enoent} = Router.describe("/regions.json")
+      assert {:error, :enoent} = Router.describe("/organizations/org-alpha/regions.json")
     end
 
     test "401 maps to :eacces, 429 to :eagain, 500 to :eio" do

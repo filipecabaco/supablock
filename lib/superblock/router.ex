@@ -10,6 +10,7 @@ defmodule Superblock.Router do
           <org-slug>/
             info.json
             members.json
+            regions.json
             projects/
               <project-ref>/
                 info.json
@@ -20,7 +21,6 @@ defmodule Superblock.Router do
                 api-keys/secret
                 functions/<fn-slug>/info.json
                 branches/<branch>/info.json
-        regions.json
 
   Dynamic segments are validated against the cached parent listing, so a
   bogus name is a cheap `:enoent` (plus negative caching) rather than an API
@@ -75,11 +75,7 @@ defmodule Superblock.Router do
   defp segments(path), do: String.split(path, "/", trim: true)
 
   defp resolve([]) do
-    {:dir, fn -> {:ok, ["organizations", "regions.json"]} end}
-  end
-
-  defp resolve(["regions.json"]) do
-    file(:regions, %{}, &Render.json/1)
+    {:dir, fn -> {:ok, ["organizations"]} end}
   end
 
   defp resolve(["organizations"]) do
@@ -93,10 +89,15 @@ defmodule Superblock.Router do
   defp resolve(_unknown), do: {:error, :enoent}
 
   defp resolve_org(_org, []) do
-    {:dir, fn -> {:ok, ["info.json", "members.json", "projects"]} end}
+    {:dir, fn -> {:ok, ["info.json", "members.json", "projects", "regions.json"]} end}
   end
 
   defp resolve_org(org, ["info.json"]), do: file(:org, %{slug: org_slug(org)}, &Render.json/1)
+
+  # Available regions require an organization_slug (per the OpenAPI spec),
+  # so the file lives under each organization.
+  defp resolve_org(org, ["regions.json"]),
+    do: file(:regions, %{slug: org_slug(org)}, &Render.json/1)
 
   defp resolve_org(org, ["members.json"]),
     do: file(:org_members, %{slug: org_slug(org)}, &Render.json/1)
@@ -143,7 +144,8 @@ defmodule Superblock.Router do
 
   defp resolve_project(project, ["api-keys", "secret"]) do
     if Config.get("expose_secrets") do
-      file(:api_keys, %{ref: project_ref(project)}, &render_api_keys(&1, :secret))
+      # reveal=true: the API returns secret key material only when asked.
+      file(:api_keys, %{ref: project_ref(project), reveal: true}, &render_api_keys(&1, :secret))
     else
       {:file, fn -> {:ok, @redacted_body} end}
     end

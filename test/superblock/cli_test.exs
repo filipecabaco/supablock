@@ -44,7 +44,7 @@ defmodule Superblock.CLITest do
         end)
       end)
 
-    assert stderr =~ "Token rejected — check it at app.supabase.com"
+    assert stderr =~ "Token rejected — check it at supabase.com/dashboard/account/tokens"
     assert Credentials.load() == :missing
     refute File.exists?(Paths.credentials_file())
   end

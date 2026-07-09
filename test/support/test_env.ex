@@ -34,6 +34,8 @@ defmodule Superblock.TestEnv do
 
     * a JSON-encodable value (responds 200),
     * `{:status, code, json_value}`,
+    * `{:params, fun}` — fun takes the query params map, returns
+      `{code, json_value}` (also understood by `Superblock.StubServer`),
     * or a `conn -> conn` fun for full control.
 
   A `{:prefix, "/some/base/"}` key matches any path under it (exact keys
@@ -51,6 +53,11 @@ defmodule Superblock.TestEnv do
           json_resp(conn, 404, %{"message" => "not found"})
 
         {:status, code, value} ->
+          json_resp(conn, code, value)
+
+        {:params, fun} when is_function(fun, 1) ->
+          conn = Plug.Conn.fetch_query_params(conn)
+          {code, value} = fun.(conn.query_params)
           json_resp(conn, code, value)
 
         fun when is_function(fun, 1) ->

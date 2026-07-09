@@ -74,11 +74,22 @@ defmodule Superblock.Fixtures do
     %{"max_connections" => 100, "statement_timeout" => "2min"}
   end
 
-  def api_keys do
+  def api_keys(reveal? \\ true) do
     [
       %{"name" => "anon", "api_key" => "sb_publishable_FAKEFAKEFAKE"},
-      %{"name" => "service_role", "api_key" => "sb_secret_TOPSECRETVALUE"}
+      %{
+        "name" => "service_role",
+        "api_key" => if(reveal?, do: "sb_secret_TOPSECRETVALUE", else: "sb_secret_TOPS****")
+      }
     ]
+  end
+
+  @doc """
+  Route handler mirroring the real api-keys endpoint: secret key material is
+  masked unless `reveal=true` is passed.
+  """
+  def api_keys_route do
+    {:params, fn params -> {200, api_keys(params["reveal"] == "true")} end}
   end
 
   def functions do
@@ -113,6 +124,20 @@ defmodule Superblock.Fixtures do
     %{"smart_regions" => ["americas", "emea", "apac"], "regions" => ["eu-west-1", "us-east-1"]}
   end
 
+  @doc """
+  Route handler mirroring the real available-regions endpoint:
+  `organization_slug` is a required query parameter (400 without it).
+  """
+  def regions_route do
+    {:params,
+     fn params ->
+       case params["organization_slug"] do
+         slug when is_binary(slug) and slug != "" -> {200, regions()}
+         _missing -> {400, %{"message" => "organization_slug required"}}
+       end
+     end}
+  end
+
   @doc "Default route table for the stub: path (without query) -> JSON value."
   def routes do
     %{
@@ -134,9 +159,9 @@ defmodule Superblock.Fixtures do
       "/v1/projects/projaone1234567890ab/config/database/postgres" => db_config(),
       "/v1/projects/projatwo1234567890ab/config/database/postgres" => db_config(),
       "/v1/projects/projbone1234567890ab/config/database/postgres" => db_config(),
-      "/v1/projects/projaone1234567890ab/api-keys" => api_keys(),
-      "/v1/projects/projatwo1234567890ab/api-keys" => api_keys(),
-      "/v1/projects/projbone1234567890ab/api-keys" => api_keys(),
+      "/v1/projects/projaone1234567890ab/api-keys" => api_keys_route(),
+      "/v1/projects/projatwo1234567890ab/api-keys" => api_keys_route(),
+      "/v1/projects/projbone1234567890ab/api-keys" => api_keys_route(),
       "/v1/projects/projaone1234567890ab/functions" => functions(),
       "/v1/projects/projatwo1234567890ab/functions" => [],
       "/v1/projects/projbone1234567890ab/functions" => [],
@@ -151,7 +176,7 @@ defmodule Superblock.Fixtures do
       "/v1/projects/projaone1234567890ab/branches" => branches(),
       "/v1/projects/projatwo1234567890ab/branches" => [],
       "/v1/projects/projbone1234567890ab/branches" => [],
-      "/v1/projects/available-regions" => regions()
+      "/v1/projects/available-regions" => regions_route()
     }
   end
 end

@@ -10,25 +10,25 @@ Unix tools — `ls`, `cat`, `grep`, `find`, `diff`.
 
 ```
 /mnt/supabase
-├── organizations/
-│   └── my-org/
-│       ├── info.json
-│       ├── members.json
-│       └── projects/
-│           └── abcdefghijklmnopqrst/
-│               ├── info.json
-│               ├── health                  # "db: healthy" etc.
-│               ├── config/
-│               │   ├── auth.json
-│               │   └── database.json
-│               ├── api-keys/
-│               │   ├── publishable
-│               │   └── secret              # REDACTED unless you opt in
-│               ├── functions/
-│               │   └── hello/info.json
-│               └── branches/
-│                   └── main/info.json
-└── regions.json
+└── organizations/
+    └── my-org/
+        ├── info.json
+        ├── members.json
+        ├── regions.json
+        └── projects/
+            └── abcdefghijklmnopqrst/
+                ├── info.json
+                ├── health                  # "db: healthy" etc.
+                ├── config/
+                │   ├── auth.json
+                │   └── database.json
+                ├── api-keys/
+                │   ├── publishable
+                │   └── secret              # REDACTED unless you opt in
+                ├── functions/
+                │   └── hello/info.json
+                └── branches/
+                    └── main/info.json
 ```
 
 Everything is `GET`-only: superblock physically cannot create, change or
@@ -206,9 +206,12 @@ for free. Stopping the service unmounts cleanly (SIGTERM handling).
 Responses are cached in memory per endpoint (TTLs configurable:
 `ttl.orgs`=60s, `ttl.project`=30s, `ttl.health`=10s, `ttl.static`=300s), with
 single-flight de-duplication and negative caching, so `ls -R` costs a handful
-of requests, not hundreds. On `429` the filesystem degrades to `EAGAIN`
-(never hangs); request deadlines (`http_timeout_ms`, default 8000) turn slow
-calls into `EIO`. `superblock refresh` flushes the cache of a live mount.
+of requests, not hundreds. The Management API allows 120 requests/minute per
+user, tracked independently per project/organization — superblock records the
+`X-RateLimit-*` headers per scope (visible in `superblock status`) and on a
+`429` the filesystem degrades to `EAGAIN` (never hangs); request deadlines
+(`http_timeout_ms`, default 8000) turn slow calls into `EIO`.
+`superblock refresh` flushes the cache of a live mount.
 
 ## Security notes
 
