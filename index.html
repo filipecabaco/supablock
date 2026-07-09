@@ -708,22 +708,24 @@
           <span class="n">1</span>
           <div>
             <h3>Authenticate</h3>
-            <p>Same flow as the official supabase CLI: your browser opens the Supabase
-               dashboard, which mints a token and shows a short verification code. Type the
-               code at the prompt and the token arrives end-to-end encrypted
-               (ECDH&nbsp;P-256 + AES-256-GCM). Over SSH, use
-               <span class="mono">--no-browser</span> and open the printed URL anywhere;
-               <span class="mono">--token sbp_…</span> pastes a token directly.</p>
+            <p>With an OAuth app configured (<span class="mono">oauth.client_id</span> /
+               <span class="mono">oauth.client_secret</span>), <span class="mono">login</span>
+               runs the documented OAuth2 flow — PKCE&nbsp;S256, consent in the browser, a
+               loopback callback — and stores short-lived, scoped tokens that refresh
+               automatically. Without one, it falls back to the supabase-CLI-style dashboard
+               session flow (verification code, end-to-end-encrypted token delivery), and
+               <span class="mono">--token sbp_…</span> always works.</p>
             <div class="code">
               <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
               <pre><span class="p">$</span> superblock login
-Here is your login link, open it in the browser:
+Open this link in your browser to authorize superblock:
 
-  https://supabase.com/dashboard/cli/login?session_id=…
+  https://api.supabase.com/v1/oauth/authorize?client_id=…&amp;code_challenge=…
 
-Enter your verification code: a1b2c3
-<span class="p">✓</span> Token valid — authenticated, 2 organizations found.
-  Stored in ~/.config/superblock/credentials (mode 0600).</pre>
+Waiting for the callback on http://localhost:53682/callback …
+<span class="p">✓</span> Logged in via OAuth — authenticated, 2 organizations found.
+  Stored in ~/.config/superblock/credentials (mode 0600).
+  Tokens are short-lived and refresh automatically.</pre>
             </div>
           </div>
         </div>
@@ -812,8 +814,8 @@ Mounted at /mnt/supabase. Ctrl-C to unmount.</pre>
             <tr><th>Command</th><th>What it does</th></tr>
           </thead>
           <tbody>
-            <tr><td><code>superblock login</code></td><td>Browser login via the dashboard, encrypted token delivery. <code>--token sbp_…</code> pastes a token; <code>--no-browser</code> just prints the URL.</td></tr>
-            <tr><td><code>superblock logout</code></td><td>Delete the stored token.</td></tr>
+            <tr><td><code>superblock login</code></td><td>Browser login: OAuth2 + PKCE with scoped, auto-refreshing tokens (when an OAuth app is configured), dashboard session flow otherwise. <code>--token sbp_…</code> pastes a token; <code>--no-browser</code> just prints the URL.</td></tr>
+            <tr><td><code>superblock logout</code></td><td>Delete the credential and revoke the OAuth grant.</td></tr>
             <tr><td><code>superblock status</code></td><td>Auth state (masked token), org count, mount state, last-seen rate limits.</td></tr>
             <tr><td><code>superblock doctor</code></td><td>Environment checks with a fix hint per failure.</td></tr>
             <tr><td><code>superblock config set|get|list</code></td><td>Mountpoint, cache TTLs, <code>http_timeout_ms</code>, <code>expose_secrets</code>.</td></tr>
