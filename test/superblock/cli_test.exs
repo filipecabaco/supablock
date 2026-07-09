@@ -328,6 +328,102 @@ defmodule Superblock.CLITest do
     end
   end
 
+  describe "setup (one-command onboarding)" do
+    test "applies a profile, runs the OAuth login, and skips the service on --no-service",
+         %{} = _ctx do
+      url_file = fake_browser!()
+      TestEnv.stub_api!(oauth_routes(self()))
+
+      base = Path.dirname(System.get_env("XDG_CONFIG_HOME"))
+      profile_path = Path.join(base, "team.json")
+
+      File.write!(
+        profile_path,
+        Jason.encode!(%{
+          "oauth.client_id" => "11111111-2222-4333-8444-555555555555",
+          "oauth.client_secret" => "sb_secret_team",
+          "mountpoint" => "/mnt/team"
+        })
+      )
+
+      setup_task =
+        Task.async(fn ->
+          capture_io(fn ->
+            assert CLI.run(["setup", profile_path, "--no-service"]) == 0
+          end)
+        end)
+
+      authorize_url = await_file(url_file)
+      query = URI.decode_query(URI.parse(authorize_url).query)
+      get_callback!(code: "setup123", state: query["state"])
+
+      output = Task.await(setup_task, 15_000)
+      assert output =~ "Applying team profile"
+      assert output =~ "mountpoint = /mnt/team"
+      assert output =~ "oauth.client_secret = (set)"
+      refute output =~ "sb_secret_team"
+      assert output =~ "✓ Logged in via OAuth"
+      assert output =~ "All set. Mount with: superblock mount"
+      assert output =~ "/mnt/team"
+
+      assert {:ok, %{type: :oauth}} = Credentials.load_credential()
+      assert Superblock.Config.get("mountpoint") == "/mnt/team"
+    end
+
+    test "already-authenticated setup is a no-op login" do
+      TestEnv.fake_login!()
+      TestEnv.stub_api!()
+
+      output =
+        capture_io(fn ->
+          assert CLI.run(["setup", "--no-service"]) == 0
+        end)
+
+      assert output =~ "Already authenticated — 2 organizations found."
+      assert output =~ "All set."
+    end
+
+    test "a bad profile fails before any login" do
+      base = Path.dirname(System.get_env("XDG_CONFIG_HOME"))
+      bad = Path.join(base, "bad.json")
+      File.write!(bad, "[]")
+
+      stderr =
+        capture_io(:stderr, fn ->
+          capture_io(fn -> assert CLI.run(["setup", bad, "--no-service"]) == 1 end)
+        end)
+
+      assert stderr =~ "JSON object"
+      assert Credentials.load() == :missing
+    end
+
+    test "an unreachable API does not trigger a fresh login" do
+      TestEnv.fake_login!()
+      TestEnv.stub_api!(%{"/v1/organizations" => {:status, 503, %{}}})
+
+      stderr =
+        capture_io(:stderr, fn ->
+          capture_io(fn -> assert CLI.run(["setup", "--no-service"]) == 3 end)
+        end)
+
+      assert stderr =~ "Could not verify authentication"
+    end
+
+    test "the service prompt defaults to no" do
+      TestEnv.fake_login!()
+      TestEnv.stub_api!()
+
+      output =
+        capture_io([input: "\n"], fn ->
+          assert CLI.run(["setup"]) == 0
+        end)
+
+      assert output =~ "Install the auto-start service"
+      assert output =~ "All set."
+      assert Superblock.Service.status() == :not_installed
+    end
+  end
+
   test "logout deletes credentials and is idempotent" do
     :ok = Credentials.store("sbp_t000000000000000000000000000000000000t")
     assert capture_io(fn -> assert CLI.run(["logout"]) == 0 end) =~ "Logged out."
@@ -350,23 +446,12 @@ defmodule Superblock.CLITest do
     refute output =~ "sbp_0000000000"
   end
 
-  test "mount without a mountpoint exits 1 with the hint" do
-    TestEnv.fake_login!()
-
-    stderr = capture_io(:stderr, fn -> assert CLI.run(["mount"]) == 1 end)
-
-    assert stderr =~
-             "No mountpoint. Pass one or run: superblock config set mountpoint /mnt/supabase"
-  end
-
   test "mount without auth exits 2 with the exact hint" do
     stderr = capture_io(:stderr, fn -> assert CLI.run(["mount", "/tmp/sb-nope"]) == 2 end)
     assert stderr =~ "Not authenticated. Run: superblock login"
   end
 
-  test "a configured mountpoint satisfies mount's mountpoint check (auth still required)" do
-    assert capture_io(fn -> CLI.run(["config", "set", "mountpoint", "/tmp/sb-conf"]) end)
-
+  test "mount needs no mountpoint config (defaults apply; auth still required first)" do
     stderr = capture_io(:stderr, fn -> assert CLI.run(["mount"]) == 2 end)
     assert stderr =~ "Not authenticated"
   end

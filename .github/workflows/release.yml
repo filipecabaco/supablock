@@ -28,6 +28,12 @@ permissions:
 
 env:
   MIX_ENV: prod
+  # Baked into the binary at compile time (Superblock.OAuth): the released
+  # superblock OAuth app identity, so `superblock login` works with zero
+  # configuration. Empty (repo secrets unset) simply falls back to the
+  # dashboard session flow — nothing breaks.
+  SUPERBLOCK_OAUTH_CLIENT_ID: ${{ secrets.SUPERBLOCK_OAUTH_CLIENT_ID }}
+  SUPERBLOCK_OAUTH_CLIENT_SECRET: ${{ secrets.SUPERBLOCK_OAUTH_CLIENT_SECRET }}
 
 jobs:
   linux:

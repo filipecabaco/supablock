@@ -135,32 +135,65 @@ More build notes:
 ## Quickstart
 
 ```bash
-superblock login          # opens the Supabase dashboard; type the code it shows
-superblock config set mountpoint /mnt/supabase
-superblock mount          # foreground; Ctrl-C unmounts
+superblock login          # browser consent — that's the whole setup
+superblock mount          # mounts at ~/Supabase by default; Ctrl-C unmounts
 ```
+
+The mountpoint defaults to `~/Supabase` (created on demand);
+`superblock config set mountpoint /mnt/supabase` overrides it.
+
+### Team onboarding: `superblock setup`
+
+One command applies a shared team profile, logs in, and offers the
+auto-start service:
+
+```bash
+superblock setup https://team.example.com/superblock.json
+```
+
+The profile is a flat JSON object of config keys — commit it to your
+dotfiles repo or wiki. Only known config keys are applied (same validation
+as `config set`); anything else is skipped and reported. Tokens and
+database passwords never belong in a profile.
+
+```json
+{
+  "oauth.client_id": "11111111-…",
+  "oauth.client_secret": "sb_secret_…",
+  "mountpoint": "/mnt/supabase",
+  "ttl.orgs": 120
+}
+```
+
+`setup` also takes a local file path, `--token sbp_…`, `--no-browser`, and
+`--service`/`--no-service` (default: asks). Re-running it is safe.
 
 ### How login works
 
 `superblock login` picks the best available flow, in this order:
 
-1. **OAuth2 (recommended)** — used when an OAuth app is configured. The
-   browser opens the documented consent page
+1. **OAuth2 (recommended)** — used when an OAuth app identity is present.
+   The browser opens the documented consent page
    (`/v1/oauth/authorize`, PKCE S256 + `state`), Supabase redirects to a
    loopback callback on `127.0.0.1:53682`, and the code is exchanged for
    **short-lived, scoped tokens** that refresh automatically (Supabase
    refresh tokens are single-use; rotation is atomic and serialized).
    Register the app read-only and the read-only guarantee is enforced by
    the server, not just this client. `logout` also revokes the grant
-   server-side. Configure once:
+   server-side.
 
-   ```bash
-   superblock config set oauth.client_id <uuid from your OAuth app>
-   superblock config set oauth.client_secret <its secret>
-   ```
+   The app identity resolves in this order: `oauth.client_id` /
+   `oauth.client_secret` config (set by hand or via a `setup` profile) →
+   `SUPERBLOCK_OAUTH_CLIENT_ID`/`_SECRET` env → **the identity baked into
+   the released binary at build time** (CI injects the superblock OAuth
+   app's credentials from repo secrets, the same way `gh`/`gcloud` ship
+   theirs) — so on a released binary, plain `superblock login` needs zero
+   configuration.
 
-   (Register the app under your org: dashboard → org settings → OAuth Apps,
-   redirect URI `http://localhost:53682/callback`, read-only scopes.)
+   To use your own app instead: register it under your org (dashboard →
+   org settings → OAuth Apps, redirect URI
+   `http://localhost:53682/callback`, read-only scopes) and drop its
+   id/secret into config or your team profile.
 
 2. **Dashboard session flow** — with no OAuth app configured, `login`
    replicates the official supabase CLI: it opens
@@ -201,17 +234,21 @@ Output is deterministic — JSON is pretty-printed with sorted keys — so
 ## Browsing table data
 
 The Management API exposes no row data, so table browsing connects straight
-to a project's Postgres. Give superblock a connection URL once and the
-project grows a `database/` folder:
+to a project's Postgres. Connect once and the project grows a `database/`
+folder:
 
 ```bash
-superblock db add abcdefghijklmnopqrst \
-  --url 'postgres://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:6543/postgres'
-# omit --url to be prompted (the password is not echoed)
+superblock db add abcdefghijklmnopqrst
+# Project My App — database host db.abcdefghijklmnopqrst.supabase.co.
+# Database password (postgres user): ▂            (not echoed)
 ```
 
-Find the URL in the Supabase dashboard under **Project → Connect** (use the
-pooler/session string; the password is the database password you set). Then:
+When you're logged in, `db add` looks the project up and builds the
+connection URL itself — you type only the database password (the one thing
+the Management API never returns, by design). To use a different
+user/host/pooler, pass the full string instead:
+`superblock db add <ref> --url 'postgres://…'` (find it in the dashboard
+under **Project → Connect**). Then:
 
 ```bash
 ls  /mnt/supabase/organizations/*/projects/<ref>/database                 # schemas
@@ -259,6 +296,7 @@ superblock refresh --check
 ## Commands
 
 ```
+superblock setup [profile]           one-command onboarding: profile + login + service
 superblock login                     browser login: OAuth2+PKCE, or dashboard session flow
 superblock login --token sbp_...     validate + store a pasted token instead
 superblock login --no-browser        print the login URL (SSH-friendly)
@@ -266,7 +304,7 @@ superblock logout                    delete the credential (and revoke the OAuth
 superblock status | whoami           auth, org count, mount state, rate limits
 superblock doctor                    environment checks with fix hints
 superblock config set|get|list       mountpoint, TTLs, timeouts, expose_secrets, oauth.*
-superblock mount [mountpoint]        mount in the foreground
+superblock mount [mountpoint]        mount in the foreground (default ~/Supabase)
 superblock unmount [mountpoint]      unmount from another shell
 superblock refresh                   drop the cache; next reads re-fetch
 superblock refresh --check           report cache staleness without flushing

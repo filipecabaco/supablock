@@ -16,8 +16,9 @@ defmodule Superblock.Service do
 
   @spec install() :: {:ok, [String.t()]} | {:error, String.t()}
   def install do
-    with {:ok, bin} <- executable_path(),
-         {:ok, mountpoint} <- configured_mountpoint() do
+    with {:ok, bin} <- executable_path() do
+      mountpoint = Config.mountpoint()
+
       case platform() do
         :linux -> install_systemd(bin, mountpoint)
         :darwin -> install_launchd(bin, mountpoint)
@@ -181,18 +182,6 @@ defmodule Superblock.Service do
 
       bin ->
         {:ok, Path.expand(bin)}
-    end
-  end
-
-  defp configured_mountpoint do
-    case Config.get("mountpoint") do
-      mountpoint when is_binary(mountpoint) and mountpoint != "" ->
-        {:ok, mountpoint}
-
-      _unset ->
-        {:error,
-         "no mountpoint configured — the service needs one: " <>
-           "superblock config set mountpoint /mnt/supabase"}
     end
   end
 
