@@ -1,9 +1,12 @@
-# Publishes docs/ (the superblock landing page) to GitHub Pages:
+# Publishes docs/ (the superblock landing page + installer script) to GitHub
+# Pages via the gh-pages branch:
 #   https://filipecabaco.github.io/supablock/
 #
-# `enablement: true` provisions the Pages site on first run, so no manual
-# repository-settings step is needed. Runs on pushes to the default branch
-# (Pages deploys are restricted to it) or manually via workflow_dispatch.
+# Branch-based publishing is used deliberately: pushing a gh-pages branch
+# auto-provisions the Pages site, whereas the Actions-based deploy
+# (actions/deploy-pages) requires the site to be created first — something
+# the workflow token is not allowed to do on this repository
+# ("Resource not accessible by integration").
 
 name: pages
 
@@ -14,30 +17,23 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
 
 concurrency:
   group: pages
   cancel-in-progress: true
 
 jobs:
-  deploy:
+  publish:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/configure-pages@v5
-        with:
-          enablement: true
+      - name: Disable Jekyll processing
+        run: touch docs/.nojekyll
 
-      - uses: actions/upload-pages-artifact@v3
+      - uses: peaceiris/actions-gh-pages@v4
         with:
-          path: docs
-
-      - id: deployment
-        uses: actions/deploy-pages@v4
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: docs
+          publish_branch: gh-pages
