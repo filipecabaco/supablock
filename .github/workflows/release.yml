@@ -89,18 +89,17 @@ jobs:
           name: superblock-linux-${{ matrix.arch }}
           path: superblock-linux-${{ matrix.arch }}
 
+  # One macOS job, arm64 only: Macs have been arm-only since 2020, and macOS
+  # runner capacity is the scarce resource (macos-13 was retired — jobs
+  # targeting it queued forever, starving the publish job — and macos-14
+  # entered deprecation on 2026-07-06 with hours-long queues; macos-15 is the
+  # current macos-latest fleet). Intel-Mac users build from source; the
+  # installer says so.
   macos:
     strategy:
       fail-fast: false
       matrix:
         include:
-          # Runner choice is about fleet health: macos-13 was retired
-          # (jobs targeting it queue forever — which also starved the publish
-          # job), and macos-14 entered deprecation on 2026-07-06 with
-          # hours-long queues. macos-15 is the current macos-latest fleet;
-          # macos-15-intel is the supported Intel image (until Aug 2027).
-          - runner: macos-15-intel
-            arch: x86_64
           - runner: macos-15
             arch: aarch64
     runs-on: ${{ matrix.runner }}

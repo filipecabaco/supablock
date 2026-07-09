@@ -48,7 +48,9 @@ attempt fails with `EROFS`).
 
 One line (downloads the CI-built single-file binary from GitHub releases —
 no Erlang/Elixir needed; macOS additionally needs
-[macFUSE](https://macfuse.github.io) or [FUSE-T](https://www.fuse-t.org)):
+[macFUSE](https://macfuse.github.io) or [FUSE-T](https://www.fuse-t.org)).
+Prebuilt binaries cover Linux x86_64/aarch64 and Apple-silicon macOS;
+on an Intel Mac, build from source instead:
 
 ```bash
 curl -fsSL https://filipecabaco.github.io/supablock/install.sh | sh

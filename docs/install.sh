@@ -36,6 +36,13 @@ case "$(uname -m)" in
     *) fail "unsupported architecture: $(uname -m)" ;;
 esac
 
+# Prebuilt binaries: linux x86_64/aarch64 and macos aarch64 (Apple silicon).
+# Intel Macs are not prebuilt — build from source instead.
+if [ "$os" = "macos" ] && [ "$arch" = "x86_64" ]; then
+    fail "no prebuilt binary for Intel macOS — build from source:
+  https://github.com/$REPO#building-from-source"
+fi
+
 asset="superblock-${os}-${arch}"
 
 url_for() {
@@ -79,4 +86,4 @@ say ""
 say "next steps:"
 say "  superblock doctor"
 say "  superblock login"
-say "  superblock mount /mnt/supabase"
+say "  superblock mount"
