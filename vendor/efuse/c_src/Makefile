@@ -25,6 +25,14 @@ ifeq ($(SUPERBLOCK_FUSE_API),2)
 else ifeq ($(SUPERBLOCK_FUSE_API),3)
   FUSE_PKG := fuse3
   API_DEFS :=
+else ifeq ($(UNAME_S),Darwin)
+  # Always the 2.9 API on macOS. Recent macFUSE also ships a "fuse3" pc
+  # file, but its fuse3 flavour uses Darwin-specific types
+  # (struct fuse_darwin_attr, fuse_darwin_fill_dir_t) that portable
+  # libfuse3 code cannot compile against — the 2.9 API is the one both
+  # macFUSE and FUSE-T implement compatibly.
+  FUSE_PKG := $(PKGS_2)
+  API_DEFS := -DSUPERBLOCK_FUSE2
 else ifeq ($(shell pkg-config --exists fuse3 && echo yes),yes)
   FUSE_PKG := fuse3
   API_DEFS :=
