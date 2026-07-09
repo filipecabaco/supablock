@@ -1,0 +1,994 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="superblock — browse your Supabase account as a read-only FUSE filesystem. Quick guide and installation.">
+<title>superblock — your Supabase account, mounted</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%233ecf8e' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z'/%3E%3C/svg%3E">
+<style>
+  :root {
+    --bg: #171717;
+    --panel: #1f1f1f;
+    --panel-2: #232323;
+    --border: #2e2e2e;
+    --border-strong: #3c3c3c;
+    --text: #ededed;
+    --muted: #8f8f8f;
+    --faint: #6b6b6b;
+    --brand: #3ecf8e;
+    --brand-deep: #2fb37a;
+    --brand-tint: rgba(62, 207, 142, 0.10);
+    --brand-line: rgba(62, 207, 142, 0.35);
+    --warn: #d4a72c;
+    --code-bg: #121212;
+    --sel: rgba(62, 207, 142, 0.25);
+  }
+
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #fcfcfc;
+      --panel: #ffffff;
+      --panel-2: #f6f6f6;
+      --border: #e4e4e4;
+      --border-strong: #cfcfcf;
+      --text: #1c1c1c;
+      --muted: #6b6b6b;
+      --faint: #9a9a9a;
+      --brand: #006239;
+      --brand-deep: #00794a;
+      --brand-tint: rgba(0, 98, 57, 0.07);
+      --brand-line: rgba(0, 98, 57, 0.30);
+      --warn: #8a6d00;
+      --code-bg: #171717;
+      --sel: rgba(62, 207, 142, 0.35);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --bg: #171717;
+    --panel: #1f1f1f;
+    --panel-2: #232323;
+    --border: #2e2e2e;
+    --border-strong: #3c3c3c;
+    --text: #ededed;
+    --muted: #8f8f8f;
+    --faint: #6b6b6b;
+    --brand: #3ecf8e;
+    --brand-deep: #2fb37a;
+    --brand-tint: rgba(62, 207, 142, 0.10);
+    --brand-line: rgba(62, 207, 142, 0.35);
+    --warn: #d4a72c;
+    --code-bg: #121212;
+    --sel: rgba(62, 207, 142, 0.25);
+  }
+
+  :root[data-theme="light"] {
+    --bg: #fcfcfc;
+    --panel: #ffffff;
+    --panel-2: #f6f6f6;
+    --border: #e4e4e4;
+    --border-strong: #cfcfcf;
+    --text: #1c1c1c;
+    --muted: #6b6b6b;
+    --faint: #9a9a9a;
+    --brand: #006239;
+    --brand-deep: #00794a;
+    --brand-tint: rgba(0, 98, 57, 0.07);
+    --brand-line: rgba(0, 98, 57, 0.30);
+    --warn: #8a6d00;
+    --code-bg: #171717;
+    --sel: rgba(62, 207, 142, 0.35);
+  }
+
+  * { box-sizing: border-box; }
+
+  ::selection { background: var(--sel); }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 16px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .mono, code, pre, kbd {
+    font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  }
+
+  /* Heroicons (24/outline), inlined as a sprite */
+  .icon {
+    width: 16px;
+    height: 16px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    flex: none;
+    vertical-align: -2px;
+  }
+
+  .icon-lg { width: 19px; height: 19px; }
+
+  .wrap {
+    max-width: 920px;
+    margin: 0 auto;
+    padding: 0 24px;
+  }
+
+  a { color: var(--brand); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  a:focus-visible, button:focus-visible, summary:focus-visible {
+    outline: 2px solid var(--brand);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+
+  /* ---------- header ---------- */
+
+  header.top {
+    border-bottom: 1px solid var(--border);
+    background: var(--bg);
+  }
+
+  .top-inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 14px 0;
+  }
+
+  .wordmark {
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: var(--text);
+  }
+
+  .wordmark .tick { color: var(--brand); }
+
+  .top-nav {
+    display: flex;
+    gap: 20px;
+    font-size: 13.5px;
+  }
+
+  .top-nav a { color: var(--muted); }
+  .top-nav a:hover { color: var(--text); text-decoration: none; }
+
+  /* ---------- hero ---------- */
+
+  .hero { padding: 72px 0 40px; }
+
+  .eyebrow {
+    display: inline-block;
+    font-size: 11.5px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--brand);
+    border: 1px solid var(--brand-line);
+    background: var(--brand-tint);
+    border-radius: 999px;
+    padding: 4px 12px;
+    margin-bottom: 22px;
+  }
+
+  h1 {
+    font-size: clamp(30px, 5.4vw, 46px);
+    line-height: 1.12;
+    font-weight: 700;
+    letter-spacing: -0.022em;
+    margin: 0 0 18px;
+    text-wrap: balance;
+  }
+
+  h1 .path { color: var(--brand); }
+
+  .lede {
+    font-size: 18px;
+    color: var(--muted);
+    max-width: 44rem;
+    margin: 0 0 34px;
+  }
+
+  .lede strong { color: var(--text); font-weight: 600; }
+
+  /* ---------- terminal ---------- */
+
+  .term {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: 0 18px 48px -24px rgba(0, 0, 0, 0.55);
+  }
+
+  .term-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    border-bottom: 1px solid #2a2a2a;
+    background: #1b1b1b;
+  }
+
+  .term-bar .dot { width: 11px; height: 11px; border-radius: 50%; background: #3a3a3a; }
+  .term-bar .title { margin-left: 6px; font-size: 12px; color: #7a7a7a; }
+
+  .term-bar button {
+    margin-left: auto;
+    background: none;
+    border: 1px solid #333;
+    color: #8f8f8f;
+    font-size: 11.5px;
+    border-radius: 6px;
+    padding: 3px 10px;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .term-bar button:hover { color: #3ecf8e; border-color: #3ecf8e55; }
+
+  .term-body {
+    padding: 18px 20px 22px;
+    font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 13.5px;
+    line-height: 1.6;
+    color: #d6d6d6;
+    min-height: 22.5em;
+    overflow-x: auto;
+    white-space: pre;
+  }
+
+  .term-body .p { color: #3ecf8e; }        /* prompt + green output */
+  .term-body .c { color: #6b6b6b; }        /* comment */
+  .term-body .d { color: #8ab4f8; }        /* directory */
+  .term-body .m { color: #7a7a7a; }        /* de-emphasized */
+  .term-body .w { color: #d4a72c; }        /* warn */
+  .term-body .cursor {
+    display: inline-block; width: 8px; height: 1.1em;
+    background: #3ecf8e; vertical-align: text-bottom;
+    animation: blink 1s steps(1) infinite;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) {
+    .term-body .cursor { animation: none; }
+  }
+
+  /* ---------- sections ---------- */
+
+  section { padding: 44px 0 8px; }
+
+  .sec-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--brand);
+    margin: 0 0 10px;
+  }
+
+  h2 {
+    font-size: 26px;
+    font-weight: 700;
+    letter-spacing: -0.015em;
+    margin: 0 0 14px;
+    text-wrap: balance;
+  }
+
+  h3 { font-size: 17px; font-weight: 650; margin: 0 0 8px; }
+
+  p.body, li { color: var(--muted); }
+  p.body { max-width: 46rem; margin: 0 0 18px; }
+  p.body strong, li strong { color: var(--text); font-weight: 600; }
+
+  /* facts row */
+  .facts {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 14px;
+    margin: 26px 0 6px;
+  }
+
+  .fact {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 18px 18px 16px;
+  }
+
+  .fact .k {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 13px;
+    color: var(--brand);
+    margin-bottom: 8px;
+  }
+
+  .fact p { margin: 0; font-size: 14px; color: var(--muted); }
+  .fact p strong { color: var(--text); }
+
+  /* code blocks */
+  .code {
+    position: relative;
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin: 14px 0 22px;
+  }
+
+  .code pre {
+    margin: 0;
+    padding: 15px 18px;
+    font-size: 13.5px;
+    line-height: 1.6;
+    color: #d6d6d6;
+    overflow-x: auto;
+  }
+
+  .code .p { color: #3ecf8e; }
+  .code .c { color: #6b6b6b; }
+  .code .o { color: #9a9a9a; }
+
+  .copy {
+    position: absolute;
+    top: 8px; right: 8px;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: #1b1b1b;
+    border: 1px solid #333;
+    color: #8f8f8f;
+    font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 11px;
+    border-radius: 6px;
+    padding: 4px 10px;
+    cursor: pointer;
+  }
+
+  .copy .icon { width: 13px; height: 13px; }
+  .copy:hover { color: #3ecf8e; border-color: #3ecf8e55; }
+
+  /* quick-start steps: a true sequence */
+  .steps { display: flex; flex-direction: column; gap: 22px; margin-top: 26px; }
+
+  .step {
+    display: grid;
+    grid-template-columns: 44px 1fr;
+    gap: 16px;
+  }
+
+  .step .n {
+    font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 13px;
+    color: var(--brand);
+    border: 1px solid var(--brand-line);
+    background: var(--brand-tint);
+    border-radius: 8px;
+    height: 36px; width: 44px;
+    display: flex; align-items: center; justify-content: center;
+  }
+
+  .step p { margin: 4px 0 0; font-size: 14.5px; color: var(--muted); max-width: 44rem; }
+  .step p strong { color: var(--text); }
+  .step .code { margin-top: 10px; margin-bottom: 0; }
+
+  /* one-liners */
+  .oneliner { margin: 18px 0; }
+  .oneliner .what {
+    font-size: 14px; color: var(--muted); margin: 0 0 6px;
+  }
+  .oneliner .what strong { color: var(--text); }
+  .oneliner .code { margin: 0; }
+
+  /* command table */
+  .cmd-table-wrap {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow-x: auto;
+    margin: 20px 0 8px;
+  }
+
+  table.cmds {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+    min-width: 560px;
+  }
+
+  .cmds th {
+    text-align: left;
+    font-size: 11.5px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--faint);
+    font-weight: 600;
+    padding: 10px 16px;
+    background: var(--panel-2);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .cmds td {
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    color: var(--muted);
+    vertical-align: top;
+  }
+
+  .cmds tr:last-child td { border-bottom: none; }
+  .cmds td code {
+    font-size: 12.5px;
+    color: var(--text);
+    background: var(--brand-tint);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 1.5px 7px;
+    white-space: nowrap;
+  }
+
+  /* guarantee panel */
+  .guarantee {
+    border: 1px solid var(--brand-line);
+    background: var(--brand-tint);
+    border-radius: 10px;
+    padding: 22px 24px;
+    margin: 24px 0 10px;
+  }
+
+  .guarantee h3 { color: var(--text); display: flex; align-items: center; gap: 10px; }
+  .guarantee h3 .icon { color: var(--brand); }
+  .guarantee p { margin: 8px 0 0; font-size: 14.5px; color: var(--muted); max-width: 46rem; }
+  .guarantee code {
+    font-size: 12.5px; color: var(--text);
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 5px; padding: 1px 6px;
+  }
+
+  ul.notes { margin: 12px 0 0; padding-left: 20px; }
+  ul.notes li { margin: 7px 0; font-size: 14.5px; max-width: 44rem; }
+  ul.notes code {
+    font-size: 12.5px; color: var(--text);
+    background: var(--panel-2); border: 1px solid var(--border);
+    border-radius: 5px; padding: 1px 6px;
+  }
+
+  /* troubleshooting */
+  details.faq {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--panel);
+    margin: 10px 0;
+  }
+
+  details.faq summary {
+    cursor: pointer;
+    padding: 13px 18px;
+    font-size: 14.5px;
+    font-weight: 600;
+    color: var(--text);
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  details.faq summary .icon {
+    color: var(--brand);
+    width: 14px;
+    height: 14px;
+    transition: transform 0.15s ease;
+  }
+
+  details.faq[open] summary .icon { transform: rotate(90deg); }
+
+  @media (prefers-reduced-motion: reduce) {
+    details.faq summary .icon { transition: none; }
+  }
+  details.faq .faq-body { padding: 0 18px 15px 40px; font-size: 14px; color: var(--muted); }
+  details.faq .faq-body code {
+    font-size: 12.5px; color: var(--text);
+    background: var(--panel-2); border: 1px solid var(--border);
+    border-radius: 5px; padding: 1px 6px;
+  }
+
+  footer {
+    margin-top: 64px;
+    border-top: 1px solid var(--border);
+    padding: 26px 0 40px;
+    font-size: 13px;
+    color: var(--faint);
+  }
+
+  footer .wrap { display: flex; flex-wrap: wrap; gap: 8px 24px; justify-content: space-between; }
+
+  @media (max-width: 560px) {
+    .hero { padding-top: 48px; }
+    .step { grid-template-columns: 36px 1fr; gap: 12px; }
+    .step .n { width: 36px; height: 32px; }
+  }
+</style>
+</head>
+<body>
+<svg xmlns="http://www.w3.org/2000/svg" style="display: none" aria-hidden="true">
+  <!-- Heroicons 24/outline (MIT) — heroicons.com -->
+  <symbol id="i-command-line" viewBox="0 0 24 24">
+    <path d="M6.75 7.5l3 2.25-3 2.25m4.5 0h3m-9 8.25h13.5A2.25 2.25 0 0021 18V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 6v12a2.25 2.25 0 002.25 2.25z"/>
+  </symbol>
+  <symbol id="i-lock-closed" viewBox="0 0 24 24">
+    <path d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z"/>
+  </symbol>
+  <symbol id="i-key" viewBox="0 0 24 24">
+    <path d="M15.75 5.25a3 3 0 013 3m3 0a6 6 0 01-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1121.75 8.25z"/>
+  </symbol>
+  <symbol id="i-arrow-path" viewBox="0 0 24 24">
+    <path d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99"/>
+  </symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24">
+    <path d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z"/>
+  </symbol>
+  <symbol id="i-shield-check" viewBox="0 0 24 24">
+    <path d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z"/>
+  </symbol>
+  <symbol id="i-wrench-screwdriver" viewBox="0 0 24 24">
+    <path d="M11.42 15.17L17.25 21A2.652 2.652 0 0021 17.25l-5.877-5.877M11.42 15.17l2.496-3.03c.317-.384.74-.626 1.208-.766M11.42 15.17l-4.655 5.653a2.548 2.548 0 11-3.586-3.586l6.837-5.63m5.108-.233c.55-.164 1.163-.188 1.743-.14a4.5 4.5 0 004.486-6.336l-3.276 3.277a3.004 3.004 0 01-2.25-2.25l3.276-3.276a4.5 4.5 0 00-6.336 4.486c.091 1.076-.071 2.264-.904 2.95l-.102.085m-1.745 1.437L5.909 7.5H4.5L2.25 3.75l1.5-1.5L7.5 4.5v1.409l4.26 4.26m-1.745 1.437l1.745-1.437m6.615 8.206L15.75 15.75M4.867 19.125h.008v.008h-.008v-.008z"/>
+  </symbol>
+  <symbol id="i-chevron-right" viewBox="0 0 24 24">
+    <path d="M8.25 4.5l7.5 7.5-7.5 7.5"/>
+  </symbol>
+  <symbol id="i-clipboard" viewBox="0 0 24 24">
+    <path d="M15.666 3.888A2.25 2.25 0 0013.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 01-.75.75H9a.75.75 0 01-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 011.927-.184"/>
+  </symbol>
+  <symbol id="i-magnifying-glass" viewBox="0 0 24 24">
+    <path d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"/>
+  </symbol>
+  <symbol id="i-list-bullet" viewBox="0 0 24 24">
+    <path d="M8.25 6.75h12M8.25 12h12m-12 5.25h12M3.75 6.75h.007v.008H3.75V6.75zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zM3.75 12h.007v.008H3.75V12zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm-.375 5.25h.007v.008H3.75v-.008zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z"/>
+  </symbol>
+  <symbol id="i-arrow-down-tray" viewBox="0 0 24 24">
+    <path d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3"/>
+  </symbol>
+</svg>
+
+<header class="top">
+  <div class="wrap top-inner">
+    <span class="wordmark mono"><span class="tick">$</span> superblock</span>
+    <nav class="top-nav">
+      <a href="#install">Install</a>
+      <a href="#quickstart">Quick start</a>
+      <a href="#commands">Commands</a>
+      <a href="#security">Security</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div class="wrap hero">
+    <span class="eyebrow">Read-only FUSE filesystem · Elixir</span>
+    <h1>Your Supabase account,<br>mounted at <span class="path mono">/mnt/supabase</span></h1>
+    <p class="lede">
+      superblock mirrors the Supabase Management API as a browsable directory tree.
+      Log in once with a personal access token, mount, and inspect organizations, projects,
+      config, keys and functions with the tools you already trust —
+      <strong class="mono">ls</strong>, <strong class="mono">cat</strong>,
+      <strong class="mono">grep</strong>, <strong class="mono">diff</strong>.
+    </p>
+
+    <div class="term">
+      <div class="term-bar">
+        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        <span class="title mono">superblock — zsh</span>
+        <button id="replay" type="button">replay</button>
+      </div>
+      <div class="term-body" id="term" aria-label="Terminal demo of superblock"></div>
+    </div>
+  </div>
+
+  <section id="why">
+    <div class="wrap">
+      <p class="sec-label"><svg class="icon" aria-hidden="true"><use href="#i-folder"/></svg>Why a filesystem</p>
+      <h2>Everything is a file. Now your infrastructure is too.</h2>
+      <p class="body">
+        No SDK, no dashboard tab farm, no one-off scripts. Your whole account becomes
+        greppable, diffable and scriptable, and the guarantees are built in:
+      </p>
+      <div class="facts">
+        <div class="fact">
+          <span class="k"><svg class="icon" aria-hidden="true"><use href="#i-lock-closed"/></svg>mount -o ro</span>
+          <p><strong>Physically read-only.</strong> Only GET requests ever leave the box, and the
+             kernel itself rejects every write with <code>EROFS</code>.</p>
+        </div>
+        <div class="fact">
+          <span class="k"><svg class="icon" aria-hidden="true"><use href="#i-arrow-path"/></svg>ttl + single-flight</span>
+          <p><strong>Cached &amp; rate-limit friendly.</strong> <code>ls -R</code> costs one request per
+             endpoint, not hundreds. A 429 degrades to <code>EAGAIN</code> — never a hang.</p>
+        </div>
+        <div class="fact">
+          <span class="k"><svg class="icon" aria-hidden="true"><use href="#i-key"/></svg>sbp_…f23a</span>
+          <p><strong>Token-safe.</strong> Stored at mode 0600, never logged, never rendered into
+             the tree. Secret API keys stay redacted unless you opt in.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="install">
+    <div class="wrap">
+      <p class="sec-label"><svg class="icon" aria-hidden="true"><use href="#i-arrow-down-tray"/></svg>Install</p>
+      <h2>One line — or build from source</h2>
+      <p class="body">
+        The quickest path is the installer: it downloads the single-file binary for your
+        platform from the GitHub releases (built by CI, no Erlang/Elixir needed). On Linux the
+        FUSE userspace library is built in; on macOS install
+        <a href="https://macfuse.github.io" rel="noopener">macFUSE</a> or
+        <a href="https://www.fuse-t.org" rel="noopener">FUSE-T</a> first.
+      </p>
+
+      <div class="code">
+        <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
+        <pre><span class="p">$</span> curl -fsSL https://filipecabaco.github.io/supablock/install.sh | sh</pre>
+      </div>
+
+      <p class="body">
+        Building from source instead? You need <strong>Erlang/OTP 25+</strong> and
+        <strong>Elixir 1.17+</strong> (1.18 recommended), a C compiler, and FUSE — on Linux
+        that's <span class="mono">libfuse3-dev</span>, <span class="mono">fuse3</span>
+        and <span class="mono">pkg-config</span>.
+      </p>
+
+      <div class="code">
+        <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
+        <pre><span class="c"># Debian / Ubuntu prerequisites</span>
+<span class="p">$</span> sudo apt install libfuse3-dev fuse3 pkg-config
+
+<span class="c"># build the release</span>
+<span class="p">$</span> git clone https://github.com/filipecabaco/supablock.git &amp;&amp; cd supablock
+<span class="p">$</span> mix deps.get
+<span class="p">$</span> MIX_ENV=prod mix release
+
+<span class="c"># put the launcher on your PATH</span>
+<span class="p">$</span> ln -sf "$PWD/bin/superblock" ~/.local/bin/superblock</pre>
+      </div>
+
+      <p class="body">
+        Then let the tool check its own environment — every failed check comes with a fix hint:
+      </p>
+
+      <div class="code">
+        <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
+        <pre><span class="p">$</span> superblock doctor
+<span class="p">✓</span> /dev/fuse present
+<span class="p">✓</span> unmount tool on PATH (fusermount3)
+<span class="p">✓</span> config dir mode 0700
+<span class="p">✓</span> credentials mode 0600
+<span class="p">✓</span> efuse port binary compiled</pre>
+      </div>
+    </div>
+  </section>
+
+  <section id="quickstart">
+    <div class="wrap">
+      <p class="sec-label"><svg class="icon" aria-hidden="true"><use href="#i-command-line"/></svg>Quick start</p>
+      <h2>Three commands to a mounted account</h2>
+
+      <div class="steps">
+        <div class="step">
+          <span class="n">1</span>
+          <div>
+            <h3>Authenticate</h3>
+            <p>Create a personal access token at <strong>app.supabase.com → Account → Access
+               Tokens</strong>, then paste it at the hidden prompt. It's validated against the API
+               before anything is written, and stored at mode 0600.</p>
+            <div class="code">
+              <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
+              <pre><span class="p">$</span> superblock login
+Paste your Supabase personal access token (sbp_...):
+<span class="p">✓</span> Token valid — authenticated, 2 organizations found.
+  Stored in ~/.config/superblock/credentials (mode 0600).</pre>
+            </div>
+          </div>
+        </div>
+
+        <div class="step">
+          <span class="n">2</span>
+          <div>
+            <h3>Pick a mountpoint</h3>
+            <p>Set it once in config, or pass it to <span class="mono">mount</span> each time —
+               the command-line argument always wins.</p>
+            <div class="code">
+              <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
+              <pre><span class="p">$</span> superblock config set mountpoint /mnt/supabase</pre>
+            </div>
+          </div>
+        </div>
+
+        <div class="step">
+          <span class="n">3</span>
+          <div>
+            <h3>Mount and browse</h3>
+            <p><span class="mono">mount</span> runs in the foreground; <strong>Ctrl-C unmounts
+               cleanly</strong> (so do SIGTERM and even <span class="mono">kill&nbsp;-9</span> —
+               a watchdog in the FUSE port never leaves a stale mount). Explore from any other shell.</p>
+            <div class="code">
+              <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
+              <pre><span class="p">$</span> superblock mount
+Mounted at /mnt/supabase. Ctrl-C to unmount.</pre>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="oneliners">
+    <div class="wrap">
+      <p class="sec-label"><svg class="icon" aria-hidden="true"><use href="#i-magnifying-glass"/></svg>One-liners</p>
+      <h2>Your account, greppable</h2>
+      <p class="body">
+        Output is deterministic — JSON is pretty-printed with sorted keys — so byte sizes are
+        exact and <span class="mono">diff</span> between projects is clean.
+      </p>
+
+      <div class="oneliner">
+        <p class="what"><strong>Which projects disable signups?</strong></p>
+        <div class="code">
+          <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
+          <pre><span class="p">$</span> grep -l '"disable_signup": true' /mnt/supabase/organizations/*/projects/*/config/auth.json</pre>
+        </div>
+      </div>
+
+      <div class="oneliner">
+        <p class="what"><strong>Compare two projects' auth config.</strong></p>
+        <div class="code">
+          <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
+          <pre><span class="p">$</span> diff /mnt/supabase/organizations/my-org/projects/{refA,refB}/config/auth.json</pre>
+        </div>
+      </div>
+
+      <div class="oneliner">
+        <p class="what"><strong>Health of every service, everywhere.</strong></p>
+        <div class="code">
+          <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
+          <pre><span class="p">$</span> cat /mnt/supabase/organizations/*/projects/*/health</pre>
+        </div>
+      </div>
+
+      <div class="oneliner">
+        <p class="what"><strong>All site URLs across the account.</strong></p>
+        <div class="code">
+          <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
+          <pre><span class="p">$</span> grep -r '"site_url"' /mnt/supabase/organizations/*/projects/*/config/auth.json</pre>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="commands">
+    <div class="wrap">
+      <p class="sec-label"><svg class="icon" aria-hidden="true"><use href="#i-list-bullet"/></svg>Commands</p>
+      <h2>The whole CLI</h2>
+      <div class="cmd-table-wrap">
+        <table class="cmds">
+          <thead>
+            <tr><th>Command</th><th>What it does</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>superblock login</code></td><td>Validate a token against the API and store it (0600). <code>--token sbp_…</code> skips the prompt.</td></tr>
+            <tr><td><code>superblock logout</code></td><td>Delete the stored token.</td></tr>
+            <tr><td><code>superblock status</code></td><td>Auth state (masked token), org count, mount state, last-seen rate limits.</td></tr>
+            <tr><td><code>superblock doctor</code></td><td>Environment checks with a fix hint per failure.</td></tr>
+            <tr><td><code>superblock config set|get|list</code></td><td>Mountpoint, cache TTLs, <code>http_timeout_ms</code>, <code>expose_secrets</code>.</td></tr>
+            <tr><td><code>superblock mount [dir]</code></td><td>Mount in the foreground; recovers stale mounts automatically.</td></tr>
+            <tr><td><code>superblock unmount [dir]</code></td><td>Unmount from another shell.</td></tr>
+            <tr><td><code>superblock refresh</code></td><td>Flush the cache of a live mount; next reads re-fetch.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="body" style="font-size: 13.5px;">
+        Exit codes: <span class="mono">0</span> ok · <span class="mono">1</span> usage ·
+        <span class="mono">2</span> not authenticated · <span class="mono">3</span> API/network ·
+        <span class="mono">4</span> environment.
+      </p>
+    </div>
+  </section>
+
+  <section id="security">
+    <div class="wrap">
+      <p class="sec-label"><svg class="icon" aria-hidden="true"><use href="#i-shield-check"/></svg>Security</p>
+      <h2>Read-only, by construction</h2>
+
+      <div class="guarantee">
+        <h3><svg class="icon icon-lg" aria-hidden="true"><use href="#i-lock-closed"/></svg> The write path does not exist</h3>
+        <p>
+          Every request superblock can make is a <code>GET</code> — there is no code path for
+          anything else. The FUSE layer exposes no mutating callbacks, and the mount itself is
+          created with <code>-o ro</code>, so <code>touch</code>, <code>rm</code>,
+          <code>mkdir</code> and every other write fails in the kernel with
+          <code>EROFS</code> before it ever reaches userspace.
+        </p>
+      </div>
+
+      <ul class="notes">
+        <li>The token lives in <code>~/.config/superblock/credentials</code> (mode 0600, dir 0700),
+            is never logged, and shows up masked (<code>sbp_…f23a</code>) in <code>status</code>.</li>
+        <li><code>api-keys/secret</code> renders as
+            <code>REDACTED — run: superblock config set expose_secrets true</code> until you
+            explicitly opt in. The publishable key is always visible.</li>
+        <li><code>SUPERBLOCK_TOKEN</code> overrides the stored credential — the only environment
+            variable in play, intended for CI.</li>
+        <li>Request deadlines (<code>http_timeout_ms</code>, default 8000) turn slow calls into
+            <code>EIO</code>; a rate-limit turns into <code>EAGAIN</code>. The filesystem never hangs.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section id="troubleshooting">
+    <div class="wrap">
+      <p class="sec-label"><svg class="icon" aria-hidden="true"><use href="#i-wrench-screwdriver"/></svg>Troubleshooting</p>
+      <h2>When something's off</h2>
+
+      <details class="faq">
+        <summary><svg class="icon" aria-hidden="true"><use href="#i-chevron-right"/></svg>"Transport endpoint is not connected"</summary>
+        <div class="faq-body">
+          A stale mount from a crashed session. Run <code>superblock mount</code> again — it
+          recovers stale mounts automatically — or <code>fusermount3 -u &lt;mountpoint&gt;</code>.
+          If the VM is killed outright, the port process notices and unmounts by itself.
+        </div>
+      </details>
+
+      <details class="faq">
+        <summary><svg class="icon" aria-hidden="true"><use href="#i-chevron-right"/></svg>Reads fail with "Resource temporarily unavailable"</summary>
+        <div class="faq-body">
+          That's <code>EAGAIN</code>: the Management API rate-limited you. Wait a moment and retry;
+          <code>superblock status</code> shows the last-seen remaining budget per scope.
+        </div>
+      </details>
+
+      <details class="faq">
+        <summary><svg class="icon" aria-hidden="true"><use href="#i-chevron-right"/></svg>Mount fails outright</summary>
+        <div class="faq-body">
+          Run <code>superblock doctor</code>. It checks <code>/dev/fuse</code>, unmount tools,
+          file permissions and the compiled FUSE port, and prints a fix per failed check
+          (exit code 4 if anything fails).
+        </div>
+      </details>
+
+      <details class="faq">
+        <summary><svg class="icon" aria-hidden="true"><use href="#i-chevron-right"/></svg>Where are the logs?</summary>
+        <div class="faq-body">
+          <code>~/.local/state/superblock/superblock.log</code> while mounted; pass
+          <code>--verbose</code> to <code>mount</code> for debug level. Tokens are scrubbed from
+          all log output.
+        </div>
+      </details>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span class="mono">superblock v0.1 · Elixir + FUSE · MIT-licensed vendored ports</span>
+    <span>An independent community tool — not affiliated with or endorsed by Supabase.</span>
+  </div>
+</footer>
+
+<script>
+  // ---------- terminal demo ----------
+  var TERM_SCRIPT = [
+    { t: "prompt", s: "superblock mount /mnt/supabase" },
+    { t: "out", s: "Mounted at <span class='p'>/mnt/supabase</span>. Ctrl-C to unmount.\n" },
+    { t: "prompt", s: "ls /mnt/supabase/organizations/my-org/projects/abcdefghijklmnopqrst" },
+    { t: "out", s: "<span class='d'>api-keys</span>  <span class='d'>branches</span>  <span class='d'>config</span>  <span class='d'>functions</span>  health  info.json\n" },
+    { t: "prompt", s: "cat health" },
+    { t: "out", s: "auth: <span class='p'>healthy</span>\ndb: <span class='p'>healthy</span>\nrealtime: <span class='p'>healthy</span>\nrest: <span class='p'>healthy</span>\nstorage: <span class='p'>healthy</span>\n" },
+    { t: "prompt", s: "diff {staging,production}/config/auth.json" },
+    { t: "out", s: "<span class='m'>@@ -4,7 +4,7 @@</span>\n<span class='w'>-  \"disable_signup\": false,</span>\n<span class='p'>+  \"disable_signup\": true,</span>\n" },
+    { t: "prompt", s: "touch /mnt/supabase/oops" },
+    { t: "out", s: "<span class='w'>touch: cannot touch '/mnt/supabase/oops': Read-only file system</span>\n" }
+  ];
+
+  var termEl = document.getElementById("term");
+  var replayBtn = document.getElementById("replay");
+  var reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  var runId = 0;
+
+  function renderInstant() {
+    var html = "";
+    TERM_SCRIPT.forEach(function (line) {
+      if (line.t === "prompt") {
+        html += "<span class='p'>$</span> " + line.s + "\n";
+      } else {
+        html += line.s;
+      }
+    });
+    termEl.innerHTML = html;
+  }
+
+  function typeScript() {
+    var id = ++runId;
+    var html = "";
+    var i = 0;
+
+    function nextLine() {
+      if (id !== runId) return;
+      if (i >= TERM_SCRIPT.length) {
+        termEl.innerHTML = html + "<span class='p'>$</span> <span class='cursor'></span>";
+        return;
+      }
+      var line = TERM_SCRIPT[i++];
+      if (line.t === "prompt") {
+        var chars = line.s;
+        var j = 0;
+        html += "<span class='p'>$</span> ";
+        (function typeChar() {
+          if (id !== runId) return;
+          if (j < chars.length) {
+            html += chars
+              .charAt(j)
+              .replace(/&/g, "&amp;")
+              .replace(/</g, "&lt;");
+            j++;
+            termEl.innerHTML = html + "<span class='cursor'></span>";
+            setTimeout(typeChar, 18 + Math.random() * 40);
+          } else {
+            html += "\n";
+            termEl.innerHTML = html + "<span class='cursor'></span>";
+            setTimeout(nextLine, 260);
+          }
+        })();
+      } else {
+        html += line.s;
+        termEl.innerHTML = html + "<span class='cursor'></span>";
+        setTimeout(nextLine, 420);
+      }
+    }
+
+    termEl.innerHTML = "";
+    nextLine();
+  }
+
+  if (reduced) {
+    renderInstant();
+  } else {
+    typeScript();
+  }
+
+  replayBtn.addEventListener("click", function () {
+    if (reduced) {
+      renderInstant();
+    } else {
+      typeScript();
+    }
+  });
+
+  // ---------- copy buttons ----------
+  document.querySelectorAll(".copy").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var pre = btn.parentElement.querySelector("pre");
+      var text = pre.innerText
+        .split("\n")
+        .filter(function (l) { return l.indexOf("$ ") === 0; })
+        .map(function (l) { return l.slice(2); })
+        .join("\n");
+      if (!text) text = pre.innerText;
+      navigator.clipboard.writeText(text).then(function () {
+        var label = btn.querySelector("span");
+        var old = label.textContent;
+        label.textContent = "copied";
+        setTimeout(function () { label.textContent = old; }, 1200);
+      });
+    });
+  });
+</script>
+
+</body>
+</html>
