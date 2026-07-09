@@ -840,15 +840,20 @@ Waiting for the callback on http://localhost:53682/callback …
           <div>
             <h3>Mount and browse</h3>
             <p>The mountpoint defaults to <span class="mono">~/Supabase</span> (created on
-               demand) — override it with <span class="mono">config set mountpoint</span> or a
-               command-line argument. <span class="mono">mount</span> runs in the foreground;
-               <strong>Ctrl-C unmounts cleanly</strong> (so do SIGTERM and even
-               <span class="mono">kill&nbsp;-9</span> — a watchdog in the FUSE port never
-               leaves a stale mount). Explore from any other shell.</p>
+               demand) — override it with <span class="mono">--path</span>, a positional
+               argument, or <span class="mono">config set mountpoint</span>.
+               <span class="mono">mount</span> <strong>returns immediately</strong> — the
+               filesystem runs in the background and you can browse from the same shell.
+               Use <span class="mono">--foreground</span> to block instead (useful when you
+               want Ctrl-C to unmount). Logs go to
+               <span class="mono">~/.local/state/superblock/superblock.log</span>.</p>
             <div class="code">
               <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
               <pre><span class="p">$</span> superblock mount
-Mounted at ~/Supabase. Ctrl-C to unmount.</pre>
+Mounting at ~/Supabase (background).
+Log: ~/.local/state/superblock/superblock.log
+Check status: superblock status
+<span class="p">$</span> ls ~/Supabase/</pre>
             </div>
           </div>
         </div>
@@ -876,7 +881,8 @@ Mounted at ~/Supabase. Ctrl-C to unmount.</pre>
       <p class="sec-label"><svg class="icon" aria-hidden="true"><use href="#i-arrow-path"/></svg>Auto-start</p>
       <h2>Keep it mounted — as a background service</h2>
       <p class="body">
-        <span class="mono">mount</span> runs in the foreground, but one command turns it into a
+        <span class="mono">mount</span> runs in the background by default and returns immediately,
+        but it exits when you close the session. One more command turns it into a
         per-user service that comes up at login and restarts on failure — a
         <strong>systemd user unit</strong> on Linux, a <strong>launchd agent</strong> on macOS.
         No root: the unit lands in your home directory and reads the same config and credentials
@@ -1026,7 +1032,7 @@ rows-000000.csv  rows-000500.csv  rows-001000.csv
             <tr><td><code>superblock status</code></td><td>Auth state (masked token), org count, mount state, last-seen rate limits.</td></tr>
             <tr><td><code>superblock doctor</code></td><td>Environment checks with a fix hint per failure.</td></tr>
             <tr><td><code>superblock config set|get|list</code></td><td>Mountpoint, cache TTLs, <code>http_timeout_ms</code>, <code>expose_secrets</code>, <code>db_format</code>, <code>db_page_size</code>, <code>db_key</code>.</td></tr>
-            <tr><td><code>superblock mount [dir]</code></td><td>Mount in the foreground (default <code>~/Supabase</code>); recovers stale mounts automatically.</td></tr>
+            <tr><td><code>superblock mount [--path dir] [dir]</code></td><td>Mount in the background and return immediately (default <code>~/Supabase</code>); recovers stale mounts automatically. <code>--foreground</code> blocks instead.</td></tr>
             <tr><td><code>superblock unmount [dir]</code></td><td>Unmount from another shell.</td></tr>
             <tr><td><code>superblock refresh</code></td><td>Flush the cache of a live mount; next reads re-fetch.</td></tr>
             <tr><td><code>superblock refresh --check</code></td><td>Report cache staleness (total / past-TTL entries) without flushing.</td></tr>
@@ -1111,7 +1117,8 @@ rows-000000.csv  rows-000500.csv  rows-001000.csv
       <details class="faq">
         <summary><svg class="icon" aria-hidden="true"><use href="#i-chevron-right"/></svg>Where are the logs?</summary>
         <div class="faq-body">
-          <code>~/.local/state/superblock/superblock.log</code> while mounted; pass
+          The log path is printed every time you mount:
+          <code>~/.local/state/superblock/superblock.log</code>. Pass
           <code>--verbose</code> to <code>mount</code> for debug level. Tokens are scrubbed from
           all log output.
         </div>
@@ -1131,7 +1138,7 @@ rows-000000.csv  rows-000500.csv  rows-001000.csv
   // ---------- terminal demo ----------
   var TERM_SCRIPT = [
     { t: "prompt", s: "superblock mount /mnt/supabase" },
-    { t: "out", s: "Mounted at <span class='p'>/mnt/supabase</span>. Ctrl-C to unmount.\n" },
+    { t: "out", s: "Mounting at <span class='p'>/mnt/supabase</span> (background).\nLog: ~/.local/state/superblock/superblock.log\nCheck status: superblock status\n" },
     { t: "prompt", s: "ls /mnt/supabase/organizations/my-org/projects/abcdefghijklmnopqrst" },
     { t: "out", s: "<span class='d'>api-keys</span>  <span class='d'>branches</span>  <span class='d'>config</span>  <span class='d'>functions</span>  <span class='d'>storage</span>  health  info.json\n" },
     { t: "prompt", s: "cat health" },

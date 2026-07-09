@@ -7,7 +7,7 @@ defmodule Superblock.CLI do
       superblock status | whoami
       superblock doctor
       superblock config set <key> <value> | config get <key> | config list
-      superblock mount [mountpoint] [--verbose]
+      superblock mount [--path <dir>] [dir] [--foreground] [--verbose]
       superblock unmount [mountpoint]
       superblock refresh [--check]
       superblock help
@@ -49,8 +49,9 @@ defmodule Superblock.CLI do
     superblock config set <key> <value>  Set a config key
     superblock config get <key>          Read a config key
     superblock config list               Show effective config
-    superblock mount [mountpoint]        Mount (foreground; Ctrl-C unmounts; default ~/Supabase)
-    superblock unmount [mountpoint]      Unmount a running superblock
+    superblock mount [--path <dir>] [dir]  Mount in background and return (default ~/Supabase)
+    superblock mount --foreground [dir]    Mount in foreground (blocks; Ctrl-C unmounts)
+    superblock unmount [mountpoint]        Unmount a running superblock
     superblock refresh                   Flush the cache of a mounted superblock
     superblock refresh --check           Report cache staleness without flushing
     superblock service install           Auto-start the mount at login (systemd/launchd)
@@ -535,43 +536,69 @@ defmodule Superblock.CLI do
   ## mount / unmount / refresh
 
   defp mount(args) do
-    {opts, rest, _invalid} = OptionParser.parse(args, strict: [verbose: :boolean])
+    {opts, rest, _invalid} =
+      OptionParser.parse(args, strict: [verbose: :boolean, foreground: :boolean, path: :string])
 
     if opts[:verbose] do
       Logger.configure(level: :debug)
     end
 
     with :authed <- require_auth(),
-         {:ok, mountpoint} <- resolve_mountpoint(rest) do
-      attach_file_logger()
-      Signals.install()
-
-      case Fs.mount(mountpoint) do
-        :ok ->
-          IO.puts("Mounted at #{mountpoint}. Ctrl-C to unmount.")
-          Process.sleep(:infinity)
-          0
-
-        {:error, reason} ->
-          IO.puts(:stderr, "Mount failed: #{inspect(reason)}")
-          IO.puts(:stderr, "Run: superblock doctor")
-          4
+         {:ok, mountpoint} <- resolve_mountpoint(opts, rest) do
+      if opts[:foreground] do
+        mount_foreground(mountpoint)
+      else
+        mount_daemon(mountpoint, opts)
       end
     else
       {:exit, code} -> code
     end
   end
 
-  # Explicit argument > configured value > ~/Supabase (a real default, so a
-  # fresh install mounts with zero config). The directory is created if
-  # missing — an empty mountpoint dir is exactly what FUSE wants.
-  defp resolve_mountpoint(args) do
-    mountpoint =
-      case args do
-        [mountpoint | _rest] -> mountpoint
-        [] -> Config.mountpoint()
-      end
+  defp mount_foreground(mountpoint) do
+    attach_file_logger()
+    Signals.install()
 
+    case Fs.mount(mountpoint) do
+      :ok ->
+        IO.puts("Mounted at #{mountpoint}. Ctrl-C to unmount.")
+        IO.puts("Log: #{Paths.log_file()}")
+        Process.sleep(:infinity)
+        0
+
+      {:error, reason} ->
+        IO.puts(:stderr, "Mount failed: #{inspect(reason)}")
+        IO.puts(:stderr, "Run: superblock doctor")
+        4
+    end
+  end
+
+  # Spawn a background process running `mount --foreground` and return
+  # immediately. The orphaned child is reparented to init by the OS.
+  defp mount_daemon(mountpoint, opts) do
+    case find_self() do
+      {:ok, bin} ->
+        Paths.ensure!()
+        log = Paths.log_file()
+        verbose = if opts[:verbose], do: ["--verbose"], else: []
+        argv = [bin, "mount", "--foreground"] ++ verbose ++ [mountpoint]
+        cmd = Enum.map_join(argv, " ", &sh_escape/1) <> " >> " <> sh_escape(log) <> " 2>&1 &"
+        System.cmd("sh", ["-c", cmd])
+        IO.puts("Mounting at #{mountpoint} (background).")
+        IO.puts("Log: #{log}")
+        IO.puts("Check status: superblock status")
+        0
+
+      {:error, message} ->
+        IO.puts(:stderr, message)
+        IO.puts(:stderr, "Hint: superblock mount --foreground #{mountpoint}")
+        4
+    end
+  end
+
+  # Resolution order: --path flag > positional arg > config value > ~/Supabase.
+  defp resolve_mountpoint(opts, args) do
+    mountpoint = opts[:path] || List.first(args) || Config.mountpoint()
     # Best effort: a stale mount makes mkdir_p fail, and Fs.mount both
     # recovers stale mounts and reports real errors with a doctor hint.
     _ = File.mkdir_p(mountpoint)
@@ -592,6 +619,28 @@ defmodule Superblock.CLI do
     :ok
   rescue
     _any -> :ok
+  end
+
+  defp find_self do
+    candidates = [
+      System.get_env("__BURRITO_BIN_PATH"),
+      System.get_env("SUPERBLOCK_BIN"),
+      System.find_executable("superblock")
+    ]
+
+    case Enum.find(candidates, &(is_binary(&1) and File.exists?(&1))) do
+      nil ->
+        {:error,
+         "cannot determine the superblock binary path — " <>
+           "set SUPERBLOCK_BIN or use: superblock mount --foreground"}
+
+      bin ->
+        {:ok, Path.expand(bin)}
+    end
+  end
+
+  defp sh_escape(str) do
+    "'" <> String.replace(str, "'", ~s|'\\''|) <> "'"
   end
 
   defp require_auth do
