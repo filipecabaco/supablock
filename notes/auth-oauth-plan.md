@@ -1,29 +1,29 @@
 # Plan: OAuth2 login with a Francis-powered localhost callback
 
-> **Status (2026-07): IMPLEMENTED.** `superblock login` now runs the
+> **Status (2026-07): IMPLEMENTED.** `supablock login` now runs the
 > documented OAuth2 flow whenever an OAuth app is configured
 > (`oauth.client_id` / `oauth.client_secret`): PKCE S256 + `state`,
 > Francis/Bandit loopback callback on `127.0.0.1:53682`
-> (`Superblock.AuthCallback`), code exchange and single-use-safe refresh
-> via `POST /v1/oauth/token` (`Superblock.OAuth` +
-> `Superblock.TokenStore`), credentials v2 (atomic JSON, legacy PAT file
+> (`Supablock.AuthCallback`), code exchange and single-use-safe refresh
+> via `POST /v1/oauth/token` (`Supablock.OAuth` +
+> `Supablock.TokenStore`), credentials v2 (atomic JSON, legacy PAT file
 > still loads), transparent refresh before expiry and once after a 401,
 > and `logout` revokes via `POST /v1/oauth/revoke`.
 >
 > Login ladder, in order: OAuth (when configured) → the supabase-CLI-style
-> dashboard session flow (`Superblock.BrowserLogin`, works with zero
+> dashboard session flow (`Supablock.BrowserLogin`, works with zero
 > setup) → `login --token sbp_…`. The owner action that unlocks OAuth is
 > registering the app (see "Prerequisite" below) and shipping its client
 > id/secret as config defaults.
 
-> Companion feature, already implemented: `superblock service
+> Companion feature, already implemented: `supablock service
 > install|uninstall|status` auto-starts the mount at login via a systemd
-> user unit (Linux) or launchd agent (macOS) — see `Superblock.Service`.
+> user unit (Linux) or launchd agent (macOS) — see `Supablock.Service`.
 > OAuth + auto-start compose: the service reads the same credentials file,
 > and once refresh tokens land (milestone 1 below) a service-managed mount
 > keeps itself authenticated without the user ever re-pasting a token.
 
-Replaces token-paste as the default `superblock login` experience. Reviewed
+Replaces token-paste as the default `supablock login` experience. Reviewed
 against the Supabase OAuth integration docs
 (supabase.com/docs/guides/integrations/build-a-supabase-oauth-integration)
 and the Francis source (github.com/francis-build/francis, v0.3.3).
@@ -32,7 +32,7 @@ and the Francis source (github.com/francis-build/francis, v0.3.3).
 
 Today `login` means: open the dashboard, create a personal access token,
 paste it. That PAT is long-lived and all-powerful (it can delete projects —
-superblock just chooses not to). OAuth fixes both:
+supablock just chooses not to). OAuth fixes both:
 
 * browser login with an explicit consent screen, no copy/paste;
 * tokens are **short-lived, refreshable, and scoped** — the OAuth app is
@@ -59,7 +59,7 @@ superblock just chooses not to). OAuth fixes both:
    decrypts the token locally, and saves it.
 
 Properties: no localhost server, no OAuth app, no client secret, works
-over SSH, end-to-end-encrypted token delivery. **Why superblock should
+over SSH, end-to-end-encrypted token delivery. **Why supablock should
 not copy it:** it rides the private, undocumented `/platform/*` API (not
 `/v1`), so it can change without notice and is not an intended
 third-party surface; and it produces a full-power, long-lived PAT — no
@@ -131,9 +131,9 @@ ephemeral login callback server.
 ## Flow
 
 ```
-superblock login
+supablock login
   │ 1. generate state + PKCE verifier/challenge
-  │ 2. start Superblock.AuthCallback (Francis) on 127.0.0.1:53682
+  │ 2. start Supablock.AuthCallback (Francis) on 127.0.0.1:53682
   │ 3. open browser at api.supabase.com/v1/oauth/authorize?...
   │        (fallback: print the URL when no DISPLAY / --no-browser)
   │ 4. user consents; Supabase redirects to
@@ -147,22 +147,22 @@ superblock login
 
 ## Changes by module
 
-* **`Superblock.AuthCallback`** (new): `use Francis,
+* **`Supablock.AuthCallback`** (new): `use Francis,
   bandit_opts: [ip: {127, 0, 0, 1}, port: 53682]`; one GET route; sends
   `{:oauth_code, code}` to the login process; 60–120s timeout, then the
   CLI falls back with a clear error. Loopback-only binding, single use.
-* **`Superblock.OAuth`** (new): builds the authorize URL, PKCE pair,
+* **`Supablock.OAuth`** (new): builds the authorize URL, PKCE pair,
   exchanges/refreshes tokens via the existing `Client` plumbing (deadline,
   scrubbing, proxy handling). Client id (and the not-actually-secret client
   secret, see below) ship as config with env overrides.
-* **`Superblock.Credentials` v2**: file becomes JSON —
+* **`Supablock.Credentials` v2**: file becomes JSON —
   `{"type":"oauth","access_token":…,"refresh_token":…,"expires_at":…}` —
   while the loader stays backward-compatible with the legacy single-line
-  PAT and the `SUPERBLOCK_TOKEN` env override (CI path unchanged).
-* **`Superblock.Client`**: when the stored credential is OAuth and expires
+  PAT and the `SUPABLOCK_TOKEN` env override (CI path unchanged).
+* **`Supablock.Client`**: when the stored credential is OAuth and expires
   within ~60s, refresh before the request (single-flight, same pattern as
   the cache); on a 401, refresh once and retry; a failed refresh maps to
-  `EACCES` plus the "run: superblock login" hint. This deliberately
+  `EACCES` plus the "run: supablock login" hint. This deliberately
   supersedes the v1 "no token refresh" out-of-scope line. Because Supabase
   refresh tokens are **single-use**, the refresh must be serialized
   through one process and the new pair written to disk (tmp file + rename)
@@ -205,10 +205,10 @@ superblock login
 ## Prerequisite (owner action)
 
 Register the OAuth app under the Supabase org (dashboard → org settings →
-OAuth Apps): name `superblock`, redirect `http://localhost:53682/callback`,
+OAuth Apps): name `supablock`, redirect `http://localhost:53682/callback`,
 read-only scopes for organizations, projects, rest/auth/database config,
 edge functions, and (optionally) secrets. Drop the client id into
-`Superblock.OAuth`'s defaults.
+`Supablock.OAuth`'s defaults.
 
 ## Milestones
 

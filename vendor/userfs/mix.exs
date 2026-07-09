@@ -1,5 +1,5 @@
 # Vendored from https://github.com/mwri/elixir-userfs (MIT, Michael Wright).
-# Modified for superblock: efuse comes from the sibling vendor directory,
+# Modified for supablock: efuse comes from the sibling vendor directory,
 # dev-only dependencies are dropped, and the supervision/port handling is
 # modernised — see lib/userfs/server.ex and lib/userfs/mount_sup.ex.
 

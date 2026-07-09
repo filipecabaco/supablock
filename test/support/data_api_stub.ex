@@ -1,7 +1,7 @@
-defmodule Superblock.DataApiStub do
+defmodule Supablock.DataApiStub do
   @moduledoc """
   Builds a `:data_api_fun` for tests: a fake PostgREST that answers the three
-  request shapes `Superblock.Database` makes — the OpenAPI root spec (per
+  request shapes `Supablock.Database` makes — the OpenAPI root spec (per
   `Accept-Profile`), a `count=exact` probe, and a row page — from an in-memory
   model.
 
@@ -17,7 +17,7 @@ defmodule Superblock.DataApiStub do
         }
       }
 
-  Install with `Application.put_env(:superblock, :data_api_fun, DataApiStub.fun(model))`.
+  Install with `Application.put_env(:supablock, :data_api_fun, DataApiStub.fun(model))`.
   """
 
   @doc "A `(ref, path, headers) -> {:ok, resp} | {:error, term}` fun over `model`."

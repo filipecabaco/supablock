@@ -1,13 +1,13 @@
-defmodule Superblock.StubServer do
+defmodule Supablock.StubServer do
   @moduledoc """
   A tiny real HTTP server on 127.0.0.1 serving the canned Management API
   fixtures. The e2e suite needs this instead of the in-process Req plug stub
-  because it exercises separate OS processes — the released superblock binary
+  because it exercises separate OS processes — the released supablock binary
   and the supabase CLI — which must speak actual HTTP.
 
   Resource routes are GET-only and require a Bearer token (401 otherwise),
   mirroring the real API. Route values follow
-  `Superblock.TestEnv.stub_api!/1`: a JSON-encodable value (200),
+  `Supablock.TestEnv.stub_api!/1`: a JSON-encodable value (200),
   `{:status, code, value}`, or `{:params, fun}` where fun takes the query
   params map and returns `{code, value}`.
 
@@ -18,7 +18,7 @@ defmodule Superblock.StubServer do
   """
 
   @doc "Start the server; returns `{:ok, port}`. Stops when `stop/0` is called."
-  def start(routes \\ Superblock.Fixtures.routes()) do
+  def start(routes \\ Supablock.Fixtures.routes()) do
     {:ok, listener} =
       :gen_tcp.listen(0, [
         :binary,
@@ -246,8 +246,8 @@ defmodule Superblock.StubServer do
   defp reason_phrase(_code), do: "Error"
 
   defp bump(path) do
-    if :ets.whereis(:superblock_test_hits) != :undefined do
-      :ets.update_counter(:superblock_test_hits, path, 1, {path, 0})
+    if :ets.whereis(:supablock_test_hits) != :undefined do
+      :ets.update_counter(:supablock_test_hits, path, 1, {path, 0})
     end
   rescue
     _any -> :ok

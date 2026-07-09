@@ -1,25 +1,25 @@
-defmodule Superblock.SupabaseCliE2eTest do
+defmodule Supablock.SupabaseCliE2eTest do
   @moduledoc """
-  End-to-end tests that drive the *released* superblock binary through a real
+  End-to-end tests that drive the *released* supablock binary through a real
   kernel FUSE mount and cross-check what it serves against the official
   `supabase` CLI — both talk to the same Management API, so their views must
   agree.
 
   Excluded by default; run with:
 
-      MIX_ENV=prod mix release            # the suite drives bin/superblock
+      MIX_ENV=prod mix release            # the suite drives bin/supablock
       mix test --include e2e
 
   Prerequisites: the `supabase` CLI on PATH, /dev/fuse, and the prod release
   built. Two modes:
 
-    * hermetic (default) — a local stub API (Superblock.StubServer) serves
+    * hermetic (default) — a local stub API (Supablock.StubServer) serves
       the canned fixtures; the CLI is pointed at it via `--profile` and
-      superblock via SUPERBLOCK_API_URL. Runs anywhere, no credentials.
+      supablock via SUPABLOCK_API_URL. Runs anywhere, no credentials.
 
-    * live — set SUPERBLOCK_E2E_LIVE=1 and SUPABASE_ACCESS_TOKEN=sbp_… to run
+    * live — set SUPABLOCK_E2E_LIVE=1 and SUPABASE_ACCESS_TOKEN=sbp_… to run
       the same assertions against the real api.supabase.com using your
-      account. Read-only: superblock cannot issue anything but GET, and the
+      account. Read-only: supablock cannot issue anything but GET, and the
       CLI commands used (orgs list, projects list) are reads.
   """
 
@@ -28,11 +28,11 @@ defmodule Superblock.SupabaseCliE2eTest do
   @moduletag :e2e
   @moduletag timeout: 180_000
 
-  alias Superblock.Router
+  alias Supablock.Router
 
   setup_all do
-    launcher = Path.expand("../../bin/superblock", __DIR__)
-    release = Path.expand("../../_build/prod/rel/superblock/bin/superblock", __DIR__)
+    launcher = Path.expand("../../bin/supablock", __DIR__)
+    release = Path.expand("../../_build/prod/rel/supablock/bin/supablock", __DIR__)
 
     unless File.exists?(release) do
       raise "e2e needs the prod release; run: MIX_ENV=prod mix release"
@@ -42,9 +42,9 @@ defmodule Superblock.SupabaseCliE2eTest do
       System.find_executable("supabase") ||
         raise "e2e needs the supabase CLI on PATH (https://supabase.com/docs/guides/local-development/cli/getting-started)"
 
-    live? = System.get_env("SUPERBLOCK_E2E_LIVE") == "1"
+    live? = System.get_env("SUPABLOCK_E2E_LIVE") == "1"
 
-    base = Path.join(System.tmp_dir!(), "superblock-e2e-#{System.unique_integer([:positive])}")
+    base = Path.join(System.tmp_dir!(), "supablock-e2e-#{System.unique_integer([:positive])}")
     File.mkdir_p!(Path.join(base, "config"))
     File.mkdir_p!(Path.join(base, "state"))
     File.mkdir_p!(Path.join(base, "workdir"))
@@ -58,7 +58,7 @@ defmodule Superblock.SupabaseCliE2eTest do
 
         {token, [], []}
       else
-        {:ok, api_port} = Superblock.StubServer.start(stub_routes())
+        {:ok, api_port} = Supablock.StubServer.start(stub_routes())
 
         # Constructed at runtime (never a literal): must satisfy the CLI's
         # ^sbp_[a-f0-9]{40}$ token pattern.
@@ -67,13 +67,13 @@ defmodule Superblock.SupabaseCliE2eTest do
         profile = Path.join(base, "profile.yaml")
 
         File.write!(profile, """
-        name: superblock-e2e
+        name: supablock-e2e
         api_url: http://127.0.0.1:#{api_port}
         dashboard_url: http://127.0.0.1:#{api_port}
         project_host: localhost
         """)
 
-        {token, [{"SUPERBLOCK_API_URL", "http://127.0.0.1:#{api_port}"}],
+        {token, [{"SUPABLOCK_API_URL", "http://127.0.0.1:#{api_port}"}],
          [{"SUPABASE_PROFILE", profile}]}
       end
 
@@ -96,7 +96,7 @@ defmodule Superblock.SupabaseCliE2eTest do
           end
       end)
 
-      unless live?, do: Superblock.StubServer.stop()
+      unless live?, do: Supablock.StubServer.stop()
       File.rm_rf!(base)
     end)
 
@@ -113,7 +113,7 @@ defmodule Superblock.SupabaseCliE2eTest do
 
   # The canned fixtures plus the OAuth endpoints the login flow needs.
   defp stub_routes do
-    Map.merge(Superblock.Fixtures.routes(), %{
+    Map.merge(Supablock.Fixtures.routes(), %{
       {:post, "/v1/oauth/token"} =>
         {:params,
          fn params ->
@@ -141,8 +141,8 @@ defmodule Superblock.SupabaseCliE2eTest do
       # needs a registered OAuth app; the flow is covered hermetically
       :ok
     else
-      {_out, 0} = superblock(ctx, ["config", "set", "oauth.client_id", "e2e-client-id"])
-      {_out, 0} = superblock(ctx, ["config", "set", "oauth.client_secret", "e2e-secret"])
+      {_out, 0} = supablock(ctx, ["config", "set", "oauth.client_id", "e2e-client-id"])
+      {_out, 0} = supablock(ctx, ["config", "set", "oauth.client_secret", "e2e-secret"])
 
       env = Enum.map(ctx.sb_env, fn {k, v} -> {String.to_charlist(k), String.to_charlist(v)} end)
 
@@ -172,10 +172,10 @@ defmodule Superblock.SupabaseCliE2eTest do
       assert exit_code == 0, "login failed: #{output}"
       assert output =~ "Logged in via OAuth"
 
-      {status_out, 0} = superblock(ctx, ["status"])
+      {status_out, 0} = supablock(ctx, ["status"])
       assert status_out =~ "Authenticated"
 
-      {logout_out, 0} = superblock(ctx, ["logout"])
+      {logout_out, 0} = supablock(ctx, ["logout"])
       assert logout_out =~ "Revoked the OAuth authorization."
     end
   end
@@ -206,14 +206,14 @@ defmodule Superblock.SupabaseCliE2eTest do
 
   test "the mounted tree agrees with the supabase CLI", ctx do
     # -- login stores the credential through the release binary
-    {out, 0} = superblock(ctx, ["login", "--token", ctx.token])
+    {out, 0} = supablock(ctx, ["login", "--token", ctx.token])
     assert out =~ "Token valid"
 
     # -- mount in a background OS process, wait for the kernel mount
     mount_port = start_mount(ctx)
     assert wait_until(fn -> mounted?(ctx.mountpoint) end, 15_000), "mount did not appear"
 
-    {status_out, 0} = superblock(ctx, ["status"])
+    {status_out, 0} = supablock(ctx, ["status"])
     assert status_out =~ "Mounted: yes"
 
     # -- organizations/ must equal the CLI's org listing
@@ -267,11 +267,11 @@ defmodule Superblock.SupabaseCliE2eTest do
     assert {:error, :erofs} = File.mkdir(Path.join(ctx.mountpoint, "nope"))
 
     # -- refresh flushes the live mount's cache
-    {refresh_out, 0} = superblock(ctx, ["refresh"])
+    {refresh_out, 0} = supablock(ctx, ["refresh"])
     assert refresh_out =~ "Cache flushed."
 
     # -- unmount from "another terminal"
-    {unmount_out, 0} = superblock(ctx, ["unmount"])
+    {unmount_out, 0} = supablock(ctx, ["unmount"])
     assert unmount_out =~ "Unmounted"
     assert wait_until(fn -> not mounted?(ctx.mountpoint) end, 10_000), "unmount left the mount"
 
@@ -284,9 +284,9 @@ defmodule Superblock.SupabaseCliE2eTest do
   # live project's Data API. The tree is covered end-to-end against a stubbed
   # Data API in the router, database and FUSE suites instead.
 
-  ## superblock release driver
+  ## supablock release driver
 
-  defp superblock(ctx, args) do
+  defp supablock(ctx, args) do
     System.cmd(ctx.launcher, args, env: ctx.sb_env, stderr_to_stdout: true)
   end
 

@@ -1,14 +1,14 @@
-defmodule Superblock.MixProject do
+defmodule Supablock.MixProject do
   use Mix.Project
 
   def project do
     [
-      app: :superblock,
+      app: :supablock,
       version: "0.1.0",
       elixir: "~> 1.17",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
-      default_release: :superblock,
+      default_release: :supablock,
       releases: releases(),
       deps: deps()
     ]
@@ -17,15 +17,15 @@ defmodule Superblock.MixProject do
   def application do
     [
       extra_applications: [:logger],
-      mod: {Superblock.Application, []}
+      mod: {Supablock.Application, []}
     ]
   end
 
   defp releases do
     [
-      # Classic release, used by bin/superblock (the thin launcher) and the
+      # Classic release, used by bin/supablock (the thin launcher) and the
       # e2e suite: MIX_ENV=prod mix release
-      superblock: [
+      supablock: [
         include_executables_for: [:unix],
         strip_beams: true,
         # userfs/efuse are runtime: false deps (CLI commands like `login`
@@ -33,11 +33,11 @@ defmodule Superblock.MixProject do
         applications: [userfs: :load, efuse: :load]
       ],
       # Single-file binary via Burrito (needs zig 0.15.x and xz on PATH):
-      #   MIX_ENV=prod mix release superblock_burrito
+      #   MIX_ENV=prod mix release supablock_burrito
       # Binaries land in burrito_out/. The bundled efuse FUSE port is a
       # native executable compiled on the build machine, so build each
       # platform's binary natively (no useful cross-targets).
-      superblock_burrito: [
+      supablock_burrito: [
         include_executables_for: [:unix],
         strip_beams: true,
         applications: [userfs: :load, efuse: :load],
@@ -109,7 +109,7 @@ defmodule Superblock.MixProject do
        override: true,
        runtime: false},
       # OAuth login callback server: Francis (route DSL) on top of Bandit.
-      # Started on demand during `superblock login` only — boot stays a no-op.
+      # Started on demand during `supablock login` only — boot stays a no-op.
       {:francis, git: "https://github.com/filipecabaco/francis.git", tag: "v0.3.3"},
       {:bandit, git: "https://github.com/mtrudel/bandit.git", tag: "1.11.1", override: true},
       {:thousand_island,

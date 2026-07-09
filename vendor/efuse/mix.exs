@@ -1,5 +1,5 @@
 # Vendored from https://github.com/mwri/erlang-efuse (MIT, Michael Wright).
-# Modified for superblock: converted from rebar3 to Mix (so the build needs
+# Modified for supablock: converted from rebar3 to Mix (so the build needs
 # neither rebar3 plugins nor hex.pm), and the C port is patched — see
 # c_src/efuse.c for the list of changes.
 

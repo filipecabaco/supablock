@@ -21,7 +21,7 @@ mutating callbacks at all:
   attributes come from `use Userfs.Fs`.
 * `userfs_read/2` has **no size/offset** — the callback returns the whole
   body and the C port slices per kernel read. Bodies must therefore be cached
-  on the Elixir side (superblock serves them from ETS).
+  on the Elixir side (supablock serves them from ETS).
 * `errno` is a plain integer, passed through the port.
 
 ## Mount / unmount API
@@ -53,9 +53,9 @@ so both are vendored with fixes:
 1. Supports both the libfuse3 API (31, Linux default) and the libfuse 2.9
    API (26) — the latter is what macFUSE and FUSE-T implement on macOS; the
    Makefile picks via pkg-config (`fuse3` → `fuse` → `fuse-t`), overridable
-   with `SUPERBLOCK_FUSE_API=2|3`. On Linux the port statically links
+   with `SUPABLOCK_FUSE_API=2|3`. On Linux the port statically links
    libfuse3 when the archive exists (portable single binary; opt out with
-   `SUPERBLOCK_STATIC_FUSE=0`). The old Makefile also linked
+   `SUPABLOCK_STATIC_FUSE=0`). The old Makefile also linked
    `-lerl_interface` (removed in OTP 23) and hardcoded OTP-20 paths — none
    of which it actually used.
 2. Forced **single-threaded** loop: the protocol is one synchronous
@@ -67,7 +67,7 @@ so both are vendored with fixes:
    `read_from_erlang`, and `fusecb_read` `memcpy`d past the reply); replaced
    with a growable bounded buffer (64 MiB cap) and clamped copies.
 5. Errors are passed through (`-errno`) instead of everything becoming
-   ENOENT — superblock needs EACCES/EAGAIN/EIO distinctions.
+   ENOENT — supablock needs EACCES/EAGAIN/EIO distinctions.
 6. A watchdog thread polls the port pipe: when the Erlang VM dies (even
    `kill -9`) it exits the session and unmounts, so no stale mount is left.
    Signals stay blocked in that thread so SIGTERM/SIGINT always interrupt
@@ -94,7 +94,7 @@ prunes it, but hex.pm was not reachable).
 ## Gotcha worth remembering
 
 `File.*` operations in Elixir go through the `:file_server_2` singleton. A
-process reading a superblock-mounted file **from the same VM** parks that
+process reading a supablock-mounted file **from the same VM** parks that
 server inside a FUSE syscall; if serving the request then also needs
 `File.*`, the filesystem deadlocks. Everything on the serving path
-(Config/Credentials) therefore uses raw reads (`Superblock.RawFile`).
+(Config/Credentials) therefore uses raw reads (`Supablock.RawFile`).
