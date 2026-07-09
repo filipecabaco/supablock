@@ -131,13 +131,37 @@ superblock config set mountpoint /mnt/supabase
 superblock mount          # foreground; Ctrl-C unmounts
 ```
 
-`login` replicates the official supabase CLI's flow: it opens
-`supabase.com/dashboard/cli/login` (and always prints the URL, so it works
-over SSH with `--no-browser`), the dashboard mints a personal access token
-and shows a short verification code, you type the code into the prompt, and
-the token is delivered end-to-end encrypted (ECDH P-256 + AES-256-GCM) —
-it never crosses the network in the clear. Prefer to paste a token
-yourself? `superblock login --token sbp_...` still works.
+### How login works
+
+`superblock login` picks the best available flow, in this order:
+
+1. **OAuth2 (recommended)** — used when an OAuth app is configured. The
+   browser opens the documented consent page
+   (`/v1/oauth/authorize`, PKCE S256 + `state`), Supabase redirects to a
+   loopback callback on `127.0.0.1:53682`, and the code is exchanged for
+   **short-lived, scoped tokens** that refresh automatically (Supabase
+   refresh tokens are single-use; rotation is atomic and serialized).
+   Register the app read-only and the read-only guarantee is enforced by
+   the server, not just this client. `logout` also revokes the grant
+   server-side. Configure once:
+
+   ```bash
+   superblock config set oauth.client_id <uuid from your OAuth app>
+   superblock config set oauth.client_secret <its secret>
+   ```
+
+   (Register the app under your org: dashboard → org settings → OAuth Apps,
+   redirect URI `http://localhost:53682/callback`, read-only scopes.)
+
+2. **Dashboard session flow** — with no OAuth app configured, `login`
+   replicates the official supabase CLI: it opens
+   `supabase.com/dashboard/cli/login`, the dashboard mints a personal
+   access token and shows a short verification code, you type the code at
+   the prompt, and the token arrives end-to-end encrypted
+   (ECDH P-256 + AES-256-GCM). Zero setup, works over SSH with
+   `--no-browser`.
+
+3. **Token paste** — `superblock login --token sbp_...` always works.
 
 From another shell:
 
@@ -168,13 +192,13 @@ Output is deterministic — JSON is pretty-printed with sorted keys — so
 ## Commands
 
 ```
-superblock login                     browser login via the Supabase dashboard
+superblock login                     browser login: OAuth2+PKCE, or dashboard session flow
 superblock login --token sbp_...     validate + store a pasted token instead
 superblock login --no-browser        print the login URL (SSH-friendly)
-superblock logout                    delete the stored token
+superblock logout                    delete the credential (and revoke the OAuth grant)
 superblock status | whoami           auth, org count, mount state, rate limits
 superblock doctor                    environment checks with fix hints
-superblock config set|get|list       mountpoint, TTLs, timeouts, expose_secrets
+superblock config set|get|list       mountpoint, TTLs, timeouts, expose_secrets, oauth.*
 superblock mount [mountpoint]        mount in the foreground
 superblock unmount [mountpoint]      unmount from another shell
 superblock refresh                   drop the cache; next reads re-fetch
@@ -215,11 +239,20 @@ user, tracked independently per project/organization — superblock records the
 
 ## Security notes
 
-* The token lives in `~/.config/superblock/credentials`, mode `0600`, in a
-  `0700` directory. It is never logged, never rendered into the tree, and
-  `status` shows it masked (`sbp_…f23a`). `SUPERBLOCK_TOKEN` overrides the
-  stored token (CI escape hatch) — that is the only environment variable in
-  play.
+* The credential lives in `~/.config/superblock/credentials`, mode `0600`,
+  in a `0700` directory — a single-line PAT, or a JSON
+  `{access_token, refresh_token, expires_at}` for OAuth, written atomically
+  (tmp + rename) because Supabase refresh tokens are single-use. Tokens are
+  never logged, never rendered into the tree, and `status` shows them
+  masked (`sbp_…f23a`). `SUPERBLOCK_TOKEN` overrides the stored credential
+  (CI escape hatch) — that is the only environment variable in play.
+* The OAuth token POSTs (`/v1/oauth/token`, `/v1/oauth/revoke`) are the
+  only non-GET requests superblock ever makes; they manage the OAuth
+  session itself, never account resources. With read-only scopes on the
+  app registration, read-only is enforced server-side.
+* The OAuth client id/secret identify the app, not you; in a distributed
+  CLI they are not confidential (PKCE + the loopback-only redirect are
+  what protect the flow).
 * `api-keys/secret` renders as
   `REDACTED — run: superblock config set expose_secrets true` until you
   explicitly opt in. `api-keys/publishable` is always shown.
@@ -268,5 +301,6 @@ plus a pruned [castore](https://github.com/elixir-mint/castore)
 
 ## Out of scope (v1)
 
-No writes of any kind, no OAuth, no token refresh, no `auth.users` browsing,
-no logs endpoints, no daemon mode — `mount` is foreground-only.
+No writes to account resources of any kind, no `auth.users` browsing, no
+logs endpoints. `mount` runs in the foreground; use
+`superblock service install` for auto-start.

@@ -190,6 +190,144 @@ defmodule Superblock.CLITest do
     end
   end
 
+  defp oauth_routes(test_pid) do
+    Map.merge(Superblock.Fixtures.routes(), %{
+      "/v1/oauth/token" => fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+        send(test_pid, {:token_form, URI.decode_query(body)})
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.send_resp(
+          200,
+          Jason.encode!(%{
+            "access_token" => "sbp_oauth_" <> String.duplicate("a", 40),
+            "refresh_token" => "oauth_refresh_" <> String.duplicate("b", 20),
+            "expires_in" => 3600,
+            "token_type" => "Bearer"
+          })
+        )
+      end
+    })
+  end
+
+  # GET the loopback callback, retrying while the listener is still coming up.
+  defp get_callback!(params, retries \\ 100) do
+    Req.get!("http://127.0.0.1:53682/callback", params: params, retry: false)
+  rescue
+    error in [Req.TransportError] ->
+      if retries > 0 do
+        Process.sleep(20)
+        get_callback!(params, retries - 1)
+      else
+        reraise error, __STACKTRACE__
+      end
+  end
+
+  describe "OAuth login (oauth.client_id configured)" do
+    setup do
+      :ok = Superblock.Config.set("oauth.client_id", "11111111-2222-4333-8444-555555555555")
+      :ok = Superblock.Config.set("oauth.client_secret", "sb_secret_test_client_secret")
+      :ok
+    end
+
+    test "full flow: browser consent, loopback callback, exchange, store" do
+      url_file = fake_browser!()
+      TestEnv.stub_api!(oauth_routes(self()))
+
+      login =
+        Task.async(fn ->
+          capture_io(fn -> assert CLI.run(["login"]) == 0 end)
+        end)
+
+      # stand in for the user's browser: read the authorize URL the CLI
+      # opened, approve, and follow the redirect to the loopback callback
+      authorize_url = await_file(url_file)
+      query = URI.decode_query(URI.parse(authorize_url).query)
+      assert URI.parse(authorize_url).path == "/v1/oauth/authorize"
+      assert query["code_challenge_method"] == "S256"
+      assert query["redirect_uri"] == "http://localhost:53682/callback"
+
+      response = get_callback!(code: "consented123", state: query["state"])
+      assert response.status == 200
+
+      output = Task.await(login, 15_000)
+      assert output =~ "✓ Logged in via OAuth — authenticated, 2 organizations found."
+      assert output =~ "refresh automatically"
+
+      assert_received {:token_form, form}
+      assert form["grant_type"] == "authorization_code"
+      assert form["code"] == "consented123"
+      assert is_binary(form["code_verifier"])
+
+      assert {:ok, credential} = Credentials.load_credential()
+      assert credential.type == :oauth
+      assert credential.refresh_token == "oauth_refresh_" <> String.duplicate("b", 20)
+    end
+
+    test "a state mismatch on the callback is rejected" do
+      url_file = fake_browser!()
+      TestEnv.stub_api!(oauth_routes(self()))
+
+      login =
+        Task.async(fn ->
+          capture_io(:stderr, fn ->
+            capture_io(fn -> assert CLI.run(["login"]) == 2 end)
+          end)
+        end)
+
+      await_file(url_file)
+      get_callback!(code: "stolen", state: "forged-state")
+
+      stderr = Task.await(login, 15_000)
+      assert stderr =~ "State mismatch"
+      refute_received {:token_form, _form}
+      assert Credentials.load() == :missing
+    end
+
+    test "a denied consent exits politely" do
+      TestEnv.stub_api!(oauth_routes(self()))
+
+      login =
+        Task.async(fn ->
+          capture_io(:stderr, fn ->
+            capture_io(fn -> assert CLI.run(["login", "--no-browser"]) == 2 end)
+          end)
+        end)
+
+      get_callback!(error: "access_denied", error_description: "User denied access")
+
+      stderr = Task.await(login, 15_000)
+      assert stderr =~ "Authorization was not granted: User denied access"
+      assert Credentials.load() == :missing
+    end
+
+    test "logout revokes the OAuth grant server-side" do
+      test_pid = self()
+
+      TestEnv.stub_api!(%{
+        "/v1/oauth/revoke" => fn conn ->
+          {:ok, body, conn} = Plug.Conn.read_body(conn)
+          send(test_pid, {:revoked, Jason.decode!(body)["refresh_token"]})
+          Plug.Conn.send_resp(conn, 204, "")
+        end
+      })
+
+      :ok =
+        Credentials.store_oauth(
+          "sbp_oauth_" <> String.duplicate("a", 40),
+          "oauth_refresh_gone",
+          System.os_time(:second) + 3600
+        )
+
+      output = capture_io(fn -> assert CLI.run(["logout"]) == 0 end)
+      assert output =~ "Revoked the OAuth authorization."
+      assert output =~ "Logged out."
+      assert_received {:revoked, "oauth_refresh_gone"}
+      assert Credentials.load() == :missing
+    end
+  end
+
   test "logout deletes credentials and is idempotent" do
     :ok = Credentials.store("sbp_t000000000000000000000000000000000000t")
     assert capture_io(fn -> assert CLI.run(["logout"]) == 0 end) =~ "Logged out."

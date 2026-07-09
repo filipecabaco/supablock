@@ -18,12 +18,14 @@ defmodule Superblock.CLI do
 
   alias Superblock.{
     Auth,
+    AuthCallback,
     BrowserLogin,
     Config,
     Control,
     Credentials,
     Doctor,
     Fs,
+    OAuth,
     Paths,
     Service,
     Signals
@@ -33,10 +35,11 @@ defmodule Superblock.CLI do
   superblock — browse the Supabase Management API as a filesystem
 
   Usage:
-    superblock login                     Log in via the Supabase dashboard (browser)
+    superblock login                     Browser login: OAuth2 + PKCE when an OAuth app
+                                         is configured, dashboard session flow otherwise
     superblock login --token sbp_...     Authenticate with a personal access token
     superblock login --no-browser        Print the login URL instead of opening it
-    superblock logout                    Delete the stored token
+    superblock logout                    Delete (and revoke) the stored credential
     superblock status                    Auth, mount and rate-limit overview
     superblock whoami                    Alias of status
     superblock doctor                    Check the environment for FUSE readiness
@@ -122,9 +125,104 @@ defmodule Superblock.CLI do
     {opts, _rest, _invalid} =
       OptionParser.parse(args, strict: [token: :string, no_browser: :boolean])
 
-    case opts[:token] do
-      nil -> browser_login(opts[:no_browser] || false)
-      token -> validate_and_store(String.trim(token))
+    no_browser? = opts[:no_browser] || false
+
+    cond do
+      is_binary(opts[:token]) ->
+        validate_and_store(String.trim(opts[:token]))
+
+      OAuth.configured?() ->
+        oauth_login(no_browser?)
+
+      true ->
+        IO.puts("No OAuth app configured (oauth.client_id) — using the dashboard session flow.")
+        browser_login(no_browser?)
+    end
+  end
+
+  # The documented OAuth2 flow (PKCE S256 + state, loopback callback):
+  # tokens come back short-lived, scoped to what the app registration
+  # allows, and refresh automatically. See Superblock.OAuth.
+  defp oauth_login(no_browser?) do
+    request = OAuth.new_request()
+
+    case AuthCallback.start_listener(self()) do
+      {:ok, listener} ->
+        try do
+          IO.puts("Open this link in your browser to authorize superblock:\n")
+          IO.puts("  #{request.url}\n")
+
+          unless no_browser? do
+            BrowserLogin.open_browser(request.url)
+          end
+
+          IO.puts("Waiting for the callback on #{request.redirect_uri} …")
+          await_oauth_callback(request)
+        after
+          AuthCallback.stop_listener(listener)
+        end
+
+      {:error, :port_in_use} ->
+        IO.puts(
+          :stderr,
+          "Port #{OAuth.callback_port()} is in use — close whatever holds it, " <>
+            "or use: superblock login --token sbp_..."
+        )
+
+        4
+
+      {:error, reason} ->
+        IO.puts(:stderr, "Could not start the callback server: #{inspect(reason)}")
+        4
+    end
+  end
+
+  defp await_oauth_callback(request) do
+    receive do
+      {:oauth_callback, %{"error" => error} = params} ->
+        description = params["error_description"] || error
+        IO.puts(:stderr, "Authorization was not granted: #{description}")
+        2
+
+      {:oauth_callback, %{"code" => code, "state" => state}} when is_binary(code) ->
+        if Plug.Crypto.secure_compare(state || "", request.state) do
+          finish_oauth_login(request, code)
+        else
+          IO.puts(:stderr, "State mismatch on the OAuth callback — try again.")
+          2
+        end
+
+      {:oauth_callback, _params} ->
+        IO.puts(:stderr, "Malformed OAuth callback — try again.")
+        2
+    after
+      180_000 ->
+        IO.puts(:stderr, "No authorization within 3 minutes. Run: superblock login")
+        2
+    end
+  end
+
+  defp finish_oauth_login(request, code) do
+    with {:ok, tokens} <- OAuth.exchange_code(request, code),
+         {:ok, org_count} <- Auth.validate(tokens.access_token),
+         :ok <-
+           Credentials.store_oauth(tokens.access_token, tokens.refresh_token, tokens.expires_at) do
+      IO.puts("✓ Logged in via OAuth — authenticated, #{org_count} organizations found.")
+      IO.puts("  Stored in #{Paths.credentials_file()} (mode 0600).")
+      IO.puts("  Tokens are short-lived and refresh automatically.")
+      0
+    else
+      {:error, :unauthorized} ->
+        IO.puts(
+          :stderr,
+          "Token exchange rejected — check oauth.client_id / oauth.client_secret."
+        )
+
+        2
+
+      {:error, reason} ->
+        IO.puts(:stderr, "OAuth login failed: #{describe_error(reason)}")
+        3
     end
   end
 
@@ -199,6 +297,20 @@ defmodule Superblock.CLI do
   end
 
   defp logout do
+    # For an OAuth credential, also revoke the grant server-side (best
+    # effort — the local delete is what logs this machine out either way).
+    case Credentials.load_credential() do
+      {:ok, %Credentials.Credential{type: :oauth, refresh_token: refresh}}
+      when is_binary(refresh) ->
+        case OAuth.revoke(refresh) do
+          :ok -> IO.puts("Revoked the OAuth authorization.")
+          {:error, _reason} -> IO.puts("Could not revoke server-side; deleted locally.")
+        end
+
+      _other ->
+        :ok
+    end
+
     Credentials.delete()
     IO.puts("Logged out.")
     0

@@ -5,10 +5,16 @@ defmodule Superblock.StubServer do
   because it exercises separate OS processes — the released superblock binary
   and the supabase CLI — which must speak actual HTTP.
 
-  GET-only. Requests without a Bearer token get a 401, mirroring the real
-  API. Route values follow `Superblock.TestEnv.stub_api!/1`: a JSON-encodable
-  value (200), `{:status, code, value}`, or `{:params, fun}` where fun takes
-  the query params map and returns `{code, value}`.
+  Resource routes are GET-only and require a Bearer token (401 otherwise),
+  mirroring the real API. Route values follow
+  `Superblock.TestEnv.stub_api!/1`: a JSON-encodable value (200),
+  `{:status, code, value}`, or `{:params, fun}` where fun takes the query
+  params map and returns `{code, value}`.
+
+  The OAuth endpoints are the exception, exactly like the real API: a route
+  keyed `{:post, path}` accepts POST, authenticates itself (basic auth /
+  body), and its `{:params, fun}` receives query + form/JSON body params
+  merged.
   """
 
   @doc "Start the server; returns `{:ok, port}`. Stops when `stop/0` is called."
@@ -56,8 +62,9 @@ defmodule Superblock.StubServer do
 
   defp handle(socket, routes) do
     with {:ok, request} <- read_head(socket, ""),
-         {:ok, method, path, headers} <- parse(request) do
-      respond(socket, method, path, headers, routes)
+         {:ok, method, path, headers, partial_body} <- parse(request),
+         {:ok, body} <- read_body(socket, headers, partial_body) do
+      respond(socket, method, path, headers, body, routes)
     end
 
     :gen_tcp.close(socket)
@@ -75,7 +82,7 @@ defmodule Superblock.StubServer do
   end
 
   defp parse(request) do
-    [head | _body] = String.split(request, "\r\n\r\n", parts: 2)
+    [head, partial_body] = String.split(request, "\r\n\r\n", parts: 2)
     [request_line | header_lines] = String.split(head, "\r\n")
 
     case String.split(request_line, " ") do
@@ -88,14 +95,33 @@ defmodule Superblock.StubServer do
             end
           end)
 
-        {:ok, method, target, headers}
+        {:ok, method, target, headers, partial_body}
 
       _other ->
         {:error, :bad_request}
     end
   end
 
-  defp respond(socket, "GET", target, headers, routes) do
+  defp read_body(socket, headers, acc) do
+    expected =
+      case Integer.parse(Map.get(headers, "content-length", "0")) do
+        {n, _rest} -> n
+        :error -> 0
+      end
+
+    read_body_bytes(socket, expected, acc)
+  end
+
+  defp read_body_bytes(_socket, expected, acc) when byte_size(acc) >= expected, do: {:ok, acc}
+
+  defp read_body_bytes(socket, expected, acc) do
+    case :gen_tcp.recv(socket, 0, 5_000) do
+      {:ok, chunk} -> read_body_bytes(socket, expected, acc <> chunk)
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp respond(socket, "GET", target, headers, _body, routes) do
     {path, params} = split_target(target)
     bump(path)
 
@@ -128,9 +154,44 @@ defmodule Superblock.StubServer do
     end
   end
 
-  defp respond(socket, _method, _target, _headers, _routes) do
-    # Read-only API: anything but GET is refused outright.
+  defp respond(socket, "POST", target, headers, body, routes) do
+    {path, query_params} = split_target(target)
+    bump(path)
+
+    # POST exists only for the OAuth endpoints (which authenticate via basic
+    # auth/body, not Bearer); the resource API stays GET-only.
+    case Map.get(routes, {:post, path}) do
+      {:params, fun} when is_function(fun, 1) ->
+        params = Map.merge(query_params, body_params(headers, body))
+        {code, value} = fun.(params)
+        send_json(socket, code, value)
+
+      nil ->
+        send_json(socket, 405, %{"message" => "method not allowed"})
+    end
+  end
+
+  defp respond(socket, _method, _target, _headers, _body, _routes) do
+    # Read-only API: anything else is refused outright.
     send_json(socket, 405, %{"message" => "method not allowed"})
+  end
+
+  defp body_params(headers, body) do
+    content_type = Map.get(headers, "content-type", "")
+
+    cond do
+      body == "" ->
+        %{}
+
+      String.contains?(content_type, "json") ->
+        case Jason.decode(body) do
+          {:ok, %{} = decoded} -> decoded
+          _other -> %{}
+        end
+
+      true ->
+        URI.decode_query(body)
+    end
   end
 
   defp authorized?(headers) do
@@ -138,6 +199,13 @@ defmodule Superblock.StubServer do
       "Bearer " <> token when byte_size(token) > 0 -> true
       _other -> false
     end
+  end
+
+  defp send_json(socket, 204, _value) do
+    :gen_tcp.send(
+      socket,
+      "HTTP/1.1 204 No Content\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+    )
   end
 
   defp send_json(socket, code, value) do

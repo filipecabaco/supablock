@@ -105,13 +105,19 @@ defmodule Superblock.MixProject do
        tag: "v0.3.0",
        override: true,
        runtime: false},
-      {:plug,
-       git: "https://github.com/elixir-plug/plug.git", tag: "v1.20.1", override: true, only: :test},
+      # OAuth login callback server: Francis (route DSL) on top of Bandit.
+      # Started on demand during `superblock login` only — boot stays a no-op.
+      {:francis, git: "https://github.com/filipecabaco/francis.git", tag: "v0.3.3"},
+      {:bandit, git: "https://github.com/mtrudel/bandit.git", tag: "1.11.1", override: true},
+      {:thousand_island,
+       git: "https://github.com/mtrudel/thousand_island.git", tag: "1.4.3", override: true},
+      {:websock,
+       git: "https://github.com/phoenixframework/websock.git", tag: "0.5.3", override: true},
+      {:websock_adapter,
+       git: "https://github.com/phoenixframework/websock_adapter.git", tag: "0.5.9", override: true},
+      {:plug, git: "https://github.com/elixir-plug/plug.git", tag: "v1.20.1", override: true},
       {:plug_crypto,
-       git: "https://github.com/elixir-plug/plug_crypto.git",
-       tag: "v2.1.1",
-       override: true,
-       only: :test}
+       git: "https://github.com/elixir-plug/plug_crypto.git", tag: "v2.1.1", override: true}
     ]
   end
 end
