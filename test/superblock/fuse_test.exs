@@ -22,6 +22,9 @@ defmodule Superblock.FuseTest do
     TestEnv.isolate_xdg!()
     TestEnv.fake_login!()
     TestEnv.stub_api!()
+    # Every project now has a database/ tree; stub its Data API so any mount
+    # traversal (including walk!/1) stays hermetic and never touches the network.
+    Application.put_env(:superblock, :data_api_fun, Superblock.DataApiStub.fun(db_model()))
     Superblock.Cache.flush()
 
     mountpoint =
@@ -35,6 +38,7 @@ defmodule Superblock.FuseTest do
       Fs.unmount(mountpoint)
       wait_unmounted(mountpoint)
       File.rmdir(mountpoint)
+      Application.delete_env(:superblock, :data_api_fun)
     end)
 
     {:ok, mountpoint: mountpoint}
@@ -87,8 +91,10 @@ defmodule Superblock.FuseTest do
     # exactly once thanks to the cache:
     #   orgs(1) projects(1) org info+members+regions(6)
     #   per project (x3): info health auth db api-keys functions branches (21)
+    #   per project (x3): postgrest config for database/ schemas (3)
     #   function info (2)
-    budget = 31
+    # (Data API row/table reads go through the injected stub, not the API.)
+    budget = 34
     assert TestEnv.total_hits() <= budget
 
     # walking again is free (everything within TTL)
@@ -142,14 +148,11 @@ defmodule Superblock.FuseTest do
     assert TestEnv.hits("/v1/organizations/org-alpha") == 2
   end
 
-  # End-to-end for the database/ tree over a real mount: the rows come from a
-  # stubbed Data API (Superblock.DataApiStub), so this is hermetic — no network,
-  # no database. Exposed schemas still come from the stubbed Management API.
+  # End-to-end for the database/ tree over a real mount: the rows come from the
+  # stubbed Data API set up in `setup` (Superblock.DataApiStub), so this is
+  # hermetic — no network, no database. Exposed schemas still come from the
+  # stubbed Management API.
   test "database tree serves rows over the mount", %{mountpoint: mp} do
-    Application.put_env(:superblock, :data_api_fun, Superblock.DataApiStub.fun(fuse_db_model()))
-    on_exit(fn -> Application.delete_env(:superblock, :data_api_fun) end)
-    {:ok, "ok"} = Superblock.Control.send_cmd("flush")
-
     project = Path.join(mp, "organizations/org-alpha/projects/#{@proj_a1}")
     db = Path.join(project, "database")
 
@@ -167,7 +170,7 @@ defmodule Superblock.FuseTest do
     assert File.stat!(page).size == byte_size(body)
   end
 
-  defp fuse_db_model do
+  defp db_model do
     %{
       "app" => %{
         "widgets" => %{

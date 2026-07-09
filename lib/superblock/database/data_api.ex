@@ -56,6 +56,7 @@ defmodule Superblock.Database.DataApi do
           decode_body: false,
           retry: false
         )
+        |> apply_test_plug()
 
       case Req.request(req) do
         {:ok, %Req.Response{status: status, headers: resp_headers, body: body}} ->
@@ -88,6 +89,15 @@ defmodule Superblock.Database.DataApi do
         key when is_binary(key) and key != "" -> {:ok, key}
         _none -> {:error, :no_key}
       end
+    end
+  end
+
+  # Testing escape hatch only (mirrors Superblock.Client): route the request
+  # through the stub plug so hermetic tests never reach a real Data API host.
+  defp apply_test_plug(req) do
+    case Application.get_env(:superblock, :req_plug) do
+      nil -> req
+      plug -> Req.merge(req, plug: plug, retry: false)
     end
   end
 
