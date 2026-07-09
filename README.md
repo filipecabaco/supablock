@@ -419,10 +419,3 @@ your real account instead.
 `notes/userfs-api.md` for the exact API contract and the list of patches —
 plus a pruned [castore](https://github.com/elixir-mint/castore)
 (Apache-2.0).
-
-## Out of scope (v1)
-
-No writes to account resources of any kind, no logs endpoints. `mount` runs
-in the foreground; use `superblock service install` for auto-start. Row
-browsing under `database/` is read-only and opt-in (per project, via
-`superblock db add`); superblock never issues anything but `SELECT`.
