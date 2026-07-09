@@ -2,7 +2,7 @@ defmodule Superblock.CLI do
   @moduledoc """
   Command-line entry point.
 
-      superblock login [--token sbp_...]
+      superblock login [--token sbp_...] [--no-browser]
       superblock logout
       superblock status | whoami
       superblock doctor
@@ -16,13 +16,26 @@ defmodule Superblock.CLI do
   error · 4 environment error.
   """
 
-  alias Superblock.{Auth, Config, Control, Credentials, Doctor, Fs, Paths, Service, Signals}
+  alias Superblock.{
+    Auth,
+    BrowserLogin,
+    Config,
+    Control,
+    Credentials,
+    Doctor,
+    Fs,
+    Paths,
+    Service,
+    Signals
+  }
 
   @usage """
   superblock — browse the Supabase Management API as a filesystem
 
   Usage:
-    superblock login [--token sbp_...]   Authenticate with a personal access token
+    superblock login                     Log in via the Supabase dashboard (browser)
+    superblock login --token sbp_...     Authenticate with a personal access token
+    superblock login --no-browser        Print the login URL instead of opening it
     superblock logout                    Delete the stored token
     superblock status                    Auth, mount and rate-limit overview
     superblock whoami                    Alias of status
@@ -106,83 +119,82 @@ defmodule Superblock.CLI do
   ## login / logout
 
   defp login(args) do
-    {opts, _rest, _invalid} = OptionParser.parse(args, strict: [token: :string])
+    {opts, _rest, _invalid} =
+      OptionParser.parse(args, strict: [token: :string, no_browser: :boolean])
 
-    token =
-      case opts[:token] do
-        nil -> prompt_token()
-        token -> token
-      end
+    case opts[:token] do
+      nil -> browser_login(opts[:no_browser] || false)
+      token -> validate_and_store(String.trim(token))
+    end
+  end
 
-    case token do
-      nil ->
-        usage_error("No token given.")
+  # Replicates the official supabase CLI: dashboard session + verification
+  # code + end-to-end-encrypted token delivery (see Superblock.BrowserLogin).
+  defp browser_login(no_browser?) do
+    session = BrowserLogin.new_session()
 
-      token ->
-        token = String.trim(token)
+    IO.puts("Here is your login link, open it in the browser:\n")
+    IO.puts("  #{session.url}\n")
 
-        case Auth.validate(token) do
-          {:ok, org_count} ->
-            :ok = Credentials.store(token)
-            IO.puts("✓ Token valid — authenticated, #{org_count} organizations found.")
-            IO.puts("  Stored in #{Paths.credentials_file()} (mode 0600).")
-            0
+    unless no_browser? do
+      BrowserLogin.open_browser(session.url)
+    end
 
-          {:error, :unauthorized} ->
-            IO.puts(
-              :stderr,
-              "Token rejected — check it at app.supabase.com → Account → Access Tokens"
-            )
+    prompt_code_and_fetch(session, 3)
+  end
 
-            2
+  defp prompt_code_and_fetch(_session, 0) do
+    IO.puts(:stderr, "Too many failed attempts. Run: superblock login")
+    2
+  end
+
+  defp prompt_code_and_fetch(session, attempts_left) do
+    case IO.gets("Enter your verification code: ") do
+      :eof ->
+        IO.puts(:stderr, "No verification code given.")
+        2
+
+      {:error, _reason} ->
+        IO.puts(:stderr, "Could not read the verification code.")
+        2
+
+      line ->
+        code = String.trim(to_string(line))
+
+        case code_to_token(session, code) do
+          {:ok, token} ->
+            validate_and_store(token)
 
           {:error, reason} ->
-            IO.puts(:stderr, "Could not reach the Supabase API: #{describe_error(reason)}")
-            IO.puts(:stderr, "Check your network and try again.")
-            3
+            IO.puts(:stderr, "Verification failed: #{describe_error(reason)}")
+            prompt_code_and_fetch(session, attempts_left - 1)
         end
     end
   end
 
-  defp prompt_token do
-    prompt = "Paste your Supabase personal access token (sbp_...): "
+  defp code_to_token(_session, ""), do: {:error, :empty_code}
+  defp code_to_token(session, code), do: BrowserLogin.fetch_token(session, code)
 
-    case hidden_input(prompt) do
-      "" -> nil
-      token -> token
-    end
-  end
+  defp validate_and_store(token) do
+    case Auth.validate(token) do
+      {:ok, org_count} ->
+        :ok = Credentials.store(token)
+        IO.puts("✓ Token valid — authenticated, #{org_count} organizations found.")
+        IO.puts("  Stored in #{Paths.credentials_file()} (mode 0600).")
+        0
 
-  defp hidden_input(prompt) do
-    IO.write(prompt)
+      {:error, :unauthorized} ->
+        IO.puts(
+          :stderr,
+          "Token rejected — check it at app.supabase.com → Account → Access Tokens"
+        )
 
-    input =
-      try do
-        case :io.get_password() do
-          data when is_list(data) or is_binary(data) -> to_string(data)
-          _other -> stty_input()
-        end
-      rescue
-        _any -> stty_input()
-      catch
-        _kind, _reason -> stty_input()
-      end
+        2
 
-    IO.write("\n")
-    String.trim(input)
-  end
-
-  defp stty_input do
-    System.cmd("stty", ["-echo"], stderr_to_stdout: true)
-
-    try do
-      case IO.gets("") do
-        :eof -> ""
-        {:error, _reason} -> ""
-        line -> to_string(line)
-      end
-    after
-      System.cmd("stty", ["echo"], stderr_to_stdout: true)
+      {:error, reason} ->
+        IO.puts(:stderr, "Could not reach the Supabase API: #{describe_error(reason)}")
+        IO.puts(:stderr, "Check your network and try again.")
+        3
     end
   end
 
@@ -478,6 +490,10 @@ defmodule Superblock.CLI do
     end
   end
 
+  defp describe_error(:empty_code), do: "no code entered — copy it from the browser page"
+  defp describe_error(:not_found), do: "code not recognized — check it and try again"
+  defp describe_error(:decrypt_failed), do: "could not decrypt the token — restart the login"
+  defp describe_error(:unexpected_response), do: "unexpected API response — try again"
   defp describe_error(:timeout), do: "request timed out"
   defp describe_error(:rate_limited), do: "rate limited (429) — wait a moment and retry"
   defp describe_error(:forbidden), do: "access denied (403)"

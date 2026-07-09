@@ -39,9 +39,15 @@ defmodule Superblock.Client do
   end
 
   defp fetch_token(opts) do
-    case Keyword.fetch(opts, :token) do
-      {:ok, token} when is_binary(token) and token != "" -> {:ok, token}
-      _other -> Credentials.load()
+    cond do
+      Keyword.get(opts, :unauthenticated, false) ->
+        {:ok, nil}
+
+      is_binary(opts[:token]) and opts[:token] != "" ->
+        {:ok, opts[:token]}
+
+      true ->
+        Credentials.load()
     end
   end
 
@@ -82,13 +88,16 @@ defmodule Superblock.Client do
       Req.new(
         base_url: base_url(),
         url: path,
-        auth: {:bearer, token},
         receive_timeout: budget_ms,
         connect_options: connect_options(budget_ms),
         retry: &retry_decision(&1, &2, deadline),
         retry_log_level: false,
         max_retries: 3
       )
+      |> then(fn req ->
+        # nil = deliberately unauthenticated (the login polling endpoint).
+        if token, do: Req.merge(req, auth: {:bearer, token}), else: req
+      end)
       |> apply_test_plug()
 
     case Req.request(req) do

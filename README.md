@@ -4,7 +4,7 @@ Browse your Supabase account as a filesystem.
 
 superblock is a **read-only FUSE filesystem** that mirrors the Supabase
 [Management API](https://supabase.com/docs/reference/api/introduction) as a
-directory tree. Authenticate once with a personal access token, mount, and
+directory tree. Log in once through the Supabase dashboard, mount, and
 inspect organizations, projects, config, keys and functions with ordinary
 Unix tools — `ls`, `cat`, `grep`, `find`, `diff`.
 
@@ -126,10 +126,18 @@ More build notes:
 ## Quickstart
 
 ```bash
-superblock login          # paste a token from app.supabase.com → Account → Access Tokens
+superblock login          # opens the Supabase dashboard; type the code it shows
 superblock config set mountpoint /mnt/supabase
 superblock mount          # foreground; Ctrl-C unmounts
 ```
+
+`login` replicates the official supabase CLI's flow: it opens
+`supabase.com/dashboard/cli/login` (and always prints the URL, so it works
+over SSH with `--no-browser`), the dashboard mints a personal access token
+and shows a short verification code, you type the code into the prompt, and
+the token is delivered end-to-end encrypted (ECDH P-256 + AES-256-GCM) —
+it never crosses the network in the clear. Prefer to paste a token
+yourself? `superblock login --token sbp_...` still works.
 
 From another shell:
 
@@ -160,7 +168,9 @@ Output is deterministic — JSON is pretty-printed with sorted keys — so
 ## Commands
 
 ```
-superblock login [--token sbp_...]   validate + store a token (0600)
+superblock login                     browser login via the Supabase dashboard
+superblock login --token sbp_...     validate + store a pasted token instead
+superblock login --no-browser        print the login URL (SSH-friendly)
 superblock logout                    delete the stored token
 superblock status | whoami           auth, org count, mount state, rate limits
 superblock doctor                    environment checks with fix hints

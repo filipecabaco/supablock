@@ -1,5 +1,24 @@
 # Plan: OAuth2 login with a Francis-powered localhost callback
 
+> **Decision (2026-07): replicate the official supabase CLI flow instead.**
+> `superblock login` now implements the session-polling flow described
+> under "The official supabase CLI" below — ephemeral ECDH P-256 keypair,
+> dashboard login URL, verification code typed into the CLI, token fetched
+> from `/platform/cli/login/{session_id}` and decrypted locally
+> (`Superblock.BrowserLogin`). Accepted trade-offs, eyes open:
+>
+> * it rides the **private `/platform/*` API** — if it changes upstream,
+>   `login --token` remains as the escape hatch (and is tested);
+> * the result is a **full-power long-lived PAT**, not a scoped OAuth
+>   token — read-only stays a client-side promise for now.
+>
+> Why anyway: no OAuth app registration or embedded client secret, no
+> localhost callback server (works over SSH), identical UX to the tool our
+> users already know, and end-to-end-encrypted token delivery. Francis is
+> therefore **not needed for login**; the OAuth plan below is retained as
+> the future path to server-enforced read-only scopes, and the auto-start
+> service (`Superblock.Service`) is already shipped.
+
 > Companion feature, already implemented: `superblock service
 > install|uninstall|status` auto-starts the mount at login via a systemd
 > user unit (Linux) or launchd agent (macOS) — see `Superblock.Service`.
