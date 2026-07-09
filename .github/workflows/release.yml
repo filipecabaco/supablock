@@ -32,6 +32,7 @@ env:
 jobs:
   linux:
     strategy:
+      fail-fast: false
       matrix:
         include:
           - runner: ubuntu-24.04
@@ -73,6 +74,7 @@ jobs:
 
   macos:
     strategy:
+      fail-fast: false
       matrix:
         include:
           - runner: macos-13
@@ -90,8 +92,14 @@ jobs:
           brew install --cask macfuse
           brew install pkg-config xz
 
-      - name: Install Erlang/Elixir (.tool-versions)
-        uses: asdf-vm/actions/install@v3
+      # Official precompiled installer (elixir-lang.org); versions pinned to
+      # match .tool-versions.
+      - name: Install Erlang/Elixir (precompiled)
+        run: |
+          curl -fsSO https://elixir-lang.org/install.sh
+          sh install.sh elixir@1.18.4 otp@27.3
+          echo "$HOME/.elixir-install/installs/otp/27.3/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.elixir-install/installs/elixir/1.18.4-otp-27/bin" >> "$GITHUB_PATH"
 
       - uses: mlugg/setup-zig@v2
         with:
