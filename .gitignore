@@ -4,7 +4,7 @@
 /doc/
 erl_crash.dump
 *.ez
-superblock-*.tar
+supablock-*.tar
 /tmp/
 vendor/efuse/c_src/efuse
 vendor/efuse/c_src/*.o

@@ -35,12 +35,12 @@ concurrency:
 
 env:
   MIX_ENV: prod
-  # Baked into the binary at compile time (Superblock.OAuth): the released
-  # superblock OAuth app identity, so `superblock login` works with zero
+  # Baked into the binary at compile time (Supablock.OAuth): the released
+  # supablock OAuth app identity, so `supablock login` works with zero
   # configuration. Empty (repo secrets unset) simply falls back to the
   # dashboard session flow — nothing breaks.
-  SUPERBLOCK_OAUTH_CLIENT_ID: ${{ secrets.SUPERBLOCK_OAUTH_CLIENT_ID }}
-  SUPERBLOCK_OAUTH_CLIENT_SECRET: ${{ secrets.SUPERBLOCK_OAUTH_CLIENT_SECRET }}
+  SUPABLOCK_OAUTH_CLIENT_ID: ${{ secrets.SUPABLOCK_OAUTH_CLIENT_ID }}
+  SUPABLOCK_OAUTH_CLIENT_SECRET: ${{ secrets.SUPABLOCK_OAUTH_CLIENT_SECRET }}
 
 jobs:
   linux:
@@ -75,19 +75,19 @@ jobs:
       - name: Build single-file binary
         run: |
           mix deps.get
-          mix release superblock_burrito
+          mix release supablock_burrito
 
       - name: Sanity-check the binary
         run: |
-          BIN=burrito_out/superblock_burrito_native
+          BIN=burrito_out/supablock_burrito_native
           "$BIN" help
           "$BIN" doctor || true
-          mv "$BIN" "superblock-linux-${{ matrix.arch }}"
+          mv "$BIN" "supablock-linux-${{ matrix.arch }}"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: superblock-linux-${{ matrix.arch }}
-          path: superblock-linux-${{ matrix.arch }}
+          name: supablock-linux-${{ matrix.arch }}
+          path: supablock-linux-${{ matrix.arch }}
 
   # One macOS job, arm64 only: Macs have been arm-only since 2020, and macOS
   # runner capacity is the scarce resource (macos-13 was retired — jobs
@@ -126,18 +126,18 @@ jobs:
       - name: Build single-file binary
         run: |
           mix deps.get
-          mix release superblock_burrito
+          mix release supablock_burrito
 
       - name: Sanity-check the binary
         run: |
-          BIN=burrito_out/superblock_burrito_native
+          BIN=burrito_out/supablock_burrito_native
           "$BIN" help
-          mv "$BIN" "superblock-macos-${{ matrix.arch }}"
+          mv "$BIN" "supablock-macos-${{ matrix.arch }}"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: superblock-macos-${{ matrix.arch }}
-          path: superblock-macos-${{ matrix.arch }}
+          name: supablock-macos-${{ matrix.arch }}
+          path: supablock-macos-${{ matrix.arch }}
 
   # One publish job (instead of per-matrix uploads) so concurrent jobs never
   # race creating the same release. Runs even if a platform failed, shipping
@@ -152,7 +152,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: dist
-          pattern: superblock-*
+          pattern: supablock-*
           merge-multiple: true
 
       - name: List built binaries

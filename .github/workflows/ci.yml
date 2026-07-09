@@ -91,7 +91,7 @@ jobs:
           fusermount3 --version || fusermount --version
           supabase --version
           # The release must ship the compiled FUSE port, or every mount fails.
-          port=$(echo _build/prod/rel/superblock/lib/efuse-*/priv/efuse)
+          port=$(echo _build/prod/rel/supablock/lib/efuse-*/priv/efuse)
           test -x "$port" && echo "efuse port present: $port"
 
       # FUSE mounts (database/ row tree over a stubbed Data API) + the released

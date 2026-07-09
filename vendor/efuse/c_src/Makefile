@@ -1,4 +1,4 @@
-# Modified for superblock. Picks a FUSE userspace API automatically:
+# Modified for supablock. Picks a FUSE userspace API automatically:
 #
 #   * libfuse3 (Linux default) when pkg-config finds `fuse3`
 #   * the libfuse 2.9 API otherwise — that is what macFUSE and FUSE-T
@@ -11,18 +11,18 @@
 # the macFUSE/FUSE-T install the user needs anyway (kernel side included).
 #
 # Overrides:
-#   SUPERBLOCK_FUSE_API=2|3       force an API generation
-#   SUPERBLOCK_STATIC_FUSE=0|1    disable/force static linking
+#   SUPABLOCK_FUSE_API=2|3       force an API generation
+#   SUPABLOCK_STATIC_FUSE=0|1    disable/force static linking
 
 UNAME_S := $(shell uname -s)
 
 PKGS_3 := fuse3
 PKGS_2 := $(shell pkg-config --exists fuse && echo fuse || (pkg-config --exists fuse-t && echo fuse-t))
 
-ifeq ($(SUPERBLOCK_FUSE_API),2)
+ifeq ($(SUPABLOCK_FUSE_API),2)
   FUSE_PKG := $(PKGS_2)
-  API_DEFS := -DSUPERBLOCK_FUSE2
-else ifeq ($(SUPERBLOCK_FUSE_API),3)
+  API_DEFS := -DSUPABLOCK_FUSE2
+else ifeq ($(SUPABLOCK_FUSE_API),3)
   FUSE_PKG := fuse3
   API_DEFS :=
 else ifeq ($(UNAME_S),Darwin)
@@ -32,13 +32,13 @@ else ifeq ($(UNAME_S),Darwin)
   # libfuse3 code cannot compile against — the 2.9 API is the one both
   # macFUSE and FUSE-T implement compatibly.
   FUSE_PKG := $(PKGS_2)
-  API_DEFS := -DSUPERBLOCK_FUSE2
+  API_DEFS := -DSUPABLOCK_FUSE2
 else ifeq ($(shell pkg-config --exists fuse3 && echo yes),yes)
   FUSE_PKG := fuse3
   API_DEFS :=
 else
   FUSE_PKG := $(PKGS_2)
-  API_DEFS := -DSUPERBLOCK_FUSE2
+  API_DEFS := -DSUPABLOCK_FUSE2
 endif
 
 ifeq ($(strip $(FUSE_PKG)),)
@@ -50,9 +50,9 @@ FUSE_CFLAGS := $(shell pkg-config --cflags $(FUSE_PKG))
 FUSE_LIBDIR := $(shell pkg-config --variable=libdir $(FUSE_PKG))
 FUSE_ARCHIVE := $(FUSE_LIBDIR)/lib$(FUSE_PKG).a
 
-ifeq ($(SUPERBLOCK_STATIC_FUSE),0)
+ifeq ($(SUPABLOCK_STATIC_FUSE),0)
   WANT_STATIC := no
-else ifeq ($(SUPERBLOCK_STATIC_FUSE),1)
+else ifeq ($(SUPABLOCK_STATIC_FUSE),1)
   WANT_STATIC := yes
 else ifeq ($(UNAME_S),Linux)
   # Default: static when the archive exists (portable single binary).

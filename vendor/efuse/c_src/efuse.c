@@ -6,7 +6,7 @@
 //
 // 'efuse' is free software, licensed under the MIT license.
 //
-// Modified for superblock (https://github.com/filipecabaco/supablock):
+// Modified for supablock (https://github.com/filipecabaco/supablock):
 //   - supports both the libfuse3 API (31, Linux default) and the libfuse
 //     2.9 API (26) — the latter is what macFUSE and FUSE-T implement on
 //     macOS; the Makefile picks whichever is available
@@ -48,7 +48,7 @@
 
 #include <syslog.h>
 
-#ifdef SUPERBLOCK_FUSE2
+#ifdef SUPABLOCK_FUSE2
 #define FUSE_USE_VERSION 26
 #include <fuse.h>
 #include <fuse_lowlevel.h>
@@ -75,7 +75,7 @@ static unsigned char * erlmsg = NULL;
 static size_t erlmsg_size = 0;
 
 
-#ifdef SUPERBLOCK_FUSE2
+#ifdef SUPABLOCK_FUSE2
 static int fusecb_getattr(const char *, struct stat *);
 static int fusecb_readdir(const char *, void *, fuse_fill_dir_t, off_t,
 		struct fuse_file_info *);
@@ -103,7 +103,7 @@ static struct fuse * global_fuse = NULL;
 static char * global_mountpoint = NULL;
 static atomic_flag unmounted = ATOMIC_FLAG_INIT;
 
-#ifdef SUPERBLOCK_FUSE2
+#ifdef SUPABLOCK_FUSE2
 static struct fuse_chan * global_chan = NULL;
 #endif
 
@@ -117,7 +117,7 @@ static void unmount_once(void) {
 	if (atomic_flag_test_and_set(&unmounted))
 		return;
 
-#ifdef SUPERBLOCK_FUSE2
+#ifdef SUPABLOCK_FUSE2
 	fuse_unmount(global_mountpoint, global_chan);
 #else
 	fuse_unmount(global_fuse);
@@ -186,7 +186,7 @@ int main (int argc, char ** argv) {
 	char * fuse_argv[] = { argv[0], "-o", "ro,attr_timeout=5,entry_timeout=5" };
 	struct fuse_args args = FUSE_ARGS_INIT(3, fuse_argv);
 
-#ifdef SUPERBLOCK_FUSE2
+#ifdef SUPABLOCK_FUSE2
 	global_chan = fuse_mount(global_mountpoint, &args);
 	if (global_chan == NULL) {
 		syslog(LOG_ERR, "efuse[%d]: fuse mount %s failed", getpid(), global_mountpoint);
@@ -398,7 +398,7 @@ static int erlang_roundtrip(unsigned int reqcode, const char * path, const char 
 
 // Implement the 'getattr' FUSE callback.
 
-#ifdef SUPERBLOCK_FUSE2
+#ifdef SUPABLOCK_FUSE2
 static int fusecb_getattr(
 		const char * path,
 		struct stat * stbuf) {
@@ -440,7 +440,7 @@ static int fusecb_getattr(
 
 // Implement the 'readdir' FUSE callback.
 
-#ifdef SUPERBLOCK_FUSE2
+#ifdef SUPABLOCK_FUSE2
 #define EFUSE_FILL(buf, name) filler(buf, name, NULL, 0)
 static int fusecb_readdir(
 		const char *path,

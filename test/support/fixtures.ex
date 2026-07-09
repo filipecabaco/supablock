@@ -1,10 +1,10 @@
-defmodule Superblock.Fixtures do
+defmodule Supablock.Fixtures do
   @moduledoc """
   Canned Management API responses: 2 orgs, 3 projects (2 in org A, 1 in
   org B), 2 functions, 1 branch.
   """
 
-  # `slug` mirrors `id` here: superblock names org folders by slug || id, so
+  # `slug` mirrors `id` here: supablock names org folders by slug || id, so
   # keeping them equal leaves the tree unchanged, while satisfying the supabase
   # CLI's schema (its `orgs list` requires a slug on every organization).
   def orgs do
@@ -107,7 +107,7 @@ defmodule Superblock.Fixtures do
     ]
   end
 
-  # The SSO list endpoint wraps providers in an `items` envelope; superblock
+  # The SSO list endpoint wraps providers in an `items` envelope; supablock
   # unwraps it. Providers have no human-friendly slug, so folders are keyed by id.
   def sso_providers do
     %{
@@ -247,7 +247,7 @@ defmodule Superblock.Fixtures do
       "/v1/projects/projatwo1234567890ab/storage/buckets" => [],
       "/v1/projects/projbone1234567890ab/storage/buckets" => [],
       # org-alpha's first project has SAML on; the second 404s (SAML not
-      # enabled), which superblock surfaces as an empty provider list.
+      # enabled), which supablock surfaces as an empty provider list.
       "/v1/projects/projaone1234567890ab/config/auth/sso/providers" => sso_providers(),
       "/v1/projects/projatwo1234567890ab/config/auth/sso/providers" =>
         {:status, 404, %{"message" => "SAML 2.0 support is not enabled for this project"}},

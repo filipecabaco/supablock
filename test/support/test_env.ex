@@ -1,23 +1,23 @@
-defmodule Superblock.TestEnv do
+defmodule Supablock.TestEnv do
   @moduledoc """
   Test helpers: isolated XDG directories, an API stub installed as the Req
   plug, and per-path hit counters (so tests can assert exact request budgets).
   """
 
-  @hits :superblock_test_hits
+  @hits :supablock_test_hits
 
   @doc "Point XDG dirs at a fresh tmp dir; returns the base dir."
   def isolate_xdg! do
     base =
       Path.join(
         System.tmp_dir!(),
-        "superblock-test-#{System.unique_integer([:positive])}"
+        "supablock-test-#{System.unique_integer([:positive])}"
       )
 
     File.mkdir_p!(base)
     System.put_env("XDG_CONFIG_HOME", Path.join(base, "config"))
     System.put_env("XDG_STATE_HOME", Path.join(base, "state"))
-    System.delete_env("SUPERBLOCK_TOKEN")
+    System.delete_env("SUPABLOCK_TOKEN")
 
     ExUnit.Callbacks.on_exit(fn ->
       System.delete_env("XDG_CONFIG_HOME")
@@ -25,7 +25,7 @@ defmodule Superblock.TestEnv do
       File.rm_rf!(base)
     end)
 
-    Superblock.Cache.flush()
+    Supablock.Cache.flush()
     base
   end
 
@@ -37,16 +37,16 @@ defmodule Superblock.TestEnv do
     * `{:raw, content_type, body}` — responds 200 with verbatim bytes (for
       non-JSON payloads such as an edge-function eszip body),
     * `{:params, fun}` — fun takes the query params map, returns
-      `{code, json_value}` (also understood by `Superblock.StubServer`),
+      `{code, json_value}` (also understood by `Supablock.StubServer`),
     * or a `conn -> conn` fun for full control.
 
   A `{:prefix, "/some/base/"}` key matches any path under it (exact keys
   win). Unknown paths get a 404. Every request bumps a per-path counter.
   """
-  def stub_api!(routes \\ Superblock.Fixtures.routes()) do
+  def stub_api!(routes \\ Supablock.Fixtures.routes()) do
     reset_hits()
 
-    Application.put_env(:superblock, :req_plug, fn conn ->
+    Application.put_env(:supablock, :req_plug, fn conn ->
       path = conn.request_path
       :ets.update_counter(@hits, path, 1, {path, 0})
 
@@ -76,7 +76,7 @@ defmodule Superblock.TestEnv do
     end)
 
     ExUnit.Callbacks.on_exit(fn ->
-      Application.delete_env(:superblock, :req_plug)
+      Application.delete_env(:supablock, :req_plug)
     end)
 
     :ok
@@ -118,6 +118,6 @@ defmodule Superblock.TestEnv do
 
   @doc "Store a fake credential so Client finds a token."
   def fake_login! do
-    :ok = Superblock.Credentials.store("sbp_FAKEZ00000000000000000000000000000000000")
+    :ok = Supablock.Credentials.store("sbp_FAKEZ00000000000000000000000000000000000")
   end
 end

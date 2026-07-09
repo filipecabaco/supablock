@@ -1,8 +1,8 @@
-# superblock
+# supablock
 
 Browse your Supabase account as a filesystem.
 
-superblock is a **read-only FUSE filesystem** that mirrors the Supabase
+supablock is a **read-only FUSE filesystem** that mirrors the Supabase
 [Management API](https://supabase.com/docs/reference/api/introduction) as a
 directory tree. Log in once through the Supabase dashboard, mount, and
 inspect organizations, projects, config, keys and functions with ordinary
@@ -45,10 +45,10 @@ Unix tools — `ls`, `cat`, `grep`, `find`, `diff`.
                             └── rows-000500.csv   # rows 500–999, …
 ```
 
-The Management API half is `GET`-only: superblock physically cannot create,
+The Management API half is `GET`-only: supablock physically cannot create,
 change or delete anything in your Supabase account. The `database/` tree
 (row browsing) reads through each project's **Data API** (PostgREST) over
-`GET` requests only — no write verb is ever sent — reusing a key superblock
+`GET` requests only — no write verb is ever sent — reusing a key supablock
 already fetches from the Management API, so it needs **no database password
 and no extra credential**. Every mount is read-only at the kernel level
 (`-o ro` — any write attempt fails with `EROFS`).
@@ -65,8 +65,8 @@ on an Intel Mac, build from source instead:
 curl -fsSL https://filipecabaco.github.io/supablock/install.sh | sh
 ```
 
-`SUPERBLOCK_VERSION` picks a release tag (default: latest, falling back to
-the rolling `canary` build); `SUPERBLOCK_INSTALL_DIR` overrides the default
+`SUPABLOCK_VERSION` picks a release tag (default: latest, falling back to
+the rolling `canary` build); `SUPABLOCK_INSTALL_DIR` overrides the default
 `~/.local/bin`.
 
 ### Building from source
@@ -86,7 +86,7 @@ Build:
 ```bash
 mix deps.get
 MIX_ENV=prod mix release
-ln -sf "$PWD/bin/superblock" ~/.local/bin/superblock   # or copy
+ln -sf "$PWD/bin/supablock" ~/.local/bin/supablock   # or copy
 ```
 
 Dependencies are pinned as git tags / vendored (see `mix.exs` and
@@ -94,18 +94,18 @@ Dependencies are pinned as git tags / vendored (see `mix.exs` and
 
 ### Single-file binary (Burrito)
 
-For easier distribution, superblock can be packaged as a self-contained
+For easier distribution, supablock can be packaged as a self-contained
 executable with [Burrito](https://github.com/burrito-elixir/burrito) — no
 Erlang/Elixir needed on the target machine (FUSE still is):
 
 ```bash
 # extra build prerequisites: zig 0.15.x (mise install provides it) and xz
-MIX_ENV=prod mix release superblock_burrito
-ls burrito_out/    # -> superblock_burrito_native (~5 MB)
+MIX_ENV=prod mix release supablock_burrito
+ls burrito_out/    # -> supablock_burrito_native (~5 MB)
 ```
 
 The binary self-extracts on first run and behaves exactly like the launcher
-(`superblock_burrito_native login`, `… mount`, and so on). The release
+(`supablock_burrito_native login`, `… mount`, and so on). The release
 workflow (`.github/workflows/release.yml`) builds these binaries per
 platform on tag pushes, so nobody needs a local toolchain — grab the
 artifact and run it.
@@ -117,7 +117,7 @@ with the binary:
 
 * **Linux — fully bundled.** The FUSE port statically links `libfuse3`
   whenever the static archive is available (the default; opt out with
-  `SUPERBLOCK_STATIC_FUSE=0`). The shipped binary therefore needs **no
+  `SUPABLOCK_STATIC_FUSE=0`). The shipped binary therefore needs **no
   FUSE package installed**: the kernel module is part of every mainstream
   kernel, and `fusermount3` (needed only for non-root mounts, and only
   because it must be setuid — that's why it can't be bundled) ships by
@@ -129,7 +129,7 @@ with the binary:
   bundled — by anyone — is the kernel extension/daemon itself: Apple
   requires the user to install and approve it, which is why every macOS
   FUSE app (rclone, Cryptomator, …) asks for macFUSE or FUSE-T as its one
-  prerequisite. Once either is installed, the superblock binary is
+  prerequisite. Once either is installed, the supablock binary is
   self-sufficient.
 
 More build notes:
@@ -146,20 +146,20 @@ More build notes:
 ## Quickstart
 
 ```bash
-superblock login          # browser consent — that's the whole setup
-superblock mount          # mounts at ~/Supabase by default; Ctrl-C unmounts
+supablock login          # browser consent — that's the whole setup
+supablock mount          # mounts at ~/Supabase by default; Ctrl-C unmounts
 ```
 
 The mountpoint defaults to `~/Supabase` (created on demand);
-`superblock config set mountpoint /mnt/supabase` overrides it.
+`supablock config set mountpoint /mnt/supabase` overrides it.
 
-### Team onboarding: `superblock setup`
+### Team onboarding: `supablock setup`
 
 One command applies a shared team profile, logs in, and offers the
 auto-start service:
 
 ```bash
-superblock setup https://team.example.com/superblock.json
+supablock setup https://team.example.com/supablock.json
 ```
 
 The profile is a flat JSON object of config keys — commit it to your
@@ -181,7 +181,7 @@ database passwords never belong in a profile.
 
 ### How login works
 
-`superblock login` picks the best available flow, in this order:
+`supablock login` picks the best available flow, in this order:
 
 1. **OAuth2 (recommended)** — used when an OAuth app identity is present.
    The browser opens the documented consent page
@@ -195,10 +195,10 @@ database passwords never belong in a profile.
 
    The app identity resolves in this order: `oauth.client_id` /
    `oauth.client_secret` config (set by hand or via a `setup` profile) →
-   `SUPERBLOCK_OAUTH_CLIENT_ID`/`_SECRET` env → **the identity baked into
-   the released binary at build time** (CI injects the superblock OAuth
+   `SUPABLOCK_OAUTH_CLIENT_ID`/`_SECRET` env → **the identity baked into
+   the released binary at build time** (CI injects the supablock OAuth
    app's credentials from repo secrets, the same way `gh`/`gcloud` ship
-   theirs) — so on a released binary, plain `superblock login` needs zero
+   theirs) — so on a released binary, plain `supablock login` needs zero
    configuration.
 
    To use your own app instead: register it under your org (dashboard →
@@ -214,7 +214,7 @@ database passwords never belong in a profile.
    (ECDH P-256 + AES-256-GCM). Zero setup, works over SSH with
    `--no-browser`.
 
-3. **Token paste** — `superblock login --token sbp_...` always works.
+3. **Token paste** — `supablock login --token sbp_...` always works.
 
 From another shell:
 
@@ -265,7 +265,7 @@ Output is deterministic — JSON is pretty-printed with sorted keys — so
 The Management API exposes no row data, so table browsing reads through each
 project's **Data API** (PostgREST at `https://<ref>.supabase.co/rest/v1`).
 There is nothing to set up: every project already has a `database/` folder,
-populated on first read. No `db add`, no database password — superblock
+populated on first read. No `db add`, no database password — supablock
 fetches the key it needs from the same Management API endpoint that backs
 `api-keys/secret`.
 
@@ -284,8 +284,8 @@ guaranteed order). The default format is CSV; switch to JSON (or read a single
 page as either extension regardless of the default):
 
 ```bash
-superblock config set db_format json     # csv (default) | json
-superblock config set db_page_size 1000  # rows per file (≤ the project's PostgREST max_rows)
+supablock config set db_format json     # csv (default) | json
+supablock config set db_page_size 1000  # rows per file (≤ the project's PostgREST max_rows)
 cat .../database/public/users/rows-000000.json
 ```
 
@@ -295,7 +295,7 @@ JSON files are an array of row objects that keep the table's column order.
 
 ### Which key, and what you'll see
 
-By default superblock reads with the project's **`service_role` (secret)**
+By default supablock reads with the project's **`service_role` (secret)**
 key, which bypasses Row Level Security — so you see every row, the same view a
 direct database connection gave. It is fetched on demand (the same call
 `api-keys/secret` makes), used only in `GET`s to the Data API, and never
@@ -304,7 +304,7 @@ written to the tree.
 Prefer to browse under RLS with the public **`anon`** key instead? Set:
 
 ```bash
-superblock config set db_key publishable   # secret (default) | publishable
+supablock config set db_key publishable   # secret (default) | publishable
 ```
 
 With `publishable`, only rows your RLS policies allow the anon role to read
@@ -315,35 +315,35 @@ What shows up is what PostgREST exposes: the project's **exposed schemas**
 Non-exposed schemas are invisible, and if a project has the Data API disabled
 its `database/` folder simply errors on read. A project on a custom domain or
 self-hosted host can be pointed at it with the
-`SUPERBLOCK_DATA_API_URL_<REF>` environment variable.
+`SUPABLOCK_DATA_API_URL_<REF>` environment variable.
 
 ## Is the cache stale?
 
-`superblock refresh` drops the whole cache of a live mount; the next reads
+`supablock refresh` drops the whole cache of a live mount; the next reads
 re-fetch. To see whether a refresh would actually change anything without
 flushing:
 
 ```bash
-superblock refresh --check
+supablock refresh --check
 # Cache: 42 entries, 7 stale (past TTL).
-# Stale data present — run: superblock refresh
+# Stale data present — run: supablock refresh
 ```
 
 ## Commands
 
 ```
-superblock setup [profile]           one-command onboarding: profile + login + service
-superblock login                     browser login: OAuth2+PKCE, or dashboard session flow
-superblock login --token sbp_...     validate + store a pasted token instead
-superblock login --no-browser        print the login URL (SSH-friendly)
-superblock logout                    delete the credential (and revoke the OAuth grant)
-superblock status | whoami           auth, org count, mount state, rate limits
-superblock doctor                    environment checks with fix hints
-superblock config set|get|list       mountpoint, TTLs, timeouts, expose_secrets, oauth.*
-superblock mount [mountpoint]        mount in the foreground (default ~/Supabase)
-superblock unmount [mountpoint]      unmount from another shell
-superblock refresh                   drop the cache; next reads re-fetch
-superblock refresh --check           report cache staleness without flushing
+supablock setup [profile]           one-command onboarding: profile + login + service
+supablock login                     browser login: OAuth2+PKCE, or dashboard session flow
+supablock login --token sbp_...     validate + store a pasted token instead
+supablock login --no-browser        print the login URL (SSH-friendly)
+supablock logout                    delete the credential (and revoke the OAuth grant)
+supablock status | whoami           auth, org count, mount state, rate limits
+supablock doctor                    environment checks with fix hints
+supablock config set|get|list       mountpoint, TTLs, timeouts, expose_secrets, oauth.*
+supablock mount [mountpoint]        mount in the foreground (default ~/Supabase)
+supablock unmount [mountpoint]      unmount from another shell
+supablock refresh                   drop the cache; next reads re-fetch
+supablock refresh --check           report cache staleness without flushing
 ```
 
 Exit codes: `0` ok · `1` usage · `2` not authenticated · `3` API/network ·
@@ -354,17 +354,17 @@ Exit codes: `0` ok · `1` usage · `2` not authenticated · `3` API/network ·
 To have the mount come up at login and restart on failure:
 
 ```bash
-superblock config set mountpoint /mnt/supabase
-superblock service install     # systemd user unit (Linux) / launchd agent (macOS)
-superblock service status
-superblock service uninstall
+supablock config set mountpoint /mnt/supabase
+supablock service install     # systemd user unit (Linux) / launchd agent (macOS)
+supablock service status
+supablock service uninstall
 ```
 
 Everything is per-user — no root: the unit lands in
-`~/.config/systemd/user/superblock.service` (Linux) or
-`~/Library/LaunchAgents/io.github.filipecabaco.superblock.plist` (macOS)
-and runs `superblock mount` in the foreground under the service manager,
-which also gives you `systemctl --user status superblock` / log collection
+`~/.config/systemd/user/supablock.service` (Linux) or
+`~/Library/LaunchAgents/io.github.filipecabaco.supablock.plist` (macOS)
+and runs `supablock mount` in the foreground under the service manager,
+which also gives you `systemctl --user status supablock` / log collection
 for free. Stopping the service unmounts cleanly (SIGTERM handling).
 
 ## Caching and rate limits
@@ -373,30 +373,30 @@ Responses are cached in memory per endpoint (TTLs configurable:
 `ttl.orgs`=60s, `ttl.project`=30s, `ttl.health`=10s, `ttl.static`=300s), with
 single-flight de-duplication and negative caching, so `ls -R` costs a handful
 of requests, not hundreds. The Management API allows 120 requests/minute per
-user, tracked independently per project/organization — superblock records the
-`X-RateLimit-*` headers per scope (visible in `superblock status`) and on a
+user, tracked independently per project/organization — supablock records the
+`X-RateLimit-*` headers per scope (visible in `supablock status`) and on a
 `429` the filesystem degrades to `EAGAIN` (never hangs); request deadlines
 (`http_timeout_ms`, default 8000) turn slow calls into `EIO`.
-`superblock refresh` flushes the cache of a live mount.
+`supablock refresh` flushes the cache of a live mount.
 
 ## Security notes
 
-* The credential lives in `~/.config/superblock/credentials`, mode `0600`,
+* The credential lives in `~/.config/supablock/credentials`, mode `0600`,
   in a `0700` directory — a single-line PAT, or a JSON
   `{access_token, refresh_token, expires_at}` for OAuth, written atomically
   (tmp + rename) because Supabase refresh tokens are single-use. Tokens are
   never logged, never rendered into the tree, and `status` shows them
-  masked (`sbp_…f23a`). `SUPERBLOCK_TOKEN` overrides the stored credential
+  masked (`sbp_…f23a`). `SUPABLOCK_TOKEN` overrides the stored credential
   (CI escape hatch) — that is the only environment variable in play.
 * The OAuth token POSTs (`/v1/oauth/token`, `/v1/oauth/revoke`) are the
-  only non-GET requests superblock ever makes; they manage the OAuth
+  only non-GET requests supablock ever makes; they manage the OAuth
   session itself, never account resources. With read-only scopes on the
   app registration, read-only is enforced server-side.
 * The OAuth client id/secret identify the app, not you; in a distributed
   CLI they are not confidential (PKCE + the loopback-only redirect are
   what protect the flow).
 * `api-keys/secret` renders as
-  `REDACTED — run: superblock config set expose_secrets true` until you
+  `REDACTED — run: supablock config set expose_secrets true` until you
   explicitly opt in. `api-keys/publishable` is always shown. Note that the
   `database/` tree fetches and uses a key internally regardless of this
   setting (`service_role` by default, or `anon` with `db_key publishable`) —
@@ -408,15 +408,15 @@ user, tracked independently per project/organization — superblock records the
 
 ## Troubleshooting
 
-* **`superblock doctor`** checks `/dev/fuse`, unmount tools, file
+* **`supablock doctor`** checks `/dev/fuse`, unmount tools, file
   permissions and the compiled FUSE port, with a fix hint per failure.
 * **Stale mount** (`Transport endpoint is not connected`): run
-  `superblock mount` again — it recovers stale mounts automatically — or
+  `supablock mount` again — it recovers stale mounts automatically — or
   `fusermount3 -u <mountpoint>`. If the VM is killed (`kill -9`), the port
   process notices and unmounts by itself.
 * **Rate limited**: reads fail with `EAGAIN` (`Resource temporarily
-  unavailable`); `superblock status` shows the last-seen remaining budget.
-* Logs go to `~/.local/state/superblock/superblock.log` while mounted
+  unavailable`); `supablock status` shows the last-seen remaining budget.
+* Logs go to `~/.local/state/supablock/supablock.log` while mounted
   (`--verbose` for debug level). Tokens are scrubbed from log output.
 
 ## Development
@@ -442,8 +442,8 @@ above, with the CLI installed and the release prebuilt.
 
 The e2e suite runs hermetically by default: a local stub Management API
 serves canned fixtures, the supabase CLI is pointed at it with a custom
-`SUPABASE_PROFILE`, and superblock with `SUPERBLOCK_API_URL` (both are
-test-only escape hatches). Set `SUPERBLOCK_E2E_LIVE=1` and
+`SUPABASE_PROFILE`, and supablock with `SUPABLOCK_API_URL` (both are
+test-only escape hatches). Set `SUPABLOCK_E2E_LIVE=1` and
 `SUPABASE_ACCESS_TOKEN=sbp_…` to run the same read-only assertions against
 your real account instead.
 

@@ -1,4 +1,4 @@
-# Vendored from elixir-userfs. Modified for superblock: the port is spawned
+# Vendored from elixir-userfs. Modified for supablock: the port is spawned
 # with :spawn_executable (no shell splitting of the mount point), and
 # unmounting tries fusermount3/fusermount before umount so it works for
 # unprivileged users on Linux.

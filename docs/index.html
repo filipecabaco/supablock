@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="superblock — browse your Supabase account as a read-only FUSE filesystem. Quick guide and installation.">
-<title>superblock — your Supabase account, mounted</title>
+<meta name="description" content="supablock — browse your Supabase account as a read-only FUSE filesystem. Quick guide and installation.">
+<title>supablock — your Supabase account, mounted</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%233ecf8e' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z'/%3E%3C/svg%3E">
 <style>
   :root {
@@ -605,7 +605,7 @@
 
 <header class="top">
   <div class="wrap top-inner">
-    <span class="wordmark mono"><span class="tick">$</span> superblock</span>
+    <span class="wordmark mono"><span class="tick">$</span> supablock</span>
     <nav class="top-nav">
       <a href="#tree">The tree</a>
       <a href="#install">Install</a>
@@ -623,7 +623,7 @@
     <span class="eyebrow">Read-only FUSE filesystem · Elixir</span>
     <h1>Your Supabase account, <br>mounted at <span class="path mono">/mnt/supabase</span></h1>
     <p class="lede">
-      superblock mirrors the Supabase Management API as a browsable directory tree.
+      supablock mirrors the Supabase Management API as a browsable directory tree.
       Log in once, mount, and inspect <strong>organizations, projects, config, API keys,
       edge functions, storage buckets, auth providers and realtime</strong> — plus table
       rows as CSV or JSON — with the tools you already trust:
@@ -634,10 +634,10 @@
     <div class="term">
       <div class="term-bar">
         <span class="dot"></span><span class="dot"></span><span class="dot"></span>
-        <span class="title mono">superblock — zsh</span>
+        <span class="title mono">supablock — zsh</span>
         <button id="replay" type="button">replay</button>
       </div>
-      <div class="term-body" id="term" aria-label="Terminal demo of superblock"></div>
+      <div class="term-body" id="term" aria-label="Terminal demo of supablock"></div>
     </div>
   </div>
 
@@ -785,7 +785,7 @@
 <span class="p">$</span> MIX_ENV=prod mix release
 
 <span class="c"># put the launcher on your PATH</span>
-<span class="p">$</span> ln -sf "$PWD/bin/superblock" ~/.local/bin/superblock</pre>
+<span class="p">$</span> ln -sf "$PWD/bin/supablock" ~/.local/bin/supablock</pre>
       </div>
 
       <p class="body">
@@ -794,7 +794,7 @@
 
       <div class="code">
         <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
-        <pre><span class="p">$</span> superblock doctor
+        <pre><span class="p">$</span> supablock doctor
 <span class="p">✓</span> /dev/fuse present
 <span class="p">✓</span> unmount tool on PATH (fusermount3)
 <span class="p">✓</span> config dir mode 0700
@@ -814,7 +814,7 @@
           <span class="n">1</span>
           <div>
             <h3>Authenticate</h3>
-            <p>Released binaries carry the superblock OAuth app identity, so
+            <p>Released binaries carry the supablock OAuth app identity, so
                <span class="mono">login</span> just works: the OAuth2 flow — PKCE&nbsp;S256, browser
                consent, loopback callback — storing short-lived, scoped tokens that refresh
                automatically. Teams can override the app via config; without any OAuth identity it
@@ -822,14 +822,14 @@
                <span class="mono">--token sbp_…</span> always works.</p>
             <div class="code">
               <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
-              <pre><span class="p">$</span> superblock login
-Open this link in your browser to authorize superblock:
+              <pre><span class="p">$</span> supablock login
+Open this link in your browser to authorize supablock:
 
   https://api.supabase.com/v1/oauth/authorize?client_id=…&amp;code_challenge=…
 
 Waiting for the callback on http://localhost:53682/callback …
 <span class="p">✓</span> Logged in via OAuth — authenticated, 2 organizations found.
-  Stored in ~/.config/superblock/credentials (mode 0600).
+  Stored in ~/.config/supablock/credentials (mode 0600).
   Tokens are short-lived and refresh automatically.</pre>
             </div>
           </div>
@@ -846,13 +846,13 @@ Waiting for the callback on http://localhost:53682/callback …
                filesystem runs in the background and you can browse from the same shell.
                Use <span class="mono">--foreground</span> to block instead (useful when you
                want Ctrl-C to unmount). Logs go to
-               <span class="mono">~/.local/state/superblock/superblock.log</span>.</p>
+               <span class="mono">~/.local/state/supablock/supablock.log</span>.</p>
             <div class="code">
               <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
-              <pre><span class="p">$</span> superblock mount
+              <pre><span class="p">$</span> supablock mount
 Mounting at ~/Supabase (background).
-Log: ~/.local/state/superblock/superblock.log
-Check status: superblock status
+Log: ~/.local/state/supablock/supablock.log
+Check status: supablock status
 <span class="p">$</span> ls ~/Supabase/</pre>
             </div>
           </div>
@@ -868,7 +868,7 @@ Check status: superblock status
                applied; secrets and tokens never belong in a profile.</p>
             <div class="code">
               <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
-              <pre><span class="p">$</span> superblock setup https://team.example.com/superblock.json</pre>
+              <pre><span class="p">$</span> supablock setup https://team.example.com/supablock.json</pre>
             </div>
           </div>
         </div>
@@ -886,20 +886,20 @@ Check status: superblock status
         per-user service that comes up at login and restarts on failure — a
         <strong>systemd user unit</strong> on Linux, a <strong>launchd agent</strong> on macOS.
         No root: the unit lands in your home directory and reads the same config and credentials
-        as the CLI. Set a mountpoint first (<span class="mono">superblock config set mountpoint /mnt/supabase</span>).
+        as the CLI. Set a mountpoint first (<span class="mono">supablock config set mountpoint /mnt/supabase</span>).
       </p>
 
       <div class="code">
         <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
-        <pre><span class="p">$</span> superblock service install     <span class="c"># register + start at login</span>
-<span class="p">$</span> superblock service status      <span class="c"># is it installed and running?</span>
-<span class="p">$</span> superblock service uninstall   <span class="c"># remove it</span></pre>
+        <pre><span class="p">$</span> supablock service install     <span class="c"># register + start at login</span>
+<span class="p">$</span> supablock service status      <span class="c"># is it installed and running?</span>
+<span class="p">$</span> supablock service uninstall   <span class="c"># remove it</span></pre>
       </div>
 
       <p class="body">
         <span class="mono">service status</span> reports the unit path and live state; so does
-        <span class="mono">superblock status</span>. Because it runs under the OS service manager
-        you also get <span class="mono">systemctl --user status superblock</span> and journald logs
+        <span class="mono">supablock status</span>. Because it runs under the OS service manager
+        you also get <span class="mono">systemctl --user status supablock</span> and journald logs
         for free on Linux. Stopping the service unmounts cleanly.
       </p>
     </div>
@@ -982,7 +982,7 @@ Check status: superblock status
         password: every project already has a <span class="mono">database/</span> folder — one
         directory per exposed schema, one per table, rows paged into
         <span class="mono">.csv</span> (default) or <span class="mono">.json</span> files —
-        populated on first read with a key superblock fetches for you.
+        populated on first read with a key supablock fetches for you.
       </p>
 
       <div class="oneliner">
@@ -999,9 +999,9 @@ rows-000000.csv  rows-000500.csv  rows-001000.csv
         <p class="what"><strong>Format, page size, and which key to read with.</strong></p>
         <div class="code">
           <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
-          <pre><span class="p">$</span> superblock config set db_format json     <span class="c"># csv (default) | json</span>
-<span class="p">$</span> superblock config set db_page_size 1000  <span class="c"># rows per file (default 500)</span>
-<span class="p">$</span> superblock config set db_key publishable <span class="c"># secret (default) | publishable</span></pre>
+          <pre><span class="p">$</span> supablock config set db_format json     <span class="c"># csv (default) | json</span>
+<span class="p">$</span> supablock config set db_page_size 1000  <span class="c"># rows per file (default 500)</span>
+<span class="p">$</span> supablock config set db_key publishable <span class="c"># secret (default) | publishable</span></pre>
         </div>
       </div>
 
@@ -1026,17 +1026,17 @@ rows-000000.csv  rows-000500.csv  rows-001000.csv
             <tr><th>Command</th><th>What it does</th></tr>
           </thead>
           <tbody>
-            <tr><td><code>superblock setup [profile]</code></td><td>One-command onboarding: apply a shared team profile (URL or file), log in, offer the auto-start service.</td></tr>
-            <tr><td><code>superblock login</code></td><td>Browser login: OAuth2 + PKCE with scoped, auto-refreshing tokens (app identity baked into released binaries), dashboard session flow otherwise. <code>--token sbp_…</code> pastes a token; <code>--no-browser</code> just prints the URL.</td></tr>
-            <tr><td><code>superblock logout</code></td><td>Delete the credential and revoke the OAuth grant.</td></tr>
-            <tr><td><code>superblock status</code></td><td>Auth state (masked token), org count, mount state, last-seen rate limits.</td></tr>
-            <tr><td><code>superblock doctor</code></td><td>Environment checks with a fix hint per failure.</td></tr>
-            <tr><td><code>superblock config set|get|list</code></td><td>Mountpoint, cache TTLs, <code>http_timeout_ms</code>, <code>expose_secrets</code>, <code>db_format</code>, <code>db_page_size</code>, <code>db_key</code>.</td></tr>
-            <tr><td><code>superblock mount [--path dir] [dir]</code></td><td>Mount in the background and return immediately (default <code>~/Supabase</code>); recovers stale mounts automatically. <code>--foreground</code> blocks instead.</td></tr>
-            <tr><td><code>superblock unmount [dir]</code></td><td>Unmount from another shell.</td></tr>
-            <tr><td><code>superblock refresh</code></td><td>Flush the cache of a live mount; next reads re-fetch.</td></tr>
-            <tr><td><code>superblock refresh --check</code></td><td>Report cache staleness (total / past-TTL entries) without flushing.</td></tr>
-            <tr><td><code>superblock service install|uninstall|status</code></td><td>Auto-start the mount at login — systemd user unit (Linux) or launchd agent (macOS).</td></tr>
+            <tr><td><code>supablock setup [profile]</code></td><td>One-command onboarding: apply a shared team profile (URL or file), log in, offer the auto-start service.</td></tr>
+            <tr><td><code>supablock login</code></td><td>Browser login: OAuth2 + PKCE with scoped, auto-refreshing tokens (app identity baked into released binaries), dashboard session flow otherwise. <code>--token sbp_…</code> pastes a token; <code>--no-browser</code> just prints the URL.</td></tr>
+            <tr><td><code>supablock logout</code></td><td>Delete the credential and revoke the OAuth grant.</td></tr>
+            <tr><td><code>supablock status</code></td><td>Auth state (masked token), org count, mount state, last-seen rate limits.</td></tr>
+            <tr><td><code>supablock doctor</code></td><td>Environment checks with a fix hint per failure.</td></tr>
+            <tr><td><code>supablock config set|get|list</code></td><td>Mountpoint, cache TTLs, <code>http_timeout_ms</code>, <code>expose_secrets</code>, <code>db_format</code>, <code>db_page_size</code>, <code>db_key</code>.</td></tr>
+            <tr><td><code>supablock mount [--path dir] [dir]</code></td><td>Mount in the background and return immediately (default <code>~/Supabase</code>); recovers stale mounts automatically. <code>--foreground</code> blocks instead.</td></tr>
+            <tr><td><code>supablock unmount [dir]</code></td><td>Unmount from another shell.</td></tr>
+            <tr><td><code>supablock refresh</code></td><td>Flush the cache of a live mount; next reads re-fetch.</td></tr>
+            <tr><td><code>supablock refresh --check</code></td><td>Report cache staleness (total / past-TTL entries) without flushing.</td></tr>
+            <tr><td><code>supablock service install|uninstall|status</code></td><td>Auto-start the mount at login — systemd user unit (Linux) or launchd agent (macOS).</td></tr>
           </tbody>
         </table>
       </div>
@@ -1058,7 +1058,7 @@ rows-000000.csv  rows-000500.csv  rows-001000.csv
         <p>
           Every Management API request is a <code>GET</code> — there is no code path for anything
           else. The <code>database/</code> tree reads through the project's Data API (PostgREST)
-          with GET requests only, all generated by superblock. The FUSE layer exposes
+          with GET requests only, all generated by supablock. The FUSE layer exposes
           no mutating callbacks, and the mount is created with <code>-o ro</code>, so
           <code>touch</code>, <code>rm</code>, <code>mkdir</code> and every other write fails in the
           kernel with <code>EROFS</code> before it reaches userspace.
@@ -1067,15 +1067,15 @@ rows-000000.csv  rows-000500.csv  rows-001000.csv
 
       <ul class="notes">
         <li>Row browsing needs no database password or extra credential: the <code>database/</code>
-            tree reuses a key superblock fetches from the Management API — <code>service_role</code>
+            tree reuses a key supablock fetches from the Management API — <code>service_role</code>
             by default (bypasses RLS), or <code>anon</code> with <code>db_key publishable</code>. The
             key is used only for GETs to the Data API and is never written into the tree.</li>
-        <li>The token lives in <code>~/.config/superblock/credentials</code> (mode 0600, dir 0700),
+        <li>The token lives in <code>~/.config/supablock/credentials</code> (mode 0600, dir 0700),
             is never logged, and shows up masked (<code>sbp_…f23a</code>) in <code>status</code>.</li>
         <li><code>api-keys/secret</code> renders as
-            <code>REDACTED — run: superblock config set expose_secrets true</code> until you
+            <code>REDACTED — run: supablock config set expose_secrets true</code> until you
             explicitly opt in. The publishable key is always visible.</li>
-        <li><code>SUPERBLOCK_TOKEN</code> overrides the stored credential — the only environment
+        <li><code>SUPABLOCK_TOKEN</code> overrides the stored credential — the only environment
             variable in play, intended for CI.</li>
         <li>Request deadlines (<code>http_timeout_ms</code>, default 8000) turn slow calls into
             <code>EIO</code>; a rate-limit turns into <code>EAGAIN</code>. The filesystem never hangs.</li>
@@ -1091,7 +1091,7 @@ rows-000000.csv  rows-000500.csv  rows-001000.csv
       <details class="faq">
         <summary><svg class="icon" aria-hidden="true"><use href="#i-chevron-right"/></svg>"Transport endpoint is not connected"</summary>
         <div class="faq-body">
-          A stale mount from a crashed session. Run <code>superblock mount</code> again — it
+          A stale mount from a crashed session. Run <code>supablock mount</code> again — it
           recovers stale mounts automatically — or <code>fusermount3 -u &lt;mountpoint&gt;</code>.
           If the VM is killed outright, the port process notices and unmounts by itself.
         </div>
@@ -1101,14 +1101,14 @@ rows-000000.csv  rows-000500.csv  rows-001000.csv
         <summary><svg class="icon" aria-hidden="true"><use href="#i-chevron-right"/></svg>Reads fail with "Resource temporarily unavailable"</summary>
         <div class="faq-body">
           That's <code>EAGAIN</code>: the Management API rate-limited you. Wait a moment and retry;
-          <code>superblock status</code> shows the last-seen remaining budget per scope.
+          <code>supablock status</code> shows the last-seen remaining budget per scope.
         </div>
       </details>
 
       <details class="faq">
         <summary><svg class="icon" aria-hidden="true"><use href="#i-chevron-right"/></svg>Mount fails outright</summary>
         <div class="faq-body">
-          Run <code>superblock doctor</code>. It checks <code>/dev/fuse</code>, unmount tools,
+          Run <code>supablock doctor</code>. It checks <code>/dev/fuse</code>, unmount tools,
           file permissions and the compiled FUSE port, and prints a fix per failed check
           (exit code 4 if anything fails).
         </div>
@@ -1118,7 +1118,7 @@ rows-000000.csv  rows-000500.csv  rows-001000.csv
         <summary><svg class="icon" aria-hidden="true"><use href="#i-chevron-right"/></svg>Where are the logs?</summary>
         <div class="faq-body">
           The log path is printed every time you mount:
-          <code>~/.local/state/superblock/superblock.log</code>. Pass
+          <code>~/.local/state/supablock/supablock.log</code>. Pass
           <code>--verbose</code> to <code>mount</code> for debug level. Tokens are scrubbed from
           all log output.
         </div>
@@ -1129,7 +1129,7 @@ rows-000000.csv  rows-000500.csv  rows-001000.csv
 
 <footer>
   <div class="wrap">
-    <span class="mono">superblock v0.1 · Elixir + FUSE · MIT-licensed vendored ports</span>
+    <span class="mono">supablock v0.1 · Elixir + FUSE · MIT-licensed vendored ports</span>
     <span>An independent community tool — not affiliated with or endorsed by Supabase.</span>
   </div>
 </footer>
@@ -1137,8 +1137,8 @@ rows-000000.csv  rows-000500.csv  rows-001000.csv
 <script>
   // ---------- terminal demo ----------
   var TERM_SCRIPT = [
-    { t: "prompt", s: "superblock mount /mnt/supabase" },
-    { t: "out", s: "Mounting at <span class='p'>/mnt/supabase</span> (background).\nLog: ~/.local/state/superblock/superblock.log\nCheck status: superblock status\n" },
+    { t: "prompt", s: "supablock mount /mnt/supabase" },
+    { t: "out", s: "Mounting at <span class='p'>/mnt/supabase</span> (background).\nLog: ~/.local/state/supablock/supablock.log\nCheck status: supablock status\n" },
     { t: "prompt", s: "ls /mnt/supabase/organizations/my-org/projects/abcdefghijklmnopqrst" },
     { t: "out", s: "<span class='d'>api-keys</span>  <span class='d'>branches</span>  <span class='d'>config</span>  <span class='d'>functions</span>  <span class='d'>storage</span>  health  info.json\n" },
     { t: "prompt", s: "cat health" },
