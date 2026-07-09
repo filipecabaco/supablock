@@ -77,7 +77,7 @@ defmodule Superblock.Service do
 
     [Service]
     Type=simple
-    ExecStart=#{bin} mount
+    ExecStart=#{bin} mount --foreground
     Restart=on-failure
     RestartSec=3
 
@@ -124,6 +124,7 @@ defmodule Superblock.Service do
       <array>
         <string>#{bin}</string>
         <string>mount</string>
+        <string>--foreground</string>
       </array>
       <key>RunAtLoad</key><true/>
       <key>KeepAlive</key>
