@@ -1,0 +1,116 @@
+# Builds the single-file Burrito binaries per platform and attaches them to
+# the GitHub release, so neither users nor maintainers run make locally.
+#
+# The Linux binaries statically link libfuse3 (the Makefile's default when
+# libfuse3.a is present): they need no FUSE package on the target machine
+# beyond the kernel module and, for non-root mounts, fusermount3 — both ship
+# with every mainstream distro. The macOS binaries link the macFUSE dylib
+# dynamically: the kernel side of macFUSE cannot be bundled (Apple requires
+# the user to install and approve it), so the dylib that comes with that
+# install is the correct runtime dependency.
+
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  MIX_ENV: prod
+
+jobs:
+  linux:
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: x86_64
+          - runner: ubuntu-24.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install FUSE build dependencies
+        run: sudo apt-get update && sudo apt-get install -y libfuse3-dev fuse3 pkg-config xz-utils
+
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: "27.3"
+          elixir-version: "1.18.4"
+
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: "0.15.2"
+
+      - name: Build single-file binary
+        run: |
+          mix deps.get
+          mix release superblock_burrito
+
+      - name: Sanity-check the binary
+        run: |
+          BIN=burrito_out/superblock_burrito_native
+          "$BIN" help
+          "$BIN" doctor || true
+          mv "$BIN" "superblock-linux-${{ matrix.arch }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: superblock-linux-${{ matrix.arch }}
+          path: superblock-linux-${{ matrix.arch }}
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: superblock-linux-${{ matrix.arch }}
+
+  macos:
+    strategy:
+      matrix:
+        include:
+          - runner: macos-13
+            arch: x86_64
+          - runner: macos-14
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Installs headers + libfuse dylib (2.9 API); the kext itself is not
+      # loadable in CI, but linking does not need it.
+      - name: Install macFUSE and build dependencies
+        run: |
+          brew install --cask macfuse
+          brew install pkg-config xz
+
+      - name: Install Erlang/Elixir (.tool-versions)
+        uses: asdf-vm/actions/install@v3
+
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: "0.15.2"
+
+      - name: Build single-file binary
+        run: |
+          mix deps.get
+          mix release superblock_burrito
+
+      - name: Sanity-check the binary
+        run: |
+          BIN=burrito_out/superblock_burrito_native
+          "$BIN" help
+          mv "$BIN" "superblock-macos-${{ matrix.arch }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: superblock-macos-${{ matrix.arch }}
+          path: superblock-macos-${{ matrix.arch }}
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: superblock-macos-${{ matrix.arch }}

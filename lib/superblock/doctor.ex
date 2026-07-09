@@ -99,11 +99,31 @@ defmodule Superblock.Doctor do
         _any -> nil
       end
 
-    if path && File.exists?(path) do
-      {"efuse port binary compiled", :ok}
+    cond do
+      path == nil or not File.exists?(path) ->
+        {"efuse port binary compiled",
+         {:error, "rebuild with libfuse3-dev installed: mix deps.compile efuse --force"}}
+
+      missing_shared_libs?(path) ->
+        {"efuse port binary compiled",
+         {:error,
+          "the port is dynamically linked against a FUSE library that is not " <>
+            "installed here — install the fuse3 (Linux) / macFUSE (macOS) package, " <>
+            "or rebuild the port statically (the default when libfuse3.a is present)"}}
+
+      true ->
+        {"efuse port binary compiled", :ok}
+    end
+  end
+
+  # Linux only: a dynamically linked port needs its libfuse present.
+  defp missing_shared_libs?(path) do
+    with {:unix, :linux} <- :os.type(),
+         ldd when is_binary(ldd) <- System.find_executable("ldd"),
+         {out, 0} <- System.cmd(ldd, [path], stderr_to_stdout: true) do
+      String.contains?(out, "not found")
     else
-      {"efuse port binary compiled",
-       {:error, "rebuild with libfuse3-dev installed: mix deps.compile efuse --force"}}
+      _other -> false
     end
   end
 end

@@ -50,9 +50,14 @@ so both are vendored with fixes:
 
 `vendor/efuse` (C port, `c_src/efuse.c`):
 
-1. Ported libfuse2 (`FUSE_USE_VERSION 26`) → libfuse3 (31); the old Makefile
-   also linked `-lerl_interface` (removed in OTP 23) and hardcoded OTP-20
-   paths — none of which it actually used.
+1. Supports both the libfuse3 API (31, Linux default) and the libfuse 2.9
+   API (26) — the latter is what macFUSE and FUSE-T implement on macOS; the
+   Makefile picks via pkg-config (`fuse3` → `fuse` → `fuse-t`), overridable
+   with `SUPERBLOCK_FUSE_API=2|3`. On Linux the port statically links
+   libfuse3 when the archive exists (portable single binary; opt out with
+   `SUPERBLOCK_STATIC_FUSE=0`). The old Makefile also linked
+   `-lerl_interface` (removed in OTP 23) and hardcoded OTP-20 paths — none
+   of which it actually used.
 2. Forced **single-threaded** loop: the protocol is one synchronous
    conversation over a shared buffer; upstream ran fuse_main multithreaded,
    a latent race.

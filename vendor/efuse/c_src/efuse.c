@@ -7,7 +7,9 @@
 // 'efuse' is free software, licensed under the MIT license.
 //
 // Modified for superblock (https://github.com/filipecabaco/supablock):
-//   - ported from libfuse2 (FUSE_USE_VERSION 26) to libfuse3 (31)
+//   - supports both the libfuse3 API (31, Linux default) and the libfuse
+//     2.9 API (26) — the latter is what macFUSE and FUSE-T implement on
+//     macOS; the Makefile picks whichever is available
 //   - forced single-threaded FUSE loop; the port protocol below is a
 //     single synchronous conversation and is not thread safe
 //   - mounted read-only (-o ro) with attr/entry timeouts, so the kernel
@@ -37,6 +39,7 @@
 #include <signal.h>
 #include <pthread.h>
 #include <poll.h>
+#include <stdatomic.h>
 
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -45,10 +48,16 @@
 
 #include <syslog.h>
 
-#define FUSE_USE_VERSION 31
-
+#ifdef SUPERBLOCK_FUSE2
+#define FUSE_USE_VERSION 26
 #include <fuse.h>
 #include <fuse_lowlevel.h>
+#else
+#define FUSE_USE_VERSION 31
+#include <fuse.h>
+#include <fuse_lowlevel.h>
+#endif
+
 #include <errno.h>
 #include <fcntl.h>
 
@@ -66,9 +75,15 @@ static unsigned char * erlmsg = NULL;
 static size_t erlmsg_size = 0;
 
 
+#ifdef SUPERBLOCK_FUSE2
+static int fusecb_getattr(const char *, struct stat *);
+static int fusecb_readdir(const char *, void *, fuse_fill_dir_t, off_t,
+		struct fuse_file_info *);
+#else
 static int fusecb_getattr(const char *, struct stat *, struct fuse_file_info *);
 static int fusecb_readdir(const char *, void *, fuse_fill_dir_t, off_t,
 		struct fuse_file_info *, enum fuse_readdir_flags);
+#endif
 static int fusecb_read(const char *, char *, size_t, off_t, struct fuse_file_info *);
 static int fusecb_readlink(const char * path, char * buf, size_t);
 
@@ -85,12 +100,36 @@ static struct fuse_operations efuse_oper = {
 
 
 static struct fuse * global_fuse = NULL;
+static char * global_mountpoint = NULL;
+static atomic_flag unmounted = ATOMIC_FLAG_INIT;
+
+#ifdef SUPERBLOCK_FUSE2
+static struct fuse_chan * global_chan = NULL;
+#endif
+
+
+// Unmount exactly once, whichever thread gets here first. With the 2.9 API
+// fuse_unmount() destroys the channel, so a second call would be a
+// use-after-free; with fuse3 it is merely redundant.
+
+static void unmount_once(void) {
+
+	if (atomic_flag_test_and_set(&unmounted))
+		return;
+
+#ifdef SUPERBLOCK_FUSE2
+	fuse_unmount(global_mountpoint, global_chan);
+#else
+	fuse_unmount(global_fuse);
+#endif
+
+}
 
 
 // Watch the pipe from the Erlang VM; if it goes away (EOF/HUP) the VM died
-// or closed the port, so end the session and unmount. fuse_unmount() from
-// this thread wakes the main thread's blocked /dev/fuse read (ENODEV), so
-// the loop exits promptly even when no FS operation ever arrives again.
+// or closed the port, so end the session and unmount. Unmounting from this
+// thread wakes the main thread's blocked /dev/fuse read (ENODEV), so the
+// loop exits promptly even when no FS operation ever arrives again.
 
 static void * erlang_watchdog(void * arg) {
 
@@ -103,7 +142,7 @@ static void * erlang_watchdog(void * arg) {
 			syslog(LOG_NOTICE, "efuse[%d]: erlang VM went away, unmounting", getpid());
 			if (global_fuse != NULL) {
 				fuse_session_exit(fuse_get_session(global_fuse));
-				fuse_unmount(global_fuse);
+				unmount_once();
 			}
 			return NULL;
 		}
@@ -124,7 +163,7 @@ int main (int argc, char ** argv) {
 		syslog(LOG_ERR, "efuse[%d]: no mount point given", getpid());
 		exit(1);
 	}
-	char * mountpoint = argv[argc-1];
+	global_mountpoint = argv[argc-1];
 
 	erlmsg_size = BUFFER_INITIAL;
 	if ((erlmsg = malloc(erlmsg_size)) == NULL) {
@@ -147,16 +186,31 @@ int main (int argc, char ** argv) {
 	char * fuse_argv[] = { argv[0], "-o", "ro,attr_timeout=5,entry_timeout=5" };
 	struct fuse_args args = FUSE_ARGS_INIT(3, fuse_argv);
 
+#ifdef SUPERBLOCK_FUSE2
+	global_chan = fuse_mount(global_mountpoint, &args);
+	if (global_chan == NULL) {
+		syslog(LOG_ERR, "efuse[%d]: fuse mount %s failed", getpid(), global_mountpoint);
+		exit(1);
+	}
+
+	global_fuse = fuse_new(global_chan, &args, &efuse_oper, sizeof(efuse_oper), NULL);
+	if (global_fuse == NULL) {
+		syslog(LOG_ERR, "efuse[%d]: fuse_new failed", getpid());
+		fuse_unmount(global_mountpoint, global_chan);
+		exit(1);
+	}
+#else
 	global_fuse = fuse_new(&args, &efuse_oper, sizeof(efuse_oper), NULL);
 	if (global_fuse == NULL) {
 		syslog(LOG_ERR, "efuse[%d]: fuse_new failed", getpid());
 		exit(1);
 	}
 
-	if (fuse_mount(global_fuse, mountpoint) != 0) {
-		syslog(LOG_ERR, "efuse[%d]: fuse mount %s failed", getpid(), mountpoint);
+	if (fuse_mount(global_fuse, global_mountpoint) != 0) {
+		syslog(LOG_ERR, "efuse[%d]: fuse mount %s failed", getpid(), global_mountpoint);
 		exit(1);
 	}
+#endif
 
 	// SIGTERM/SIGINT/SIGHUP end the loop cleanly (libfuse handlers). Keep
 	// those signals blocked in the watchdog thread so a process-directed
@@ -175,12 +229,12 @@ int main (int argc, char ** argv) {
 
 	pthread_sigmask(SIG_UNBLOCK, &sigs, NULL);
 
-	syslog(LOG_NOTICE, "efuse[%d]: fuse mount %s", getpid(), mountpoint);
+	syslog(LOG_NOTICE, "efuse[%d]: fuse mount %s", getpid(), global_mountpoint);
 	int rc = fuse_loop(global_fuse);
-	syslog(LOG_NOTICE, "efuse[%d]: fuse umount %s (rc %d)", getpid(), mountpoint, rc);
+	syslog(LOG_NOTICE, "efuse[%d]: fuse umount %s (rc %d)", getpid(), global_mountpoint, rc);
 
 	fuse_remove_signal_handlers(fuse_get_session(global_fuse));
-	fuse_unmount(global_fuse);
+	unmount_once();
 	fuse_destroy(global_fuse);
 
 	exit(0);
@@ -344,12 +398,18 @@ static int erlang_roundtrip(unsigned int reqcode, const char * path, const char 
 
 // Implement the 'getattr' FUSE callback.
 
+#ifdef SUPERBLOCK_FUSE2
+static int fusecb_getattr(
+		const char * path,
+		struct stat * stbuf) {
+#else
 static int fusecb_getattr(
 		const char * path,
 		struct stat * stbuf,
 		struct fuse_file_info * fi) {
 
 	(void) fi;
+#endif
 
 	int replylen = erlang_roundtrip(EFUSE_REQUEST_GETATTR, path, "getattr");
 	if (replylen < 0)
@@ -380,6 +440,19 @@ static int fusecb_getattr(
 
 // Implement the 'readdir' FUSE callback.
 
+#ifdef SUPERBLOCK_FUSE2
+#define EFUSE_FILL(buf, name) filler(buf, name, NULL, 0)
+static int fusecb_readdir(
+		const char *path,
+		void *buf,
+		fuse_fill_dir_t filler,
+		off_t offset,
+		struct fuse_file_info *fi) {
+
+	(void) offset;
+	(void) fi;
+#else
+#define EFUSE_FILL(buf, name) filler(buf, name, NULL, 0, 0)
 static int fusecb_readdir(
 		const char *path,
 		void *buf,
@@ -391,16 +464,17 @@ static int fusecb_readdir(
 	(void) offset;
 	(void) fi;
 	(void) flags;
+#endif
 
 	int replylen = erlang_roundtrip(EFUSE_REQUEST_READDIR, path, "readdir");
 	if (replylen < 0)
 		return replylen;
 
 	// pass data in response back to FUSE
-	filler(buf, ".", NULL, 0, 0);
-	filler(buf, "..", NULL, 0, 0);
+	EFUSE_FILL(buf, ".");
+	EFUSE_FILL(buf, "..");
 	for (int i = 8; i < replylen; i += strlen((char *) erlmsg+i)+1) {
-		filler(buf, (char *) erlmsg+i, NULL, 0, 0);
+		EFUSE_FILL(buf, (char *) erlmsg+i);
 	}
 
 	return 0;

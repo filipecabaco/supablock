@@ -69,11 +69,38 @@ ls burrito_out/    # -> superblock_burrito_native (~5 MB)
 ```
 
 The binary self-extracts on first run and behaves exactly like the launcher
-(`superblock_burrito_native login`, `… mount`, and so on). Notes:
+(`superblock_burrito_native login`, `… mount`, and so on). The release
+workflow (`.github/workflows/release.yml`) builds these binaries per
+platform on tag pushes, so nobody needs a local toolchain — grab the
+artifact and run it.
 
-* The build targets the **native** platform only: the bundled FUSE port is a
-  C executable compiled on the build machine, so cross-compiled targets
-  would ship a broken port. Build each platform's binary on that platform.
+### What is (and isn't) inside the single binary
+
+FUSE has a userspace half and a kernel half, and only the first can travel
+with the binary:
+
+* **Linux — fully bundled.** The FUSE port statically links `libfuse3`
+  whenever the static archive is available (the default; opt out with
+  `SUPERBLOCK_STATIC_FUSE=0`). The shipped binary therefore needs **no
+  FUSE package installed**: the kernel module is part of every mainstream
+  kernel, and `fusermount3` (needed only for non-root mounts, and only
+  because it must be setuid — that's why it can't be bundled) ships by
+  default on all major distros.
+* **macOS — userspace API supported, kernel side must be installed.** The
+  port speaks the libfuse **2.9** API that both
+  [macFUSE](https://macfuse.github.io) and [FUSE-T](https://www.fuse-t.org)
+  implement (auto-detected via pkg-config at build time). What cannot be
+  bundled — by anyone — is the kernel extension/daemon itself: Apple
+  requires the user to install and approve it, which is why every macOS
+  FUSE app (rclone, Cryptomator, …) asks for macFUSE or FUSE-T as its one
+  prerequisite. Once either is installed, the superblock binary is
+  self-sufficient.
+
+More build notes:
+
+* The build targets the **native** platform only: the FUSE port is a C
+  executable compiled on the build machine, so cross-compiled targets
+  would ship a broken port. The CI matrix builds each platform natively.
 * Burrito normally downloads a precompiled ERTS; on build hosts without
   access to its CDN, point `BURRITO_ERTS_PATH` at an unpacked local OTP
   root (e.g. `/usr/lib/erlang`) to bundle the ERTS you built with.

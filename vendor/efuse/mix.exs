@@ -9,7 +9,9 @@ defmodule Mix.Tasks.Compile.EfuseMake do
   @moduledoc false
 
   def run(_args) do
-    case System.cmd("make", ["-C", "c_src"], stderr_to_stdout: true) do
+    # -B: the C build is cheap and the flags (API selection, static vs
+    # dynamic) come from the environment, which make's mtime check can't see.
+    case System.cmd("make", ["-B", "-C", "c_src"], stderr_to_stdout: true) do
       {_out, 0} ->
         {:ok, []}
 
