@@ -24,24 +24,93 @@ superblock just chooses not to). OAuth fixes both:
   anything. That upgrades hard rule #1 (read-only) from a client-side
   promise to a server-side guarantee.
 
-## Verified facts
+## Research: how Supabase and other CLIs actually do this
+
+### The official supabase CLI (read from source, v2.40.7)
+
+`supabase login` does **not** use OAuth. From `internal/login/login.go`:
+
+1. The CLI generates an ephemeral **ECDH P-256 keypair**, a session UUID,
+   and a token name derived from the device (`cli_user@host_hash`).
+2. It opens `https://supabase.com/dashboard/cli/login?session_id=…&
+   token_name=…&public_key=<hex>` (and always prints the URL as a
+   fallback).
+3. The logged-in dashboard mints a **regular PAT**, encrypts it with
+   AES-GCM under the ECDH shared secret, and shows the user a short
+   verification code.
+4. The user types the code into the CLI, which fetches
+   `GET api.supabase.com/platform/cli/login/{session_id}?device_code=…`,
+   decrypts the token locally, and saves it.
+
+Properties: no localhost server, no OAuth app, no client secret, works
+over SSH, end-to-end-encrypted token delivery. **Why superblock should
+not copy it:** it rides the private, undocumented `/platform/*` API (not
+`/v1`), so it can change without notice and is not an intended
+third-party surface; and it produces a full-power, long-lived PAT — no
+scopes, no expiry — which is exactly what we want to move away from.
+Ideas worth stealing regardless: device-derived token names, always
+printing the URL, and a code entered *into the CLI* as the
+session-binding step.
+
+### The supported third-party path: Supabase OAuth apps
+
+From the integration docs (`build-a-supabase-oauth-integration`):
 
 * Authorize: `GET https://api.supabase.com/v1/oauth/authorize` with
   `client_id`, `redirect_uri`, `response_type=code`, `state`, and PKCE
-  (`code_challenge`, `code_challenge_method=S256`; strongly recommended by
-  the docs).
+  (`code_challenge`, `code_challenge_method=S256` — "strongly
+  recommended").
 * Exchange/refresh: `POST https://api.supabase.com/v1/oauth/token` with
-  `grant_type=authorization_code` (+ `code_verifier`) or `refresh_token`.
-  The docs authenticate this call with client id + secret (basic auth).
-* OAuth apps are registered per-organization in the dashboard, with a
-  fixed `redirect_uri` and a scope selection (read/write per resource
-  group). Management API OAuth access tokens follow the
-  `sbp_oauth_<40 hex>` shape, so the existing masking/scrubbing patterns
-  extend naturally.
-* Francis: `use Francis, bandit_opts: [...]` gives a Plug/Bandit app with a
-  route DSL (`get "/callback", fn conn -> ... end`) and a supervisor
-  `child_spec/start` — startable and stoppable on demand, which is exactly
-  the shape of an ephemeral login callback server.
+  `grant_type=authorization_code` (+ `code_verifier`) or
+  `grant_type=refresh_token`. The docs authenticate this call with
+  **client id + secret via basic auth** — there is no documented
+  secret-less public-client mode, so a distributed CLI must embed the
+  secret (see security notes).
+* Access tokens are short-lived; **refresh tokens are single-use** (each
+  refresh returns a new one — the store must be updated atomically on
+  every refresh, and a crashed refresh must not lose the new token).
+* Users can revoke a specific OAuth app at any time; revocation kills all
+  its sessions and refresh tokens. Scopes are fixed at app registration
+  (read/write per resource group) — registering read-only makes the
+  read-only guarantee server-enforced.
+* Management API OAuth tokens follow the `sbp_oauth_<40 hex>` shape (the
+  official CLI's token regex accepts both), so existing
+  masking/scrubbing extends naturally.
+
+Note: Supabase also ships a separate per-project **OAuth 2.1 server**
+(Supabase Auth, for end-user apps/MCP). That is a different product; the
+Management API integration above is the relevant one here.
+
+### How the wider ecosystem does CLI auth
+
+* **Loopback + PKCE (RFC 8252)** — gcloud and most modern CLIs: temporary
+  HTTP server on 127.0.0.1, browser to the authorize endpoint, PKCE S256
+  mandatory. PKCE is what makes the loopback safe: a hostile local
+  process that races the port and steals the code cannot exchange it
+  without the verifier.
+* **Device authorization grant (RFC 8628)** — `gh auth login`'s default:
+  the CLI shows a user code, the user enters it at a verification URL on
+  any device. The only flow that works headless/over SSH — but Supabase's
+  Management API does not offer a device grant today.
+* **Vendor session-polling** — supabase CLI (above), Stripe and Fly do
+  similar browser+poll pairing. First-party only; depends on private
+  endpoints.
+* **The 2026 convergence** (gh, vercel, stripe, supabase): *try loopback
+  first, fall back to device flow when headless, always keep a
+  paste-a-token escape hatch.* Without a device grant at Supabase, our
+  version of that ladder is: loopback → `--no-browser` (print URL; the
+  redirect still needs to reach the user's machine, e.g.
+  `ssh -L 53682:localhost:53682`) → PAT paste.
+* **Token storage**: gh stores tokens in the OS keyring when available.
+  Worth a follow-up milestone: `secret-tool` (Linux) / Keychain (macOS)
+  with the 0600 file as fallback.
+
+### Francis fit
+
+`use Francis, bandit_opts: [...]` gives a Plug/Bandit app with a route DSL
+(`get "/callback", fn conn -> ... end`) and a supervisor `child_spec` —
+startable and stoppable on demand, which is exactly the shape of an
+ephemeral login callback server.
 
 ## Flow
 
@@ -78,7 +147,11 @@ superblock login
   within ~60s, refresh before the request (single-flight, same pattern as
   the cache); on a 401, refresh once and retry; a failed refresh maps to
   `EACCES` plus the "run: superblock login" hint. This deliberately
-  supersedes the v1 "no token refresh" out-of-scope line.
+  supersedes the v1 "no token refresh" out-of-scope line. Because Supabase
+  refresh tokens are **single-use**, the refresh must be serialized
+  through one process and the new pair written to disk (tmp file + rename)
+  *before* the old one is discarded — a crash mid-refresh must never
+  strand the user logged out.
 * **CLI**: `login` defaults to OAuth; `login --token sbp_…` keeps the PAT
   path; `--no-browser` prints the URL instead of spawning
   `xdg-open`/`open`. `logout` deletes the credential (and calls the revoke
@@ -123,9 +196,14 @@ edge functions, and (optionally) secrets. Drop the client id into
 
 ## Milestones
 
-1. Credentials v2 + Client refresh, stub-tested (no UI change yet).
+1. Credentials v2 + Client refresh (single-use-safe, atomic writes),
+   stub-tested (no UI change yet).
 2. Francis dep closure + `AuthCallback` + `OAuth`; `login` switches to the
    browser flow with `--token`/`--no-browser` fallbacks.
 3. StubServer OAuth endpoints + e2e extension.
 4. README / landing page / doctor (`doctor` learns to check the callback
    port is free).
+5. (Optional, later) OS keyring storage for the refresh token
+   (secret-tool / macOS Keychain, 0600 file fallback), and a hosted
+   token-exchange broker to un-embed the client secret — a one-endpoint
+   Francis app would do.
