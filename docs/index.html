@@ -587,6 +587,7 @@
     <nav class="top-nav">
       <a href="#install">Install</a>
       <a href="#quickstart">Quick start</a>
+      <a href="#service">Auto-start</a>
       <a href="#tables">Table data</a>
       <a href="#commands">Commands</a>
       <a href="#security">Security</a>
@@ -600,9 +601,8 @@
     <h1>Your Supabase account, <br>mounted at <span class="path mono">/mnt/supabase</span></h1>
     <p class="lede">
       superblock mirrors the Supabase Management API as a browsable directory tree.
-      Log in once through the Supabase dashboard, mount, and inspect organizations, projects,
-      config, keys and functions — and browse table rows as CSV or JSON — with the tools you
-      already trust —
+      Log in once, mount, and inspect organizations, projects, config, keys and functions —
+      and browse table rows as CSV or JSON — with the tools you already trust:
       <strong class="mono">ls</strong>, <strong class="mono">cat</strong>,
       <strong class="mono">grep</strong>, <strong class="mono">diff</strong>.
     </p>
@@ -651,10 +651,9 @@
       <p class="sec-label"><svg class="icon" aria-hidden="true"><use href="#i-arrow-down-tray"/></svg>Install</p>
       <h2>One line — or build from source</h2>
       <p class="body">
-        The quickest path is the installer: it downloads the single-file binary for your
-        platform from the GitHub releases (built by CI, no Erlang/Elixir needed). On Linux the
-        FUSE userspace library is built in; on macOS install
-        <a href="https://macfuse.github.io" rel="noopener">macFUSE</a> or
+        The quickest path is the installer: it downloads the single-file binary for your platform
+        from the GitHub releases — no Erlang/Elixir needed. FUSE is built in on Linux; on macOS
+        install <a href="https://macfuse.github.io" rel="noopener">macFUSE</a> or
         <a href="https://www.fuse-t.org" rel="noopener">FUSE-T</a> first.
       </p>
 
@@ -711,13 +710,10 @@
           <span class="n">1</span>
           <div>
             <h3>Authenticate</h3>
-            <p>With an OAuth app configured (<span class="mono">oauth.client_id</span> /
-               <span class="mono">oauth.client_secret</span>), <span class="mono">login</span>
-               runs the documented OAuth2 flow — PKCE&nbsp;S256, consent in the browser, a
-               loopback callback — and stores short-lived, scoped tokens that refresh
-               automatically. Without one, it falls back to the supabase-CLI-style dashboard
-               session flow (verification code, end-to-end-encrypted token delivery), and
-               <span class="mono">--token sbp_…</span> always works.</p>
+            <p>With an OAuth app configured, <span class="mono">login</span> runs the OAuth2 flow —
+               PKCE&nbsp;S256, browser consent, loopback callback — and stores short-lived, scoped
+               tokens that refresh automatically. Otherwise it falls back to the supabase-CLI-style
+               dashboard session flow, and <span class="mono">--token sbp_…</span> always works.</p>
             <div class="code">
               <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
               <pre><span class="p">$</span> superblock login
@@ -761,6 +757,34 @@ Mounted at /mnt/supabase. Ctrl-C to unmount.</pre>
           </div>
         </div>
       </div>
+    </div>
+  </section>
+
+  <section id="service">
+    <div class="wrap">
+      <p class="sec-label"><svg class="icon" aria-hidden="true"><use href="#i-arrow-path"/></svg>Auto-start</p>
+      <h2>Keep it mounted — as a background service</h2>
+      <p class="body">
+        <span class="mono">mount</span> runs in the foreground, but one command turns it into a
+        per-user service that comes up at login and restarts on failure — a
+        <strong>systemd user unit</strong> on Linux, a <strong>launchd agent</strong> on macOS.
+        No root: the unit lands in your home directory and reads the same config and credentials
+        as the CLI. Set a mountpoint first (<span class="mono">superblock config set mountpoint /mnt/supabase</span>).
+      </p>
+
+      <div class="code">
+        <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
+        <pre><span class="p">$</span> superblock service install     <span class="c"># register + start at login</span>
+<span class="p">$</span> superblock service status      <span class="c"># is it installed and running?</span>
+<span class="p">$</span> superblock service uninstall   <span class="c"># remove it</span></pre>
+      </div>
+
+      <p class="body">
+        <span class="mono">service status</span> reports the unit path and live state; so does
+        <span class="mono">superblock status</span>. Because it runs under the OS service manager
+        you also get <span class="mono">systemctl --user status superblock</span> and journald logs
+        for free on Linux. Stopping the service unmounts cleanly.
+      </p>
     </div>
   </section>
 
@@ -897,13 +921,12 @@ rows-000000.csv  rows-000500.csv  rows-001000.csv
       <div class="guarantee">
         <h3><svg class="icon icon-lg" aria-hidden="true"><use href="#i-lock-closed"/></svg> The write path does not exist</h3>
         <p>
-          Every Management API request superblock makes is a <code>GET</code> — there is no code
-          path for anything else. The optional <code>database/</code> tree connects directly to
-          Postgres, where the only statements it issues are <code>SELECT</code> and
-          <code>information_schema</code> reads, all generated by superblock and never taken from
-          you. The FUSE layer exposes no mutating callbacks, and the mount itself is created with
-          <code>-o ro</code>, so <code>touch</code>, <code>rm</code>, <code>mkdir</code> and every
-          other write fails in the kernel with <code>EROFS</code> before it ever reaches userspace.
+          Every Management API request is a <code>GET</code> — there is no code path for anything
+          else. The optional <code>database/</code> tree issues only <code>SELECT</code> and
+          <code>information_schema</code> reads, all generated by superblock. The FUSE layer exposes
+          no mutating callbacks, and the mount is created with <code>-o ro</code>, so
+          <code>touch</code>, <code>rm</code>, <code>mkdir</code> and every other write fails in the
+          kernel with <code>EROFS</code> before it reaches userspace.
         </p>
       </div>
 
