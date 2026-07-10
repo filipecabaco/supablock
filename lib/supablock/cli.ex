@@ -762,8 +762,18 @@ defmodule Supablock.CLI do
     ErlangError -> throw(:epipe)
   end
 
+  # Tree output is bytes, not chardata. A unicode-mode stdout device (the
+  # default under noshell since OTP 26, and whenever the launcher sets it)
+  # re-encodes binwrite's latin1-typed bytes, double-encoding every UTF-8
+  # body. Byte-oriented mode makes writes pass through verbatim.
+  defp raw_stdout! do
+    _ = :io.setopts(:standard_io, encoding: :latin1)
+    :ok
+  end
+
   defp ls(args) do
     with :authed <- require_auth() do
+      raw_stdout!()
       path = tree_path(List.first(args) || "/")
 
       case Tree.kind(path) do
@@ -799,6 +809,8 @@ defmodule Supablock.CLI do
 
       paths ->
         with :authed <- require_auth() do
+          raw_stdout!()
+
           paths
           |> expand_stdin_paths(null?)
           |> Enum.reduce_while(0, fn path, _ok ->
@@ -865,6 +877,7 @@ defmodule Supablock.CLI do
   defp head_tail(mode, args) do
     with :authed <- require_auth(),
          {:ok, count, paths} <- parse_head_tail(mode, args) do
+      raw_stdout!()
       header? = length(paths) > 1
 
       paths
@@ -951,6 +964,8 @@ defmodule Supablock.CLI do
   defp find(args) do
     with :authed <- require_auth(),
          {:ok, start, opts} <- parse_find(args) do
+      raw_stdout!()
+
       Walk.reduce(start, opts.max_depth, 0, fn
         {:error, path, reason}, code ->
           max(code, path_error(path, reason))
@@ -1031,6 +1046,8 @@ defmodule Supablock.CLI do
     with :authed <- require_auth(),
          {:ok, pattern, paths, opts} <- parse_grep(args),
          {:ok, regex} <- compile_grep_pattern(pattern, opts) do
+      raw_stdout!()
+
       # grep(1) prefixes matches with the file name unless the operand is
       # one explicit file.
       prefix? =
