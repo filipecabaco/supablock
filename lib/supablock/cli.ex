@@ -829,16 +829,29 @@ defmodule Supablock.CLI do
         IO.puts(:stderr, "docker not found on PATH — install Docker, or run supablock natively.")
         4
 
-      not match?({:ok, _columns}, :io.columns()) ->
-        IO.puts(:stderr, "supablock docker is interactive and needs a terminal.")
-        4
-
       true ->
-        # Hand docker the real terminal: BEAM port pipes cannot carry a TTY,
-        # and both the login prompt and the mounted shell need one.
-        cmd = Enum.map_join(["docker" | docker_argv()], " ", &sh_escape/1)
-        {_out, status} = System.cmd("sh", ["-c", cmd <> " </dev/tty >/dev/tty 2>/dev/tty"])
-        status
+        run_docker(docker_argv())
+    end
+  end
+
+  # Hand docker our own terminal. `System.cmd` and default ports connect the
+  # child to pipes (no TTY), and `/dev/tty` is unreachable from inside a
+  # Burrito binary (opening it fails with "Device not configured"). A
+  # `:nouse_stdio` port is the way through: it moves the port's own plumbing
+  # to fds 3/4 and lets the spawned program inherit our stdin/stdout/stderr —
+  # which, because Burrito execs the BEAM with -noshell, are the real
+  # terminal. docker -it therefore drives the terminal directly.
+  defp run_docker(argv) do
+    docker = System.find_executable("docker")
+
+    port =
+      Port.open(
+        {:spawn_executable, docker},
+        [:nouse_stdio, :exit_status, args: argv]
+      )
+
+    receive do
+      {^port, {:exit_status, status}} -> status
     end
   end
 

@@ -649,15 +649,16 @@ defmodule Supablock.CLITest do
       assert stderr =~ "docker not found on PATH"
     end
 
-    test "without a terminal it refuses politely" do
-      # capture_io swaps the group leader for a StringIO, so :io.columns/0
-      # fails — exactly the no-TTY condition the command checks for.
+    # The spawn path itself: a :nouse_stdio port lets docker inherit our
+    # stdio (the terminal, in the real binary) and we propagate its exit
+    # status. A fake `docker` that just exits with a code proves the wiring.
+    test "propagates the docker exit status" do
       dir =
         Path.join(System.tmp_dir!(), "supablock-fakedocker-#{System.unique_integer([:positive])}")
 
       File.mkdir_p!(dir)
       docker = Path.join(dir, "docker")
-      File.write!(docker, "#!/bin/sh\nexit 0\n")
+      File.write!(docker, "#!/bin/sh\nexit 7\n")
       File.chmod!(docker, 0o755)
       original_path = System.get_env("PATH")
       System.put_env("PATH", dir <> ":" <> original_path)
@@ -667,8 +668,7 @@ defmodule Supablock.CLITest do
         File.rm_rf!(dir)
       end)
 
-      stderr = capture_io(:stderr, fn -> assert CLI.run(["docker"]) == 4 end)
-      assert stderr =~ "needs a terminal"
+      assert CLI.run(["docker"]) == 7
     end
   end
 end
