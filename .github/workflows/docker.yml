@@ -17,10 +17,7 @@ name: docker
 
 on:
   push:
-    # TEMP: the feature branch is listed only to verify this workflow before
-    # it reaches main (the PUSH guard below keeps Docker Hub untouched);
-    # remove it when the branch merges.
-    branches: [main, claude/docker-containerization-ci-b9z4lv]
+    branches: [main]
     tags: ["v*"]
   workflow_dispatch:
 

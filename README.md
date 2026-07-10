@@ -101,7 +101,7 @@ supablock docker    # assembles the exact docker run above and drops you in
 and credentials volume, and a set `SUPABLOCK_TOKEN` is forwarded into the
 container (skipping the login flow).
 
-The image is multi-arch (amd64/arm64), Alpine-based and ~100 MB; pushes to
+The image is multi-arch (amd64/arm64), Alpine-based and ~32 MB; pushes to
 `main` refresh `filipecabaco/supablock:latest` and version tags publish
 `:X.Y.Z` (`.github/workflows/docker.yml`).
 
