@@ -117,6 +117,7 @@ defmodule Supablock.CLI do
     # `release eval` boots a clean node: the :supablock application (cache
     # tables and all) is not started until we ask.
     {:ok, _apps} = Application.ensure_all_started(:supablock)
+    stdio_opts = :io.getopts(:standard_io)
 
     try do
       dispatch(argv)
@@ -124,8 +125,24 @@ defmodule Supablock.CLI do
       # The downstream reader closed the pipe (supablock cat … | head -1).
       # Coreutils die of SIGPIPE here; mirror that as a quiet 128+SIGPIPE.
       :epipe -> 141
+    after
+      # Undo raw_stdout!/0: on OTP 26+ the io server behind stdout can be
+      # shared with other standard devices, so a leaked latin1 flip would
+      # outlive the command (in tests, it bled into ExUnit's captures).
+      restore_stdio(stdio_opts)
     end
   end
+
+  defp restore_stdio(opts) when is_list(opts) do
+    case List.keyfind(opts, :encoding, 0) do
+      {:encoding, encoding} -> _ = :io.setopts(:standard_io, encoding: encoding)
+      nil -> :ok
+    end
+
+    :ok
+  end
+
+  defp restore_stdio(_error), do: :ok
 
   defp dispatch(argv) do
     case argv do
@@ -860,7 +877,7 @@ defmodule Supablock.CLI do
         # trouble; kind (resolution only, no render) tells them apart.
         case Tree.kind(path) do
           {:ok, :dir} ->
-            IO.puts(:stderr, "Is a directory: #{path}")
+            err("Is a directory: #{path}")
             {:error, 1}
 
           _not_a_dir ->
@@ -916,7 +933,7 @@ defmodule Supablock.CLI do
       {:error, :eio} ->
         case Tree.kind(path) do
           {:ok, :dir} ->
-            IO.puts(:stderr, "Is a directory: #{path}")
+            err("Is a directory: #{path}")
             {:error, 1}
 
           _not_a_dir ->
@@ -1261,23 +1278,28 @@ defmodule Supablock.CLI do
   # and shell-ish (".", "./x") spellings; the Router ignores duplicate slashes.
   defp tree_path(path), do: Walk.router_path(path)
 
+  # These can fire while raw_stdout!/0 has the io server in byte mode, so
+  # they write bytes (never chardata needing transcoding) and stick to
+  # ASCII text; only `path` can carry non-ASCII, and bytes pass through.
+  defp err(line), do: IO.binwrite(:standard_error, [line, ?\n])
+
   defp path_error(path, :enoent) do
-    IO.puts(:stderr, "No such path: #{path}")
+    err("No such path: #{path}")
     1
   end
 
   defp path_error(path, :eacces) do
-    IO.puts(:stderr, "Access denied for #{path} — run: supablock login")
+    err("Access denied for #{path} - run: supablock login")
     2
   end
 
   defp path_error(path, :eagain) do
-    IO.puts(:stderr, "Rate limited while reading #{path} — try again shortly.")
+    err("Rate limited while reading #{path} - try again shortly.")
     3
   end
 
   defp path_error(path, _reason) do
-    IO.puts(:stderr, "API error reading #{path}")
+    err("API error reading #{path}")
     3
   end
 
