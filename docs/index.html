@@ -815,23 +815,21 @@
   <section id="docker">
     <div class="wrap">
       <p class="sec-label"><svg class="icon" aria-hidden="true"><use href="#i-cube"/></svg>Docker</p>
-      <h2>Or skip the install — one <span class="mono">docker run</span></h2>
+      <h2>One command — <span class="mono">supablock docker</span></h2>
       <p class="body">
         The <a href="https://hub.docker.com/r/filipecabaco/supablock" rel="noopener">filipecabaco/supablock</a>
         image needs nothing on your machine but Docker: it logs you in, mounts your account inside
         the container, and drops you into a shell at <span class="mono">/supabase</span> — with
         <span class="mono">ls</span>, <span class="mono">cat</span>, <span class="mono">grep</span>,
         <span class="mono">find</span> and <span class="mono">diff</span> ready to go. Exiting the
-        shell unmounts and removes the container.
+        shell unmounts and removes the container. <span class="mono">supablock docker</span>
+        assembles the whole invocation for you — volume, FUSE flags, TTY — so you never have to
+        remember the plumbing.
       </p>
 
       <div class="code">
         <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
-        <pre><span class="p">$</span> docker run -it --rm \
-    --device /dev/fuse --cap-add SYS_ADMIN \
-    --security-opt apparmor=unconfined \
-    -v supablock-config:/root/.config/supablock \
-    filipecabaco/supablock</pre>
+        <pre><span class="p">$</span> supablock docker</pre>
       </div>
 
       <div class="facts">
@@ -859,9 +857,18 @@
       </div>
 
       <p class="body">
-        Already have the binary? <span class="mono">supablock docker</span> assembles that whole
-        command for you — volume, FUSE flags, TTY — and drops you straight into the session.
+        No binary yet? That single command expands to a plain <span class="mono">docker run</span>
+        you can copy anywhere — nothing but Docker required:
       </p>
+
+      <div class="code">
+        <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
+        <pre><span class="p">$</span> docker run -it --rm \
+    --device /dev/fuse --cap-add SYS_ADMIN \
+    --security-opt apparmor=unconfined \
+    -v supablock-config:/root/.config/supablock \
+    filipecabaco/supablock</pre>
+      </div>
 
       <p class="body">
         The image is Alpine-based, multi-arch (amd64/arm64) and rebuilt by CI:
