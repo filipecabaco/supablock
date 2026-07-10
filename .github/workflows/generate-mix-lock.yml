@@ -1,7 +1,11 @@
 name: generate-mix-lock
 
 on:
-  workflow_dispatch:
+  push:
+    branches:
+      - copilot/add-mix-lock-file
+    paths-ignore:
+      - mix.lock
 
 jobs:
   generate:
