@@ -163,11 +163,26 @@ supablock grep -l '"disable_signup": false' organizations/my-org
 
 `find` and `grep` walk directories recursively (`-maxdepth` bounds the
 walk); `grep` exits `1` when nothing matched, like grep(1), and flags
-binary files instead of dumping bytes. This is the right mode for
-restricted environments (containers, CI, agent sandboxes) and targeted
-checks. For sustained exploration, prefer a real mount — each invocation
-is a fresh process with a cold cache, while a mount shares one cache
-across all reads.
+binary files instead of dumping bytes. Commands connect with ordinary
+shell pipes — `find -print0` pairs with `cat -0 -`, and `cat -` reads
+paths from stdin as they arrive:
+
+```bash
+supablock find organizations/my-org -type f -name '*.json' | supablock cat -
+```
+
+This is the right mode for restricted environments (containers, CI, agent
+sandboxes). For many reads, share one warm cache across invocations:
+`supablock serve` starts a small daemon (no FUSE, no privileges — just the
+cache), and every `ls`/`cat`/`find`/`grep` on the machine automatically
+reads through it while it runs. A live mount serves the same role.
+`SUPABLOCK_DIRECT=1` forces direct API reads.
+
+```bash
+supablock serve &            # or: supablock mount
+supablock grep -l '"disable_signup": false' organizations/my-org
+supablock serve stop
+```
 
 ## Example one-liners
 
@@ -231,9 +246,12 @@ supablock config set|get|list       mountpoint, TTLs, timeouts, expose_secrets, 
 supablock mount [mountpoint]        mount in the foreground (default ~/Supabase)
 supablock unmount [mountpoint]      unmount from another shell
 supablock ls|cat <path>             read the tree straight off the API (no mount)
+                                    cat -: paths from stdin; -0: NUL-delimited
 supablock head|tail [-n N] <path>   first/last lines of tree files (no mount)
-supablock find [path] [filters]     walk the tree; -type f|d, -name <glob>, -maxdepth N
+supablock find [path] [filters]     walk the tree; -type f|d, -name <glob>, -maxdepth N,
+                                    -print0
 supablock grep [-iln] <pat> [path]  search file contents; dirs recurse, exit 1 = no match
+supablock serve [stop]              mountless cache daemon: ls/cat/find/grep reuse it
 supablock refresh [--check]         drop the cache (or report staleness) 
 supablock service install|status|uninstall   auto-start at login (systemd/launchd)
 ```
@@ -252,7 +270,9 @@ output, and the filesystem shape means existing file tools (or plain
 * **Agent skill** — `npx skills add filipecabaco/supablock` teaches an agent
   to get the tool, authenticate, and run the common checks.
 * **No-mount reads** — `supablock ls|cat|head|tail|find|grep` work in any
-  sandbox (no FUSE device, no privileges) and honour `SUPABLOCK_TOKEN`:
+  sandbox (no FUSE device, no privileges) and honour `SUPABLOCK_TOKEN`;
+  `supablock serve &` first gives every subsequent read one shared warm
+  cache, still with no FUSE:
 
   ```bash
   docker run --rm -e SUPABLOCK_TOKEN=sbp_... filipecabaco/supablock \

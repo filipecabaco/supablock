@@ -65,12 +65,35 @@ supablock grep -in 'site_url' organizations/<org>/projects/<ref>/config
 supablock head -n 20 organizations/<org>/projects/<ref>/database/public/users/rows-000000.csv
 ```
 
-`find` takes `-type f|d`, `-name <glob>` and `-maxdepth <n>`; `grep` takes
-`-i` (ignore case), `-l` (paths only), `-n` (line numbers) and
+`find` takes `-type f|d`, `-name <glob>`, `-maxdepth <n>` and `-print0`;
+`grep` takes `-i` (ignore case), `-l` (paths only), `-n` (line numbers) and
 `--maxdepth <n>`, and exits `1` when nothing matched — branch on that like
 you would with grep(1). Both print paths you can feed straight back to
-`supablock cat`. Keep walks scoped (a start path plus `-maxdepth`) — an
-unbounded walk of a big account burns the 120 req/min budget.
+`supablock cat`, including through a pipe — `cat -` reads paths from stdin
+(`-0` pairs with `find -print0` for odd names):
+
+```bash
+supablock find organizations/<org> -type f -name '*.json' | supablock cat -
+```
+
+Keep walks scoped (a start path plus `-maxdepth`) — an unbounded walk of a
+big account burns the 120 req/min budget.
+
+## Batch reads: share one warm cache
+
+Each supablock invocation normally starts with a cold cache. Before a
+burst of reads, start the mountless cache daemon (no FUSE, no privileges):
+
+```bash
+supablock serve &            # every ls/cat/find/grep now reuses its cache
+# ... run your checks ...
+supablock serve stop
+```
+
+While it runs, all supablock reads on the machine resolve through it
+automatically (a live `supablock mount` works the same way), so repeated
+listings and walks cost one set of API requests instead of one per
+invocation. `SUPABLOCK_DIRECT=1` opts a command out.
 
 If FUSE **is** available (e.g. the Docker image run with
 `--device /dev/fuse --cap-add SYS_ADMIN --security-opt apparmor=unconfined`),

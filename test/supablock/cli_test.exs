@@ -783,6 +783,86 @@ defmodule Supablock.CLITest do
       end
     end
 
+    test "cat - reads paths from stdin, one per line (find | cat - pipelines)" do
+      input = "#{@proj_base}/health\n#{@proj_base}/config/auth.json\n"
+
+      output =
+        capture_io(input, fn ->
+          assert CLI.run(["cat", "-"]) == 0
+        end)
+
+      assert output =~ "db: healthy"
+      assert output =~ "site_url"
+    end
+
+    test "cat -0 - reads NUL-delimited paths (find -print0 pairing)" do
+      input = "#{@proj_base}/health" <> <<0>> <> "#{@proj_base}/config/auth.json" <> <<0>>
+
+      output =
+        capture_io(input, fn ->
+          assert CLI.run(["cat", "-0", "-"]) == 0
+        end)
+
+      assert output =~ "db: healthy"
+      assert output =~ "site_url"
+    end
+
+    test "find -print0 emits NUL-delimited paths" do
+      output =
+        capture_io(fn ->
+          assert CLI.run([
+                   "find",
+                   "organizations/org-alpha",
+                   "-maxdepth",
+                   "1",
+                   "-type",
+                   "f",
+                   "-print0"
+                 ]) == 0
+        end)
+
+      assert output ==
+               Enum.join(
+                 [
+                   "organizations/org-alpha/info.json",
+                   "organizations/org-alpha/members.json",
+                   "organizations/org-alpha/regions.json"
+                 ],
+                 <<0>>
+               ) <> <<0>>
+    end
+
+    test "CLI reads work end-to-end through a running daemon" do
+      {:ok, _pid} = Supablock.Control.start(nil)
+      on_exit(fn -> Supablock.Control.stop() end)
+
+      assert capture_io(fn -> assert CLI.run(["ls", "organizations"]) == 0 end) ==
+               "org-alpha\norg-beta\n"
+
+      assert capture_io(fn ->
+               assert CLI.run(["cat", "#{@proj_base}/health"]) == 0
+             end) =~ "db: healthy"
+
+      assert capture_io(fn ->
+               assert CLI.run(["grep", "-l", "site_url", "#{@proj_base}/config"]) == 0
+             end) == "#{@proj_base}/config/auth.json\n"
+    end
+
+    # `serve stop` against a live daemon is not exercised here: the daemon
+    # answers by stopping the VM, which would take the test node with it.
+    test "serve refuses to double-start" do
+      {:ok, _pid} = Supablock.Control.start(nil)
+      on_exit(fn -> Supablock.Control.stop() end)
+
+      stderr = capture_io(:stderr, fn -> assert CLI.run(["serve"]) == 1 end)
+      assert stderr =~ "already running"
+    end
+
+    test "serve stop without a daemon says so" do
+      stderr = capture_io(:stderr, fn -> assert CLI.run(["serve", "stop"]) == 1 end)
+      assert stderr =~ "No supablock daemon running."
+    end
+
     test "head on a directory says so and exits 1" do
       stderr =
         capture_io(:stderr, fn ->

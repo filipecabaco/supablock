@@ -10,10 +10,11 @@ defmodule Supablock.CLI do
       supablock mount [--path <dir>] [dir] [--foreground] [--verbose]
       supablock unmount [mountpoint]
       supablock ls [path]
-      supablock cat <path> [path...]
+      supablock cat [-0] <path|-> [path...]
       supablock head|tail [-n <count>] <path> [path...]
-      supablock find [path] [-type f|d] [-name <glob>] [-maxdepth <n>]
+      supablock find [path] [-type f|d] [-name <glob>] [-maxdepth <n>] [-print0]
       supablock grep [-iln] [--maxdepth <n>] <pattern> [path...]
+      supablock serve [stop]
       supablock refresh [--check]
       supablock help
 
@@ -34,9 +35,9 @@ defmodule Supablock.CLI do
     OAuth,
     Paths,
     Profile,
-    Router,
     Service,
     Signals,
+    Tree,
     Walk
   }
 
@@ -62,14 +63,19 @@ defmodule Supablock.CLI do
     supablock unmount [mountpoint]        Unmount a running supablock
     supablock ls [path]                 List a tree directory straight off the API (no mount)
     supablock cat <path> [path...]      Print tree file(s) straight off the API (no mount)
+                                        "-" reads paths from stdin (find … | cat -);
+                                        -0 makes stdin NUL-delimited (find -print0)
     supablock head <path> [path...]     First lines of tree file(s); -n <count>, default 10
     supablock tail <path> [path...]     Last lines of tree file(s); -n <count>, default 10
     supablock find [path]               Walk the tree, print each path (no mount)
-                                        Filters: -type f|d, -name <glob>, -maxdepth <n>
+                                        Filters: -type f|d, -name <glob>, -maxdepth <n>;
+                                        -print0 for NUL-delimited output
     supablock grep <pattern> [path...]  Search file contents (no mount); directories
                                         recurse. -i ignore case, -l paths only,
                                         -n line numbers, --maxdepth <n>.
                                         Exits 1 when nothing matches, like grep(1)
+    supablock serve                     Serve a shared warm cache for ls/cat/find/grep
+                                        (no FUSE needed; stop with: supablock serve stop)
     supablock refresh                   Flush the cache of a mounted supablock
     supablock refresh --check           Report cache staleness without flushing
     supablock service install           Auto-start the mount at login (systemd/launchd)
@@ -142,6 +148,7 @@ defmodule Supablock.CLI do
       ["tail" | rest] -> head_tail(:tail, rest)
       ["find" | rest] -> find(rest)
       ["grep" | rest] -> grep(rest)
+      ["serve" | rest] -> serve(rest)
       ["refresh" | rest] -> refresh(rest)
       ["service" | rest] -> service(rest)
       [unknown | _rest] -> usage_error("Unknown command: #{unknown}")
@@ -489,16 +496,22 @@ defmodule Supablock.CLI do
   end
 
   defp print_mount_status do
-    if File.exists?(Paths.control_socket()) do
-      mountpoint =
-        case File.read(Paths.mount_info_file()) do
-          {:ok, body} -> String.trim(body)
-          {:error, _reason} -> "(unknown)"
-        end
+    cond do
+      not File.exists?(Paths.control_socket()) ->
+        IO.puts("Mounted: no")
 
-      IO.puts("Mounted: yes, at #{mountpoint}")
-    else
-      IO.puts("Mounted: no")
+      File.exists?(Paths.mount_info_file()) ->
+        mountpoint =
+          case File.read(Paths.mount_info_file()) do
+            {:ok, body} -> String.trim(body)
+            {:error, _reason} -> "(unknown)"
+          end
+
+        IO.puts("Mounted: yes, at #{mountpoint}")
+
+      true ->
+        # A control socket without a mountpoint on record: supablock serve.
+        IO.puts("Mounted: no (cache daemon running — supablock serve)")
     end
   end
 
@@ -753,9 +766,9 @@ defmodule Supablock.CLI do
     with :authed <- require_auth() do
       path = tree_path(List.first(args) || "/")
 
-      case Router.describe(path) do
+      case Tree.kind(path) do
         {:ok, :dir} ->
-          case Router.list(path) do
+          case Tree.list(path) do
             {:ok, entries} ->
               Enum.each(entries, &out/1)
               0
@@ -764,7 +777,7 @@ defmodule Supablock.CLI do
               path_error(path, reason)
           end
 
-        {:ok, {:file, _size}} ->
+        {:ok, :file} ->
           out(Path.basename(path))
           0
 
@@ -777,13 +790,18 @@ defmodule Supablock.CLI do
   end
 
   defp cat(args) do
-    case args do
+    {null_flags, paths} = Enum.split_with(args, &(&1 in ["-0", "--null"]))
+    null? = null_flags != []
+
+    case paths do
       [] ->
-        usage_error("Usage: supablock cat <path> [path...]")
+        usage_error("Usage: supablock cat [-0] <path|-> [path...]")
 
       paths ->
         with :authed <- require_auth() do
-          Enum.reduce_while(paths, 0, fn path, _ok ->
+          paths
+          |> expand_stdin_paths(null?)
+          |> Enum.reduce_while(0, fn path, _ok ->
             case cat_one(tree_path(path)) do
               :ok -> {:cont, 0}
               {:error, code} -> {:halt, code}
@@ -795,8 +813,32 @@ defmodule Supablock.CLI do
     end
   end
 
+  # "-" pulls paths from stdin, so discovery pipes into reading with one
+  # warm process on the reading side: supablock find … -type f | supablock
+  # cat -. Line-delimited stdin is consumed lazily (each path is read as it
+  # arrives); -0 pairs with find -print0 for names with spaces or newlines.
+  defp expand_stdin_paths(paths, null?) do
+    Stream.flat_map(paths, fn
+      "-" -> stdin_paths(null?)
+      path -> [path]
+    end)
+  end
+
+  defp stdin_paths(false) do
+    IO.stream(:stdio, :line)
+    |> Stream.map(&String.trim_trailing(&1, "\n"))
+    |> Stream.reject(&(&1 == ""))
+  end
+
+  defp stdin_paths(true) do
+    case IO.read(:stdio, :eof) do
+      data when is_binary(data) -> String.split(data, <<0>>, trim: true)
+      _eof_or_error -> []
+    end
+  end
+
   defp cat_one(path) do
-    case Router.read(path) do
+    case Tree.read(path) do
       {:ok, body} ->
         out_bytes(body)
         :ok
@@ -804,7 +846,7 @@ defmodule Supablock.CLI do
       {:error, :eio} ->
         # Router says :eio both for "that's a directory" and for real API
         # trouble; kind (resolution only, no render) tells them apart.
-        case Router.kind(path) do
+        case Tree.kind(path) do
           {:ok, :dir} ->
             IO.puts(:stderr, "Is a directory: #{path}")
             {:error, 1}
@@ -845,7 +887,7 @@ defmodule Supablock.CLI do
   end
 
   defp head_tail_one(mode, count, path) do
-    case Router.read(path) do
+    case Tree.read(path) do
       {:ok, body} ->
         lines = split_lines(body)
 
@@ -859,7 +901,7 @@ defmodule Supablock.CLI do
         :ok
 
       {:error, :eio} ->
-        case Router.kind(path) do
+        case Tree.kind(path) do
           {:ok, :dir} ->
             IO.puts(:stderr, "Is a directory: #{path}")
             {:error, 1}
@@ -914,7 +956,10 @@ defmodule Supablock.CLI do
           max(code, path_error(path, reason))
 
         {kind, path}, code ->
-          if find_match?(path, kind, opts), do: out(path)
+          if find_match?(path, kind, opts) do
+            if opts.print0, do: out_bytes([path, 0]), else: out(path)
+          end
+
           code
       end)
     else
@@ -929,7 +974,7 @@ defmodule Supablock.CLI do
   end
 
   defp parse_find(args),
-    do: parse_find(args, nil, %{type: nil, name: nil, max_depth: :infinity})
+    do: parse_find(args, nil, %{type: nil, name: nil, max_depth: :infinity, print0: false})
 
   defp parse_find([], path, opts), do: {:ok, path || ".", opts}
 
@@ -951,6 +996,10 @@ defmodule Supablock.CLI do
       {n, ""} when n >= 0 -> parse_find(rest, path, %{opts | max_depth: n})
       _other -> {:error, "find: #{flag} needs a non-negative integer"}
     end
+  end
+
+  defp parse_find([flag | rest], path, opts) when flag in ["-print0", "--print0"] do
+    parse_find(rest, path, %{opts | print0: true})
   end
 
   defp parse_find([flag], _path, _opts)
@@ -986,7 +1035,7 @@ defmodule Supablock.CLI do
       # one explicit file.
       prefix? =
         case paths do
-          [single] -> Router.kind(tree_path(single)) != {:ok, :file}
+          [single] -> Tree.kind(tree_path(single)) != {:ok, :file}
           _many -> true
         end
 
@@ -1007,7 +1056,7 @@ defmodule Supablock.CLI do
   end
 
   defp grep_path(regex, path, opts, prefix?, {matched?, code}) do
-    case Router.kind(tree_path(path)) do
+    case Tree.kind(tree_path(path)) do
       {:ok, :file} ->
         grep_file(regex, path, opts, prefix?, {matched?, code})
 
@@ -1024,7 +1073,7 @@ defmodule Supablock.CLI do
   end
 
   defp grep_file(regex, path, opts, prefix?, {matched?, code}) do
-    case Router.read(tree_path(path)) do
+    case Tree.read(tree_path(path)) do
       {:ok, body} -> {grep_body(regex, path, body, opts, prefix?) or matched?, code}
       {:error, reason} -> {matched?, max(code, path_error(path, reason))}
     end
@@ -1129,6 +1178,60 @@ defmodule Supablock.CLI do
       r, {:ok, opts} when r in ["r", "R"] -> {:cont, {:ok, opts}}
       _other, _acc -> {:halt, :error}
     end)
+  end
+
+  ## serve — a mountless cache daemon
+  #
+  # Same warm shared cache a mount gives ls/cat/find/grep (they resolve
+  # through it via the control socket, see Supablock.Tree) — but with no
+  # FUSE, no privileges, no mountpoint. This is the batch-read mode for
+  # sandboxes that can run the CLI but cannot mount.
+
+  defp serve(["stop" | _rest]) do
+    case Control.send_cmd("unmount") do
+      {:ok, "ok"} ->
+        IO.puts("Stopped.")
+        0
+
+      _no_daemon ->
+        IO.puts(:stderr, "No supablock daemon running.")
+        1
+    end
+  end
+
+  defp serve([]) do
+    with :authed <- require_auth() do
+      case Control.send_cmd("check") do
+        {:ok, "ok" <> _stats} ->
+          IO.puts(:stderr, "A supablock daemon is already running (mount or serve).")
+          1
+
+        _not_running ->
+          serve_foreground()
+      end
+    else
+      {:exit, code} -> code
+    end
+  end
+
+  defp serve(_other), do: usage_error("Usage: supablock serve [stop]")
+
+  defp serve_foreground do
+    attach_file_logger()
+    Signals.install()
+
+    case Control.start(nil) do
+      {:ok, _pid} ->
+        IO.puts("Serving a shared cache on #{Paths.control_socket()}")
+        IO.puts("ls/cat/find/grep on this machine now reuse it automatically.")
+        IO.puts("Stop with: supablock serve stop   (or Ctrl-C)")
+        Process.sleep(:infinity)
+        0
+
+      {:error, reason} ->
+        IO.puts(:stderr, "Could not start the cache daemon: #{inspect(reason)}")
+        4
+    end
   end
 
   # Body → lines, without a phantom empty line from the trailing newline.

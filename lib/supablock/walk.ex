@@ -1,13 +1,14 @@
 defmodule Supablock.Walk do
   @moduledoc """
-  Depth-first traversal of the `Supablock.Router` tree for the no-mount
-  commands (`find`, `grep`). Cheap by construction: nodes are classified
-  with `Router.kind/1` and directories expanded with `Router.list/1`, so a
-  walk performs the same (cached) listing requests `ls -R` on a mount
-  would — file bodies are never fetched unless the caller reads them.
+  Depth-first traversal of the Router tree for the no-mount commands
+  (`find`, `grep`). Cheap by construction: nodes are classified with
+  `Tree.kind/1` and directories expanded with `Tree.list/1` (both prefer a
+  running daemon's warm cache — see `Supablock.Tree`), so a walk performs
+  the same (cached) listing requests `ls -R` on a mount would — file
+  bodies are never fetched unless the caller reads them.
   """
 
-  alias Supablock.Router
+  alias Supablock.{Router, Tree}
 
   @type event ::
           {:dir, String.t()} | {:file, String.t()} | {:error, String.t(), Router.error()}
@@ -25,7 +26,7 @@ defmodule Supablock.Walk do
   @spec reduce(String.t(), non_neg_integer | :infinity, acc, (event, acc -> acc)) :: acc
         when acc: var
   def reduce(path, max_depth, acc, fun) do
-    case Router.kind(router_path(path)) do
+    case Tree.kind(router_path(path)) do
       {:ok, :dir} -> walk_dir(path, 0, max_depth, acc, fun)
       {:ok, :file} -> fun.({:file, path}, acc)
       {:error, reason} -> fun.({:error, path, reason}, acc)
@@ -37,7 +38,7 @@ defmodule Supablock.Walk do
 
     # `depth < :infinity` holds for any integer (Erlang term order).
     if depth < max_depth do
-      case Router.list(router_path(path)) do
+      case Tree.list(router_path(path)) do
         {:ok, entries} ->
           Enum.reduce(entries, acc, fn name, acc ->
             walk_child(join(path, name), depth + 1, max_depth, acc, fun)
@@ -52,7 +53,7 @@ defmodule Supablock.Walk do
   end
 
   defp walk_child(path, depth, max_depth, acc, fun) do
-    case Router.kind(router_path(path)) do
+    case Tree.kind(router_path(path)) do
       {:ok, :dir} -> walk_dir(path, depth, max_depth, acc, fun)
       {:ok, :file} -> fun.({:file, path}, acc)
       {:error, reason} -> fun.({:error, path, reason}, acc)
