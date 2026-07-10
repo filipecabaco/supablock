@@ -4,7 +4,7 @@ defmodule Supablock.MixProject do
   def project do
     [
       app: :supablock,
-      version: "0.1.0",
+      version: version(),
       elixir: "~> 1.17",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
@@ -13,6 +13,16 @@ defmodule Supablock.MixProject do
       deps: deps()
     ]
   end
+
+  # Burrito's wrapper unpacks the payload into a per-user cache dir keyed by
+  # "<release>_erts-<ertsvsn>_<app_version>" and reuses it whenever that key
+  # already exists — so every published binary must carry a unique version,
+  # or an upgraded binary silently keeps running the previously unpacked
+  # code. The release workflow sets SUPABLOCK_BUILD_VERSION per build (the
+  # tag for versioned releases, "<base>-canary.<sha>" for canary builds);
+  # local builds fall back to the static default.
+  @version "0.1.0"
+  defp version, do: System.get_env("SUPABLOCK_BUILD_VERSION", @version)
 
   def application do
     [
