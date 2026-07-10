@@ -569,12 +569,16 @@ CI (`.github/workflows/ci.yml`) runs the unit suite on every push, and a
 separate job runs the FUSE + supabase-CLI end-to-ends — the same commands as
 above, with the CLI installed and the release prebuilt. A third workflow
 (`.github/workflows/docker.yml`) builds the container image per
-architecture and end-to-end-tests the real image against a stub
-Management API (`docker/e2e/stub_api.py`) in both modes — agent-style
-`ls`/`cat` with no FUSE flags, and the full entrypoint flow over a FUSE
-mount inside the container — before pushing the multi-arch manifest to
-Docker Hub (`filipecabaco/supablock`) on every push to `main` and on
-version tags.
+architecture and end-to-end-tests the real image against a real local
+Supabase project — `supabase start` via `supabase/setup-cli`, seeded
+with a table; only the platform Management API metadata layer, which
+has no local emulator, is served by a thin shim
+(`docker/e2e/mgmt_api_shim.py`) that hands supablock the stack's real
+keys. Both modes are exercised: agent-style `ls`/`cat` with no FUSE
+flags, and the full entrypoint flow over a FUSE mount inside the
+container, each reading real rows through the local PostgREST. Only
+then is the multi-arch manifest pushed to Docker Hub
+(`filipecabaco/supablock`), on pushes to `main` and version tags.
 
 The e2e suite runs hermetically by default: a local stub Management API
 serves canned fixtures, the supabase CLI is pointed at it with a custom
