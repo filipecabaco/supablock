@@ -121,9 +121,20 @@ jobs:
       - name: E2E — agent mode (ls/cat, no FUSE flags)
         run: |
           set -a && . ./supabase.env && set +a
-          python3 docker/e2e/mgmt_api_shim.py 54340 &
+          python3 docker/e2e/mgmt_api_shim.py 54340 2>shim.log &
           shim=$!
           trap 'kill $shim' EXIT
+          # On any failed assert, publish the failing command and every
+          # intermediate output to the job summary — that page is readable
+          # without log access, and is the fastest way to see *why*.
+          trap '{
+            echo "### agent-mode e2e failed at line $LINENO: \`$BASH_COMMAND\`"
+            for f in *.out *.log; do
+              [ -f "$f" ] || continue
+              echo "<details><summary>$f</summary>"; echo
+              echo "\`\`\`"; head -c 3000 "$f"; echo; echo "\`\`\`"; echo "</details>"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"' ERR
           for _i in $(seq 1 50); do
             curl -fsS http://127.0.0.1:54340/v1/organizations >/dev/null && break
             sleep 0.1
@@ -158,14 +169,16 @@ jobs:
               supablock:smoke "$@"
           }
 
-          test "$(run ls)" = "organizations"
+          run ls | tee root.out
+          test "$(cat root.out)" = "organizations"
           test "$(run ls organizations)" = "org-local"
           test "$(run ls organizations/org-local/projects)" = "supablocklocal123456"
 
           base=organizations/org-local/projects/supablocklocal123456
 
           # Both exposed schemas, every table shape, and the view.
-          test "$(run ls "$base/database")" = "$(printf 'app\npublic')"
+          run ls "$base/database" | tee schemas.out
+          test "$(cat schemas.out)" = "$(printf 'app\npublic')"
           run ls "$base/database/public" | tee tables.out
           for t in audit_log customers empty_table events open_todos order_items todos; do
             grep -qx "$t" tables.out
@@ -173,7 +186,8 @@ jobs:
 
           # Paging: 1200 rows -> exactly three page files, ordered by pk
           # across page boundaries, page sizes exact.
-          test "$(run ls "$base/database/public/events")" = \
+          run ls "$base/database/public/events" | tee pages.out
+          test "$(cat pages.out)" = \
             "$(printf 'rows-000000.csv\nrows-000500.csv\nrows-001000.csv')"
           run cat "$base/database/public/events/rows-000500.csv" | tee page5.out >/dev/null
           test "$(wc -l < page5.out)" = 501
@@ -211,14 +225,17 @@ jobs:
           test -z "$(run ls "$base/database/public/empty_table")"
 
           # The second schema reads like the first.
-          run cat "$base/database/app/settings/rows-000000.csv" | grep -q "theme,dark"
+          run cat "$base/database/app/settings/rows-000000.csv" | tee settings.out
+          grep -q "theme,dark" settings.out
 
           # find/grep against real rows, and a real two-process pipeline:
           # discovery | reading, NUL-delimited.
-          run find "$base/database" -maxdepth 1 -type d | grep -q "database/app"
+          run find "$base/database" -maxdepth 1 -type d | tee find.out
+          grep -q "database/app" find.out
           run grep -l "ship it" "$base/database/public/open_todos" | tee grepl.out
           grep -q "open_todos/rows-000000.csv" grepl.out
-          run find "$base/database/app" -type f -print0 | run_i cat -0 - | grep -q "retention_days,30"
+          run find "$base/database/app" -type f -print0 | run_i cat -0 - | tee pipe.out
+          grep -q "retention_days,30" pipe.out
 
           # grep exit codes agents branch on: 1 = no matches.
           run grep "no-such-needle-anywhere" "$base/database/app/settings/rows-000000.csv" \
@@ -237,9 +254,17 @@ jobs:
       - name: E2E — mounted mode (FUSE inside the container)
         run: |
           set -a && . ./supabase.env && set +a
-          python3 docker/e2e/mgmt_api_shim.py 54341 &
+          python3 docker/e2e/mgmt_api_shim.py 54341 2>shim.log &
           shim=$!
           trap 'kill $shim' EXIT
+          trap '{
+            echo "### mounted-mode e2e failed at line $LINENO: \`$BASH_COMMAND\`"
+            for f in mount.out shim.log; do
+              [ -f "$f" ] || continue
+              echo "<details><summary>$f</summary>"; echo
+              echo "\`\`\`"; head -c 3000 "$f"; echo; echo "\`\`\`"; echo "</details>"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"' ERR
           for _i in $(seq 1 50); do
             curl -fsS http://127.0.0.1:54341/v1/organizations >/dev/null && break
             sleep 0.1
