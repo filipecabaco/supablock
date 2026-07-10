@@ -15,7 +15,8 @@ Three ways to read the tree:
   the tree and prints paths; `grep [-iln] [--maxdepth <n>] <pattern>
   [path...]` searches file contents (directories recurse; exit 1 = no
   matches, like grep(1)); `head`/`tail [-n <count>]` take partial reads of
-  big row files; `cat -` reads paths from stdin (`-0` = NUL-delimited), so
+  big row files, and `tail -f [-s <secs>]` follows a `logs/<source>` file
+  for new entries; `cat -` reads paths from stdin (`-0` = NUL-delimited), so
   `find … -type f | supablock cat -` pipelines discovery into reading.
 - `supablock serve` — a mountless cache daemon (still no FUSE, no
   privileges): while it runs, every ls/cat/find/grep on the machine
@@ -61,6 +62,8 @@ Tree shape (all paths under the root):
     organizations/<org>/projects/<ref>/storage/buckets/<name>/info.json
     organizations/<org>/projects/<ref>/branches/<branch>/info.json
     organizations/<org>/projects/<ref>/database/<schema>/<table>/rows-000000.csv
+    organizations/<org>/projects/<ref>/logs/<source>   # NDJSON; source ∈ postgres,auth,edge,storage,…
+    organizations/<org>/projects/<ref>/metrics         # Prometheus text, project-wide
 
 Facts agents should know: JSON output is deterministic (sorted keys,
 pretty-printed, trailing newline) so diffs are clean; exit codes are 0 ok,
