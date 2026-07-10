@@ -91,6 +91,16 @@ goes straight to the mounted shell. Exiting the shell stops the container
 and unmounts. (`docker volume rm supablock-config` is the container
 equivalent of `supablock logout`.)
 
+Already have the supablock binary? It remembers that command for you:
+
+```bash
+supablock docker    # assembles the exact docker run above and drops you in
+```
+
+`SUPABLOCK_DOCKER_IMAGE` and `SUPABLOCK_DOCKER_VOLUME` override the image
+and credentials volume, and a set `SUPABLOCK_TOKEN` is forwarded into the
+container (skipping the login flow).
+
 The image is multi-arch (amd64/arm64), Alpine-based and ~100 MB; pushes to
 `main` refresh `filipecabaco/supablock:latest` and version tags publish
 `:X.Y.Z` (`.github/workflows/docker.yml`).
@@ -426,6 +436,7 @@ supablock ls [path]                 list a tree directory straight off the API (
 supablock cat <path> [path...]      print tree file(s) straight off the API (no mount)
 supablock refresh                   drop the cache; next reads re-fetch
 supablock refresh --check           report cache staleness without flushing
+supablock docker                    interactive containerized session (wraps docker run)
 ```
 
 Exit codes: `0` ok · `1` usage · `2` not authenticated · `3` API/network ·

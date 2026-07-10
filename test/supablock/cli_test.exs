@@ -590,4 +590,81 @@ defmodule Supablock.CLITest do
     stderr = capture_io(:stderr, fn -> assert CLI.run(["cat", "organizations"]) == 2 end)
     assert stderr =~ "Not authenticated. Run: supablock login"
   end
+
+  describe "docker (interactive containerized session)" do
+    test "builds the documented docker run invocation" do
+      assert CLI.docker_argv() == [
+               "run",
+               "--rm",
+               "-it",
+               "--device",
+               "/dev/fuse",
+               "--cap-add",
+               "SYS_ADMIN",
+               "--security-opt",
+               "apparmor=unconfined",
+               "-v",
+               "supablock-config:/root/.config/supablock",
+               "filipecabaco/supablock"
+             ]
+    end
+
+    test "forwards SUPABLOCK_TOKEN and honours the image/volume overrides" do
+      System.put_env("SUPABLOCK_TOKEN", "sbp_FAKEZ00000000000000000000000000000000000")
+      System.put_env("SUPABLOCK_DOCKER_IMAGE", "example/other:tag")
+      System.put_env("SUPABLOCK_DOCKER_VOLUME", "team-creds")
+
+      on_exit(fn ->
+        System.delete_env("SUPABLOCK_TOKEN")
+        System.delete_env("SUPABLOCK_DOCKER_IMAGE")
+        System.delete_env("SUPABLOCK_DOCKER_VOLUME")
+      end)
+
+      argv = CLI.docker_argv()
+      assert List.last(argv) == "example/other:tag"
+      assert Enum.slice(argv, -3, 2) == ["-e", "SUPABLOCK_TOKEN"]
+      assert "team-creds:/root/.config/supablock" in argv
+    end
+
+    test "arguments are a usage error with a pointer at ls/cat" do
+      stderr = capture_io(:stderr, fn -> assert CLI.run(["docker", "ls"]) == 1 end)
+      assert stderr =~ "takes no arguments"
+      assert stderr =~ "supablock ls|cat"
+    end
+
+    test "a missing docker binary exits 4" do
+      empty = Path.join(System.tmp_dir!(), "supablock-nodocker-#{System.unique_integer([:positive])}")
+      File.mkdir_p!(empty)
+      original_path = System.get_env("PATH")
+      System.put_env("PATH", empty)
+
+      on_exit(fn ->
+        System.put_env("PATH", original_path)
+        File.rm_rf!(empty)
+      end)
+
+      stderr = capture_io(:stderr, fn -> assert CLI.run(["docker"]) == 4 end)
+      assert stderr =~ "docker not found on PATH"
+    end
+
+    test "without a terminal it refuses politely" do
+      # capture_io swaps the group leader for a StringIO, so :io.columns/0
+      # fails — exactly the no-TTY condition the command checks for.
+      dir = Path.join(System.tmp_dir!(), "supablock-fakedocker-#{System.unique_integer([:positive])}")
+      File.mkdir_p!(dir)
+      docker = Path.join(dir, "docker")
+      File.write!(docker, "#!/bin/sh\nexit 0\n")
+      File.chmod!(docker, 0o755)
+      original_path = System.get_env("PATH")
+      System.put_env("PATH", dir <> ":" <> original_path)
+
+      on_exit(fn ->
+        System.put_env("PATH", original_path)
+        File.rm_rf!(dir)
+      end)
+
+      stderr = capture_io(:stderr, fn -> assert CLI.run(["docker"]) == 4 end)
+      assert stderr =~ "needs a terminal"
+    end
+  end
 end

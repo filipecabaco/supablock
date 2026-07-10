@@ -859,6 +859,11 @@
       </div>
 
       <p class="body">
+        Already have the binary? <span class="mono">supablock docker</span> assembles that whole
+        command for you — volume, FUSE flags, TTY — and drops you straight into the session.
+      </p>
+
+      <p class="body">
         The image is Alpine-based, multi-arch (amd64/arm64) and rebuilt by CI:
         every push to <span class="mono">main</span> refreshes
         <span class="mono">:latest</span>, version tags publish <span class="mono">:X.Y.Z</span>.
@@ -1149,6 +1154,7 @@ rows-000000.csv  rows-000500.csv  rows-001000.csv
             <tr><td><code>supablock unmount [dir]</code></td><td>Unmount from another shell.</td></tr>
             <tr><td><code>supablock ls [path]</code></td><td>List a tree directory straight off the API — no mount, no FUSE, no privileges.</td></tr>
             <tr><td><code>supablock cat &lt;path&gt; [path…]</code></td><td>Print tree file(s) straight off the API; several paths share one process and cache.</td></tr>
+            <tr><td><code>supablock docker</code></td><td>Interactive containerized session — assembles the whole <code>docker run</code> (volume, FUSE flags, TTY) for you.</td></tr>
             <tr><td><code>supablock refresh</code></td><td>Flush the cache of a live mount; next reads re-fetch.</td></tr>
             <tr><td><code>supablock refresh --check</code></td><td>Report cache staleness (total / past-TTL entries) without flushing.</td></tr>
             <tr><td><code>supablock service install|uninstall|status</code></td><td>Auto-start the mount at login — systemd user unit (Linux) or launchd agent (macOS).</td></tr>
