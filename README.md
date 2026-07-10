@@ -115,7 +115,8 @@ Details worth knowing:
 
 * **Plain subcommands pass through** without mounting: `docker run --rm -it
   … filipecabaco/supablock status` (also `login`, `logout`, `doctor`,
-  `config`, …).
+  `config`, …). `ls` and `cat` read the tree API-side, so they need none
+  of the FUSE flags at all — see [For AI agents](#for-ai-agents).
 * **Headless / CI:** skip the login flow entirely with
   `-e SUPABLOCK_TOKEN=sbp_…` — no volume or TTY needed.
 * **Login flow in a container:** the image intentionally uses the
@@ -281,6 +282,27 @@ ls /mnt/supabase/organizations
 cat /mnt/supabase/organizations/*/projects/*/health
 ```
 
+### Reading without a mount: `ls` and `cat`
+
+The same tree can be read straight off the API — no FUSE, no `/dev/fuse`,
+no privileges, no background process. `supablock ls` and `supablock cat`
+resolve the exact paths the mount serves, through the same router, with
+the same guarantees (GET-only, redaction, deterministic output):
+
+```bash
+supablock ls organizations
+supablock ls organizations/my-org/projects
+supablock cat organizations/my-org/projects/<ref>/health
+supablock cat organizations/my-org/projects/<ref>/config/auth.json
+```
+
+This is the right mode for restricted environments — minimal containers,
+CI, AI-agent sandboxes — and for quick one-off checks where starting a
+mount isn't worth it. Each invocation is a fresh process with a cold
+cache, so for many reads (or `grep -r` across the account) prefer a real
+mount; for a handful of targeted reads, `ls`/`cat` is simpler. `cat`
+takes several paths at once, which shares one process and one cache.
+
 ## Example one-liners
 
 ```bash
@@ -400,12 +422,50 @@ supablock doctor                    environment checks with fix hints
 supablock config set|get|list       mountpoint, TTLs, timeouts, expose_secrets, oauth.*
 supablock mount [mountpoint]        mount in the foreground (default ~/Supabase)
 supablock unmount [mountpoint]      unmount from another shell
+supablock ls [path]                 list a tree directory straight off the API (no mount)
+supablock cat <path> [path...]      print tree file(s) straight off the API (no mount)
 supablock refresh                   drop the cache; next reads re-fetch
 supablock refresh --check           report cache staleness without flushing
 ```
 
 Exit codes: `0` ok · `1` usage · `2` not authenticated · `3` API/network ·
 `4` environment (doctor-detectable).
+
+## For AI agents
+
+supablock is a good fit for agents: it is read-only by construction (an
+agent cannot break anything by exploring), its output is deterministic,
+and the filesystem shape means agents' existing file tools — or plain
+`ls`/`cat` — are the whole integration. Three affordances exist
+specifically for agent use:
+
+* **An agent skill.** `skills/supablock/SKILL.md` teaches an agent how to
+  get the tool, authenticate, and verify account state, with recipes for
+  the common checks (health, signup policy, public buckets, config drift).
+  Install it into a skills-aware agent (Claude Code and friends) with:
+
+  ```bash
+  npx skills add filipecabaco/supablock
+  ```
+
+* **No-mount reads.** `supablock ls|cat` (see above) work in any sandbox —
+  no FUSE device, no privileges, no daemon — and honour `SUPABLOCK_TOKEN`
+  for headless auth. Exit codes are stable and scriptable. The Docker
+  image needs none of the FUSE flags in this mode:
+
+  ```bash
+  docker run --rm -e SUPABLOCK_TOKEN=sbp_... filipecabaco/supablock \
+    cat organizations/<org>/projects/<ref>/health
+  ```
+
+* **llms.txt.** A machine-oriented summary of the tool lives at
+  [filipecabaco.github.io/supablock/llms.txt](https://filipecabaco.github.io/supablock/llms.txt)
+  — point an agent at it and it knows the tree shape, the auth story and
+  the ground rules (rate limits, redaction, exit codes).
+
+Give an agent a scoped, revocable personal access token rather than your
+interactive credential, and leave `expose_secrets` off — the tree then
+contains nothing more sensitive than the account metadata itself.
 
 ## Auto-start (service)
 

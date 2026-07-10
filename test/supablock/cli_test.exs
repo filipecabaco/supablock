@@ -480,4 +480,114 @@ defmodule Supablock.CLITest do
     assert output =~ "unmount tool on PATH"
     assert output =~ "efuse port binary compiled"
   end
+
+  describe "ls / cat (the tree without a mount)" do
+    @proj_a1 "projaone1234567890ab"
+
+    setup do
+      TestEnv.fake_login!()
+      TestEnv.stub_api!()
+      :ok
+    end
+
+    test "ls with no path lists the tree root" do
+      assert capture_io(fn -> assert CLI.run(["ls"]) == 0 end) == "organizations\n"
+    end
+
+    test "ls resolves the same paths as the mount, relative or absolute" do
+      output = capture_io(fn -> assert CLI.run(["ls", "organizations"]) == 0 end)
+      assert output == "org-alpha\norg-beta\n"
+
+      output =
+        capture_io(fn ->
+          assert CLI.run(["ls", "/organizations/org-alpha/projects"]) == 0
+        end)
+
+      assert output == "projaone1234567890ab\nprojatwo1234567890ab\n"
+    end
+
+    test "ls on a file prints its name, like ls(1)" do
+      output =
+        capture_io(fn ->
+          assert CLI.run(["ls", "organizations/org-alpha/projects/#{@proj_a1}/health"]) == 0
+        end)
+
+      assert output == "health\n"
+    end
+
+    test "cat prints file bodies verbatim" do
+      output =
+        capture_io(fn ->
+          assert CLI.run(["cat", "organizations/org-alpha/projects/#{@proj_a1}/health"]) == 0
+        end)
+
+      assert output =~ "auth: healthy"
+      assert output =~ "realtime: unhealthy (UNHEALTHY)"
+    end
+
+    test "cat concatenates multiple paths" do
+      base = "organizations/org-alpha/projects/#{@proj_a1}"
+
+      output =
+        capture_io(fn ->
+          assert CLI.run(["cat", "#{base}/health", "#{base}/config/auth.json"]) == 0
+        end)
+
+      assert output =~ "db: healthy"
+      assert output =~ "\"site_url\""
+    end
+
+    test "cat on a directory says so and exits 1" do
+      stderr =
+        capture_io(:stderr, fn ->
+          assert CLI.run(["cat", "organizations"]) == 1
+        end)
+
+      assert stderr =~ "Is a directory: /organizations"
+    end
+
+    test "a bogus path exits 1 with a clear message" do
+      stderr =
+        capture_io(:stderr, fn ->
+          assert CLI.run(["ls", "organizations/nope"]) == 1
+        end)
+
+      assert stderr =~ "No such path: /organizations/nope"
+
+      stderr =
+        capture_io(:stderr, fn ->
+          assert CLI.run(["cat", "organizations/org-alpha/frobnicate"]) == 1
+        end)
+
+      assert stderr =~ "No such path"
+    end
+
+    test "cat without a path is a usage error" do
+      assert capture_io(:stderr, fn -> assert CLI.run(["cat"]) == 1 end) =~
+               "Usage: supablock cat"
+    end
+
+    test "a rate-limited API maps to exit 3" do
+      TestEnv.stub_api!(%{"/v1/organizations" => {:status, 429, %{}}})
+
+      assert capture_io(:stderr, fn -> assert CLI.run(["ls", "organizations"]) == 3 end) =~
+               "Rate limited"
+    end
+
+    test "SUPABLOCK_TOKEN alone is enough — no stored credential needed" do
+      File.rm(Supablock.Paths.credentials_file())
+      System.put_env("SUPABLOCK_TOKEN", "sbp_env000000000000000000000000000000000000")
+      on_exit(fn -> System.delete_env("SUPABLOCK_TOKEN") end)
+
+      assert capture_io(fn -> assert CLI.run(["ls"]) == 0 end) == "organizations\n"
+    end
+  end
+
+  test "ls and cat without auth exit 2" do
+    stderr = capture_io(:stderr, fn -> assert CLI.run(["ls"]) == 2 end)
+    assert stderr =~ "Not authenticated. Run: supablock login"
+
+    stderr = capture_io(:stderr, fn -> assert CLI.run(["cat", "organizations"]) == 2 end)
+    assert stderr =~ "Not authenticated. Run: supablock login"
+  end
 end

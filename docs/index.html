@@ -604,6 +604,9 @@
   <symbol id="i-cube" viewBox="0 0 24 24">
     <path d="M21 7.5l-9-5.25L3 7.5m18 0l-9 5.25m9-5.25v9l-9 5.25M3 7.5l9 5.25M3 7.5v9l9 5.25m0-9v9"/>
   </symbol>
+  <symbol id="i-cpu-chip" viewBox="0 0 24 24">
+    <path d="M8.25 3v1.5M4.5 8.25H3m18 0h-1.5M4.5 12H3m18 0h-1.5m-15 3.75H3m18 0h-1.5M8.25 19.5V21M12 3v1.5m0 15V21m3.75-18v1.5m0 15V21m-9-1.5h10.5a2.25 2.25 0 002.25-2.25V6.75a2.25 2.25 0 00-2.25-2.25H6.75A2.25 2.25 0 004.5 6.75v10.5a2.25 2.25 0 002.25 2.25zm.75-12h9v9h-9v-9z"/>
+  </symbol>
 </svg>
 
 <header class="top">
@@ -613,6 +616,7 @@
       <a href="#tree">The tree</a>
       <a href="#install">Install</a>
       <a href="#docker">Docker</a>
+      <a href="#agents">Agents</a>
       <a href="#quickstart">Quick start</a>
       <a href="#service">Auto-start</a>
       <a href="#tables">Table data</a>
@@ -862,6 +866,57 @@
     </div>
   </section>
 
+  <section id="agents">
+    <div class="wrap">
+      <p class="sec-label"><svg class="icon" aria-hidden="true"><use href="#i-cpu-chip"/></svg>AI agents</p>
+      <h2>Built for agents: nothing to break, nothing to learn</h2>
+      <p class="body">
+        A read-only tree with deterministic output is the safest thing you can hand an AI agent —
+        exploring it cannot damage anything, and the filesystem shape means an agent's existing
+        file tools <em>are</em> the integration. Verifying Supabase state ("are signups off in
+        prod?", "any public buckets?", "did the config drift?") becomes an
+        <span class="mono">ls</span>/<span class="mono">cat</span>/<span class="mono">diff</span>
+        exercise.
+      </p>
+
+      <div class="code">
+        <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
+        <pre><span class="c"># no mount, no FUSE, no privileges — works in any sandbox</span>
+<span class="p">$</span> export SUPABLOCK_TOKEN=sbp_...
+<span class="p">$</span> supablock ls organizations/my-org/projects
+<span class="p">$</span> supablock cat organizations/my-org/projects/&lt;ref&gt;/health
+
+<span class="c"># or with zero installation, via the Docker image</span>
+<span class="p">$</span> docker run --rm -e SUPABLOCK_TOKEN filipecabaco/supablock \
+    cat organizations/my-org/projects/&lt;ref&gt;/config/auth.json</pre>
+      </div>
+
+      <div class="facts">
+        <div class="fact">
+          <span class="k"><svg class="icon" aria-hidden="true"><use href="#i-command-line"/></svg>ls · cat, no mount</span>
+          <p><strong>Reads without FUSE.</strong> <code>supablock ls</code> and
+             <code>supablock cat</code> resolve tree paths straight off the API through the same
+             router as the mount — same guarantees, zero privileges. Stable exit codes
+             (<code>2</code> unauthenticated, <code>3</code> rate-limited) make failures scriptable.</p>
+        </div>
+        <div class="fact">
+          <span class="k"><svg class="icon" aria-hidden="true"><use href="#i-arrow-down-tray"/></svg>npx skills add</span>
+          <p><strong>An installable skill.</strong>
+             <code>npx skills add filipecabaco/supablock</code> teaches a skills-aware agent
+             (Claude Code and friends) how to authenticate and verify account state, with recipes
+             for health, signup policy, bucket visibility and config-drift checks.</p>
+        </div>
+        <div class="fact">
+          <span class="k"><svg class="icon" aria-hidden="true"><use href="#i-magnifying-glass"/></svg>llms.txt</span>
+          <p><strong>A machine-readable summary.</strong>
+             <a href="llms.txt">llms.txt</a> gives an agent the tree shape, auth story and ground
+             rules in one fetch. Hand agents a scoped, revocable access token and leave
+             <code>expose_secrets</code> off.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <section id="quickstart">
     <div class="wrap">
       <p class="sec-label"><svg class="icon" aria-hidden="true"><use href="#i-command-line"/></svg>Quick start</p>
@@ -1092,6 +1147,8 @@ rows-000000.csv  rows-000500.csv  rows-001000.csv
             <tr><td><code>supablock config set|get|list</code></td><td>Mountpoint, cache TTLs, <code>http_timeout_ms</code>, <code>expose_secrets</code>, <code>db_format</code>, <code>db_page_size</code>, <code>db_key</code>.</td></tr>
             <tr><td><code>supablock mount [--path dir] [dir]</code></td><td>Mount in the background and return immediately (default <code>~/Supabase</code>); recovers stale mounts automatically. <code>--foreground</code> blocks instead.</td></tr>
             <tr><td><code>supablock unmount [dir]</code></td><td>Unmount from another shell.</td></tr>
+            <tr><td><code>supablock ls [path]</code></td><td>List a tree directory straight off the API — no mount, no FUSE, no privileges.</td></tr>
+            <tr><td><code>supablock cat &lt;path&gt; [path…]</code></td><td>Print tree file(s) straight off the API; several paths share one process and cache.</td></tr>
             <tr><td><code>supablock refresh</code></td><td>Flush the cache of a live mount; next reads re-fetch.</td></tr>
             <tr><td><code>supablock refresh --check</code></td><td>Report cache staleness (total / past-TTL entries) without flushing.</td></tr>
             <tr><td><code>supablock service install|uninstall|status</code></td><td>Auto-start the mount at login — systemd user unit (Linux) or launchd agent (macOS).</td></tr>

@@ -14,9 +14,12 @@ set -eu
 MOUNTPOINT="${SUPABLOCK_MOUNTPOINT:-/supabase}"
 CREDENTIALS="${XDG_CONFIG_HOME:-$HOME/.config}/supablock/credentials"
 
-# Pass supablock subcommands straight through.
+# Pass supablock subcommands straight through. Notably `ls` and `cat` read
+# the tree without mounting, so they need none of the FUSE flags:
+#   docker run --rm -e SUPABLOCK_TOKEN=sbp_... filipecabaco/supablock \
+#     cat organizations/<org>/projects/<ref>/health
 case "${1:-}" in
-    setup|login|logout|status|whoami|doctor|config|mount|unmount|refresh|service|help|-h|--help)
+    setup|login|logout|status|whoami|doctor|config|mount|unmount|ls|cat|refresh|service|help|-h|--help)
         exec supablock "$@"
         ;;
 esac
