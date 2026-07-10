@@ -102,20 +102,16 @@ jobs:
           supabase init
           # Schema goes in a migration; seed.sql is data-only (the CLI seeds
           # it as a prepared batch, so DDL+DML in one file fails to prepare).
+          # The SQL lives in docker/e2e/ — multiple schemas, a 1200-row
+          # multi-page table, CSV-escaping nasties, composite/no/zero-row
+          # primary-key shapes, a view, and an RLS-enabled table.
           mkdir -p supabase/migrations
-          cat > supabase/migrations/20260101000000_todos.sql <<'SQL'
-          create table public.todos (
-            id serial primary key,
-            title text not null,
-            done boolean not null default false
-          );
-          grant select on table public.todos to anon, authenticated, service_role;
-          SQL
-          cat > supabase/seed.sql <<'SQL'
-          insert into public.todos (title, done) values
-            ('write the docker e2e', true),
-            ('ship it', false);
-          SQL
+          cp ../docker/e2e/migration.sql supabase/migrations/20260101000000_e2e.sql
+          cp ../docker/e2e/seed.sql supabase/seed.sql
+          # The local PostgREST must actually serve the `app` schema the
+          # shim's postgrest config advertises.
+          sed -i 's/^schemas = .*/schemas = ["public", "graphql_public", "app"]/' supabase/config.toml
+          grep -q '"app"' supabase/config.toml
           supabase start -x studio,mailpit,imgproxy,edge-runtime,logflare,vector
           supabase status -o env | tee ../supabase.env
 
@@ -153,19 +149,80 @@ jobs:
               -e SUPABLOCK_DATA_API_URL_SUPABLOCKLOCAL123456="$API_URL" \
               supablock:smoke "$@"
           }
+          # Same, with stdin attached — the consumer end of a pipe (cat -).
+          run_i() {
+            docker run --rm -i --network host \
+              -e SUPABLOCK_TOKEN=sbp_STUBSTUBSTUBSTUBSTUBSTUBSTUBSTUBSTUB \
+              -e SUPABLOCK_API_URL=http://127.0.0.1:54340 \
+              -e SUPABLOCK_DATA_API_URL_SUPABLOCKLOCAL123456="$API_URL" \
+              supablock:smoke "$@"
+          }
 
           test "$(run ls)" = "organizations"
           test "$(run ls organizations)" = "org-local"
           test "$(run ls organizations/org-local/projects)" = "supablocklocal123456"
 
           base=organizations/org-local/projects/supablocklocal123456
-          run ls "$base/database/public" | tee tables.out
-          grep -qx "todos" tables.out
 
+          # Both exposed schemas, every table shape, and the view.
+          test "$(run ls "$base/database")" = "$(printf 'app\npublic')"
+          run ls "$base/database/public" | tee tables.out
+          for t in audit_log customers empty_table events open_todos order_items todos; do
+            grep -qx "$t" tables.out
+          done
+
+          # Paging: 1200 rows -> exactly three page files, ordered by pk
+          # across page boundaries, page sizes exact.
+          test "$(run ls "$base/database/public/events")" = \
+            "$(printf 'rows-000000.csv\nrows-000500.csv\nrows-001000.csv')"
+          run cat "$base/database/public/events/rows-000500.csv" | tee page5.out >/dev/null
+          test "$(wc -l < page5.out)" = 501
+          test "$(sed -n 2p page5.out | cut -d, -f1)" = 501
+          run cat "$base/database/public/events/rows-001000.csv" | tee page10.out >/dev/null
+          test "$(wc -l < page10.out)" = 201
+          # jsonb / text[] columns render as JSON-encoded CSV fields
+          head -2 page5.out | tail -1 | grep -q 'tag'
+
+          # CSV escaping (RFC 4180): commas quoted, quotes doubled, NULLs as
+          # empty fields — and the rows are visible at all only because the
+          # default service_role key bypasses customers' RLS.
+          run cat "$base/database/public/customers/rows-000000.csv" | tee customers.out
+          grep -q '"first, among equals"' customers.out
+          grep -q '"Grace ""Amazing"" Hopper"' customers.out
+          grep -q '^3,Null Fields,,,$' customers.out
+
+          # Unicode passes through byte-exact.
           run cat "$base/database/public/todos/rows-000000.csv" | tee rows.out
           head -1 rows.out | grep -q "title"
           grep -q "write the docker e2e" rows.out
-          grep -q "ship it" rows.out
+          grep -q "emoji ✅ and ünïcødé" rows.out
+
+          # A view pages like a table, honouring its WHERE.
+          run cat "$base/database/public/open_todos/rows-000000.csv" | tee view.out
+          grep -q "ship it" view.out
+          ! grep -q "write the docker e2e" view.out
+
+          # Composite pk orders pages; a table without a pk still reads.
+          run cat "$base/database/public/order_items/rows-000000.csv" | tee items.out
+          test "$(sed -n 2p items.out)" = "1,1,SKU-A,2"
+          run cat "$base/database/public/audit_log/rows-000000.csv" | grep -q "seeded"
+
+          # An empty table lists no page files.
+          test -z "$(run ls "$base/database/public/empty_table")"
+
+          # The second schema reads like the first.
+          run cat "$base/database/app/settings/rows-000000.csv" | grep -q "theme,dark"
+
+          # find/grep against real rows, and a real two-process pipeline:
+          # discovery | reading, NUL-delimited.
+          run find "$base/database" -maxdepth 1 -type d | grep -q "database/app"
+          run grep -l "ship it" "$base/database/public/open_todos" | tee grepl.out
+          grep -q "open_todos/rows-000000.csv" grepl.out
+          run find "$base/database/app" -type f -print0 | run_i cat -0 - | grep -q "retention_days,30"
+
+          # grep exit codes agents branch on: 1 = no matches.
+          run grep "no-such-needle-anywhere" "$base/database/app/settings/rows-000000.csv" \
+            && exit 1 || test $? = 1
 
           run cat "$base/database/public/nope" 2>err.out && exit 1 || test $? = 1
           grep -q "No such path" err.out
@@ -188,18 +245,29 @@ jobs:
             sleep 0.1
           done
 
+          # Real coreutils over a real kernel mount against the seeded rows:
+          # both schemas visible, recursive grep, paging, native pipes.
           docker run --rm --network host \
             --device /dev/fuse --cap-add SYS_ADMIN --security-opt apparmor=unconfined \
             -e SUPABLOCK_TOKEN=sbp_STUBSTUBSTUBSTUBSTUBSTUBSTUBSTUBSTUB \
             -e SUPABLOCK_API_URL=http://127.0.0.1:54341 \
             -e SUPABLOCK_DATA_API_URL_SUPABLOCKLOCAL123456="$API_URL" \
             supablock:smoke \
-            sh -c 'pwd && ls organizations && cat organizations/org-local/projects/*/database/public/todos/rows-000000.csv' \
+            sh -c 'pwd && ls organizations \
+              && ls organizations/org-local/projects/*/database \
+              && cat organizations/org-local/projects/*/database/public/todos/rows-000000.csv \
+              && cat organizations/org-local/projects/*/database/public/events/rows-001000.csv | wc -l \
+              && grep -rl "theme,dark" organizations/org-local/projects/*/database/app \
+              && head -1 organizations/org-local/projects/*/database/public/customers/rows-000000.csv' \
             | tee mount.out
 
           grep -qx "/supabase" mount.out
           grep -qx "org-local" mount.out
+          grep -qx "app" mount.out
           grep -q "ship it" mount.out
+          grep -qx "201" mount.out
+          grep -q "app/settings/rows-000000.csv" mount.out
+          grep -q "id,name,note,balance,meta" mount.out
 
       - name: Push by digest
         id: push

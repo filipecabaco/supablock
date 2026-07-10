@@ -42,6 +42,15 @@ HEALTH = [
     {"name": "rest", "healthy": True, "status": "ACTIVE_HEALTHY"},
 ]
 
+# Exposed schemas drive the database/ tree: naming `app` next to `public`
+# here is what makes supablock list both (config.toml adds `app` to the
+# local PostgREST's schemas so the reads actually work).
+POSTGREST = {
+    "db_schema": "public, app",
+    "max_rows": 1000,
+    "db_extra_search_path": "public, extensions",
+}
+
 
 def api_keys():
     return [
@@ -62,6 +71,8 @@ class Handler(BaseHTTPRequestHandler):
             body = HEALTH
         elif path == f"/v1/projects/{REF}/api-keys":
             body = api_keys()
+        elif path == f"/v1/projects/{REF}/postgrest":
+            body = POSTGREST
         else:
             body = None
 
