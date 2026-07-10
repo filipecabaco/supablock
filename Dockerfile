@@ -42,14 +42,25 @@ COPY lib lib
 # runtime — the runtime stage installs fuse3.
 RUN SUPABLOCK_STATIC_FUSE=0 mix release supablock
 
+# Trim what a containerized, non-distributed node never uses — epmd (Erlang
+# distribution) and heart (restart-on-hang watchdog; container runtimes own
+# liveness) — and strip the native binaries. strip_beams already covers the
+# BEAM files.
+RUN cd /app/_build/prod/rel/supablock \
+    && rm -f erts-*/bin/epmd erts-*/bin/heart \
+    && (strip erts-*/bin/beam.smp erts-*/bin/erlexec erts-*/bin/erl_child_setup \
+          erts-*/bin/inet_gethost lib/efuse-*/priv/efuse 2>/dev/null || true)
+
 # --- Runtime stage ---------------------------------------------------------
 # Same Alpine major as the builder so the musl/ssl libs match the release.
 FROM alpine:3.22
 
-# libfuse3 + fusermount3 for the port; libstdc++/libgcc/ncurses/openssl for
-# the bundled ERTS; ca-certificates for TLS to the Supabase APIs. Busybox
-# already provides the browsing toolkit (ls, cat, grep, find, diff).
-RUN apk add --no-cache fuse3 libstdc++ libgcc ncurses-libs openssl ca-certificates
+# libfuse3 + fusermount3 for the port; libstdc++/libgcc (the JIT is C++),
+# ncurses for the tty driver and libcrypto3 for the crypto NIF — the only
+# piece of OpenSSL the BEAM links (Erlang's ssl app is Erlang code on top of
+# it, so no libssl and no openssl CLI). ca-certificates for TLS trust.
+# Busybox already provides the browsing toolkit (ls, cat, grep, find, diff).
+RUN apk add --no-cache fuse3 libstdc++ libgcc ncurses-libs libcrypto3 ca-certificates
 
 COPY --from=build /app/_build/prod/rel/supablock /opt/supablock
 # The repo's thin launcher works unchanged: it resolves the release root from
