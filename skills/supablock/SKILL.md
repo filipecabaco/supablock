@@ -126,8 +126,14 @@ supablock cat organizations/<org>/projects/<ref>/database/public/users/rows-0000
 
 ## Behaviour you should expect
 
-- **Exit codes:** 0 ok · 1 usage/no-such-path · 2 not authenticated ·
-  3 API/network/rate-limit · 4 environment. Branch on them.
+- **Exit codes:** 0 ok · 1 usage/no-such-path (grep: also "no matches") ·
+  2 not authenticated · 3 API/network/rate-limit · 4 environment ·
+  141 downstream pipe closed. Branch on them.
+- **Pipes work like coreutils:** `supablock cat … | jq .`,
+  `supablock cat rows-000000.csv | head -5`, and
+  `supablock find … -type f | while read f; do …` are all fine — output
+  is byte-exact for binary bodies and a closed pipe ends the command
+  quietly (exit 141), never with a stack trace.
 - **Rate limits:** the Management API allows 120 req/min. Exit 3 with a
   "Rate limited" message means back off and retry. Each `ls`/`cat`
   invocation has a cold cache, so batch reads

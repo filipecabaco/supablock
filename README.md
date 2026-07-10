@@ -239,7 +239,9 @@ supablock service install|status|uninstall   auto-start at login (systemd/launch
 ```
 
 Exit codes: `0` ok · `1` usage · `2` not authenticated · `3` API/network ·
-`4` environment (doctor-detectable).
+`4` environment (doctor-detectable) · `141` downstream pipe closed —
+`supablock cat … | head` ends quietly, coreutils-style, and non-UTF-8
+bodies pass through pipes byte-exact.
 
 ## For AI agents
 

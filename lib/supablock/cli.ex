@@ -18,7 +18,8 @@ defmodule Supablock.CLI do
       supablock help
 
   Exit codes: 0 ok · 1 usage error · 2 not authenticated · 3 API/network
-  error · 4 environment error.
+  error · 4 environment error · 141 downstream pipe closed (128+SIGPIPE,
+  coreutils-style).
   """
 
   alias Supablock.{
@@ -111,6 +112,16 @@ defmodule Supablock.CLI do
     # tables and all) is not started until we ask.
     {:ok, _apps} = Application.ensure_all_started(:supablock)
 
+    try do
+      dispatch(argv)
+    catch
+      # The downstream reader closed the pipe (supablock cat … | head -1).
+      # Coreutils die of SIGPIPE here; mirror that as a quiet 128+SIGPIPE.
+      :epipe -> 141
+    end
+  end
+
+  defp dispatch(argv) do
     case argv do
       [] -> help()
       ["help" | _rest] -> help()
@@ -719,6 +730,24 @@ defmodule Supablock.CLI do
   # mount at all — containers without /dev/fuse, CI, AI-agent sandboxes —
   # and it keeps every guarantee of the mount (GET-only, redaction,
   # deterministic rendering) because it *is* the same code.
+  #
+  # All tree output goes through out/out_bytes so pipelines behave like
+  # coreutils: raw bytes (IO.puts raises on non-UTF-8 bodies), and a
+  # vanished downstream reader ends the command quietly instead of
+  # crashing (see the :epipe catch in run/1).
+
+  defp out(line), do: out_bytes([line, ?\n])
+
+  defp out_bytes(bytes) do
+    case IO.binwrite(bytes) do
+      :ok -> :ok
+      # :terminated — stdout is gone because the reader closed the pipe.
+      {:error, _reason} -> throw(:epipe)
+    end
+  rescue
+    # Some OTP releases raise instead of returning the error tuple.
+    ErlangError -> throw(:epipe)
+  end
 
   defp ls(args) do
     with :authed <- require_auth() do
@@ -728,7 +757,7 @@ defmodule Supablock.CLI do
         {:ok, :dir} ->
           case Router.list(path) do
             {:ok, entries} ->
-              Enum.each(entries, &IO.puts/1)
+              Enum.each(entries, &out/1)
               0
 
             {:error, reason} ->
@@ -736,7 +765,7 @@ defmodule Supablock.CLI do
           end
 
         {:ok, {:file, _size}} ->
-          IO.puts(Path.basename(path))
+          out(Path.basename(path))
           0
 
         {:error, reason} ->
@@ -769,7 +798,7 @@ defmodule Supablock.CLI do
   defp cat_one(path) do
     case Router.read(path) do
       {:ok, body} ->
-        IO.binwrite(body)
+        out_bytes(body)
         :ok
 
       {:error, :eio} ->
@@ -800,8 +829,8 @@ defmodule Supablock.CLI do
       |> Enum.with_index()
       |> Enum.reduce_while(0, fn {path, index}, _ok ->
         if header? do
-          if index > 0, do: IO.puts("")
-          IO.puts("==> #{path} <==")
+          if index > 0, do: out("")
+          out("==> #{path} <==")
         end
 
         case head_tail_one(mode, count, tree_path(path)) do
@@ -826,7 +855,7 @@ defmodule Supablock.CLI do
             :tail -> Enum.take(lines, -count)
           end
 
-        Enum.each(shown, &IO.puts/1)
+        Enum.each(shown, &out/1)
         :ok
 
       {:error, :eio} ->
@@ -885,7 +914,7 @@ defmodule Supablock.CLI do
           max(code, path_error(path, reason))
 
         {kind, path}, code ->
-          if find_match?(path, kind, opts), do: IO.puts(path)
+          if find_match?(path, kind, opts), do: out(path)
           code
       end)
     else
@@ -1006,7 +1035,7 @@ defmodule Supablock.CLI do
       # An opaque binary (a function's eszip body): report like grep(1)
       # instead of dumping bytes into the terminal.
       if Regex.match?(regex, body) do
-        IO.puts(if opts.files_only, do: path, else: "Binary file #{path} matches")
+        out(if opts.files_only, do: path, else: "Binary file #{path} matches")
         true
       else
         false
@@ -1023,12 +1052,12 @@ defmodule Supablock.CLI do
           false
 
         opts.files_only ->
-          IO.puts(path)
+          out(path)
           true
 
         true ->
           Enum.each(matches, fn {line, n} ->
-            IO.puts(grep_line(path, n, line, opts, prefix?))
+            out(grep_line(path, n, line, opts, prefix?))
           end)
 
           true

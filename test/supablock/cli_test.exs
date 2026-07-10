@@ -757,6 +757,32 @@ defmodule Supablock.CLITest do
                "==> #{@proj_base}/health <==\nauth: healthy\n\n==> #{@proj_base}/config/auth.json <==\n{\n"
     end
 
+    test "head passes binary bodies through byte-exact (no unicode errors)" do
+      output =
+        capture_io(fn ->
+          assert CLI.run(["head", "-n", "1", "#{@proj_base}/functions/hello/body"]) == 0
+        end)
+
+      assert output == Supablock.Fixtures.function_body() <> "\n"
+    end
+
+    test "a downstream reader closing the pipe exits 141 quietly" do
+      # Model `supablock ls | head -0`: stdout's device is gone mid-write.
+      # The group leader is swapped for a StringIO that is closed before
+      # the command writes, which fails exactly like a broken pipe
+      # (`{:error, :terminated}`).
+      {:ok, dead} = StringIO.open("")
+      previous = Process.group_leader()
+      Process.group_leader(self(), dead)
+
+      try do
+        StringIO.close(dead)
+        assert CLI.run(["ls"]) == 141
+      after
+        Process.group_leader(self(), previous)
+      end
+    end
+
     test "head on a directory says so and exits 1" do
       stderr =
         capture_io(:stderr, fn ->

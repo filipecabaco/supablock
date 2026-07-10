@@ -56,8 +56,10 @@ Tree shape (all paths under the root):
 
 Facts agents should know: JSON output is deterministic (sorted keys,
 pretty-printed, trailing newline) so diffs are clean; exit codes are 0 ok,
-1 usage/no-such-path, 2 not authenticated, 3 API/network/rate-limited,
-4 environment; the Management API allows 120 requests/minute (batch reads:
+1 usage/no-such-path (grep: also "no matches"), 2 not authenticated,
+3 API/network/rate-limited, 4 environment, 141 downstream pipe closed;
+output is pipe-safe (`supablock cat … | jq`, `… | head` all behave like
+coreutils); the Management API allows 120 requests/minute (batch reads:
 `supablock cat pathA pathB` amortizes one process and one cache);
 `api-keys/secret` stays REDACTED unless the user opts in.
 
