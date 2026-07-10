@@ -709,91 +709,35 @@
         <span class="t">│   ├──</span> info.json                        <span class="c"># metadata, verify_jwt, version…</span>
         <span class="t">│   └──</span> body                             <span class="c"># the deployed eszip bundle</span>
         <span class="t">├──</span> <span class="d">storage/</span><span class="d">buckets/</span>&lt;name&gt;<span class="d">/</span>info.json  <span class="c"># visibility, size limit, MIME types</span>
-        <span class="t">└──</span> <span class="d">database/</span>&lt;schema&gt;<span class="d">/</span>&lt;table&gt;<span class="d">/</span>rows-*.csv <span class="c"># opt-in — rows over read-only SQL</span></pre>
+        <span class="t">├──</span> <span class="d">branches/</span>&lt;branch&gt;<span class="d">/</span>info.json        <span class="c"># preview branches</span>
+        <span class="t">└──</span> <span class="d">database/</span>&lt;schema&gt;<span class="d">/</span>&lt;table&gt;<span class="d">/</span>rows-*.csv <span class="c"># rows via the Data API, GET-only</span></pre>
       </div>
 
       <p class="body">
-        The same six areas, and what each one gives you:
+        JSON files are pretty-printed with sorted keys, so <span class="mono">diff</span> between
+        projects is clean; edge-function <span class="mono">body</span> files are the deployed
+        eszip bundles as raw bytes.
       </p>
-
-      <div class="facts">
-        <div class="fact">
-          <span class="k"><svg class="icon" aria-hidden="true"><use href="#i-folder"/></svg>organizations · projects</span>
-          <p><strong>The account skeleton.</strong> Every org and project as a folder, with
-             metadata, members, available regions, and per-service <strong>health</strong>
-             (auth, db, realtime, rest, storage) in one <code>cat</code>.</p>
-        </div>
-        <div class="fact">
-          <span class="k"><svg class="icon" aria-hidden="true"><use href="#i-list-bullet"/></svg>config/</span>
-          <p><strong>Every project setting.</strong> <code>auth.json</code>,
-             <code>database.json</code>, and now <code>realtime.json</code> and
-             <code>storage.json</code> — sorted, pretty JSON that <code>diff</code>s cleanly
-             between projects.</p>
-        </div>
-        <div class="fact">
-          <span class="k"><svg class="icon" aria-hidden="true"><use href="#i-command-line"/></svg>functions/</span>
-          <p><strong>Edge functions, code and all.</strong> Each function's metadata under
-             <code>info.json</code>, plus <code>body</code> — the actual deployed eszip bundle,
-             served as raw bytes.</p>
-        </div>
-        <div class="fact">
-          <span class="k"><svg class="icon" aria-hidden="true"><use href="#i-arrow-down-tray"/></svg>storage/buckets/</span>
-          <p><strong>Every storage bucket.</strong> One folder per bucket exposing its
-             visibility, file-size limit and allowed MIME types — grep for public buckets across
-             the whole account.</p>
-        </div>
-        <div class="fact">
-          <span class="k"><svg class="icon" aria-hidden="true"><use href="#i-key"/></svg>config/auth/</span>
-          <p><strong>Identity providers.</strong> SAML <strong>SSO</strong> providers and
-             <strong>third-party auth</strong> integrations (Firebase, Auth0, Cognito, …), each
-             as its own <code>info.json</code>.</p>
-        </div>
-        <div class="fact">
-          <span class="k"><svg class="icon" aria-hidden="true"><use href="#i-magnifying-glass"/></svg>database/</span>
-          <p><strong>Table rows, opt-in.</strong> Connect a project's Postgres once and browse
-             schemas → tables → paged <code>.csv</code>/<code>.json</code> — the one tree that
-             reads past the Management API, over a read-only <code>SELECT</code>-only connection.</p>
-        </div>
-      </div>
     </div>
   </section>
 
   <section id="install">
     <div class="wrap">
       <p class="sec-label"><svg class="icon" aria-hidden="true"><use href="#i-arrow-down-tray"/></svg>Install</p>
-      <h2>One line — or build from source</h2>
+      <h2>Install in one line</h2>
       <p class="body">
-        The quickest path is the installer: it downloads the single-file binary for your platform
-        from the GitHub releases — no Erlang/Elixir needed. FUSE is built in on Linux; on macOS
-        install <a href="https://macfuse.github.io" rel="noopener">macFUSE</a> or
-        <a href="https://www.fuse-t.org" rel="noopener">FUSE-T</a> first.
+        The installer downloads the single-file binary for your platform from the GitHub
+        releases — no Erlang/Elixir needed. FUSE is built in on Linux; on macOS install
+        <a href="https://macfuse.github.io" rel="noopener">macFUSE</a> or
+        <a href="https://www.fuse-t.org" rel="noopener">FUSE-T</a> first. (Prefer building
+        from source? The
+        <a href="https://github.com/filipecabaco/supablock#building-from-source" rel="noopener">README</a>
+        has the full recipe.)
       </p>
 
       <div class="code">
         <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
         <pre><span class="p">$</span> curl -fsSL https://filipecabaco.github.io/supablock/install.sh | sh</pre>
-      </div>
-
-      <p class="body">
-        Building from source instead? <a href="https://mise.jdx.dev" rel="noopener">mise</a>
-        pins the whole toolchain — <span class="mono">mise install</span> gives you Erlang,
-        Elixir and Zig. You also need a C compiler and FUSE — on Linux that's
-        <span class="mono">libfuse3-dev</span>, <span class="mono">fuse3</span>
-        and <span class="mono">pkg-config</span>.
-      </p>
-
-      <div class="code">
-        <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
-        <pre><span class="c"># Debian / Ubuntu prerequisites</span>
-<span class="p">$</span> sudo apt install libfuse3-dev fuse3 pkg-config
-
-<span class="c"># build the release</span>
-<span class="p">$</span> git clone https://github.com/filipecabaco/supablock.git &amp;&amp; cd supablock
-<span class="p">$</span> mix deps.get
-<span class="p">$</span> MIX_ENV=prod mix release
-
-<span class="c"># put the launcher on your PATH</span>
-<span class="p">$</span> ln -sf "$PWD/bin/supablock" ~/.local/bin/supablock</pre>
       </div>
 
       <p class="body">
@@ -815,23 +759,21 @@
   <section id="docker">
     <div class="wrap">
       <p class="sec-label"><svg class="icon" aria-hidden="true"><use href="#i-cube"/></svg>Docker</p>
-      <h2>Or skip the install — one <span class="mono">docker run</span></h2>
+      <h2>One command — <span class="mono">supablock docker</span></h2>
       <p class="body">
         The <a href="https://hub.docker.com/r/filipecabaco/supablock" rel="noopener">filipecabaco/supablock</a>
         image needs nothing on your machine but Docker: it logs you in, mounts your account inside
         the container, and drops you into a shell at <span class="mono">/supabase</span> — with
         <span class="mono">ls</span>, <span class="mono">cat</span>, <span class="mono">grep</span>,
         <span class="mono">find</span> and <span class="mono">diff</span> ready to go. Exiting the
-        shell unmounts and removes the container.
+        shell unmounts and removes the container. <span class="mono">supablock docker</span>
+        assembles the whole invocation for you — volume, FUSE flags, TTY — so you never have to
+        remember the plumbing.
       </p>
 
       <div class="code">
         <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
-        <pre><span class="p">$</span> docker run -it --rm \
-    --device /dev/fuse --cap-add SYS_ADMIN \
-    --security-opt apparmor=unconfined \
-    -v supablock-config:/root/.config/supablock \
-    filipecabaco/supablock</pre>
+        <pre><span class="p">$</span> supablock docker</pre>
       </div>
 
       <div class="facts">
@@ -859,15 +801,20 @@
       </div>
 
       <p class="body">
-        Already have the binary? <span class="mono">supablock docker</span> assembles that whole
-        command for you — volume, FUSE flags, TTY — and drops you straight into the session.
+        No binary yet? That single command expands to a plain <span class="mono">docker run</span>
+        you can copy anywhere — nothing but Docker required. The image is Alpine-based,
+        multi-arch (amd64/arm64), and CI keeps <span class="mono">:latest</span> on
+        <span class="mono">main</span>:
       </p>
 
-      <p class="body">
-        The image is Alpine-based, multi-arch (amd64/arm64) and rebuilt by CI:
-        every push to <span class="mono">main</span> refreshes
-        <span class="mono">:latest</span>, version tags publish <span class="mono">:X.Y.Z</span>.
-      </p>
+      <div class="code">
+        <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
+        <pre><span class="p">$</span> docker run -it --rm \
+    --device /dev/fuse --cap-add SYS_ADMIN \
+    --security-opt apparmor=unconfined \
+    -v supablock-config:/root/.config/supablock \
+    filipecabaco/supablock</pre>
+      </div>
     </div>
   </section>
 
@@ -932,12 +879,9 @@
           <span class="n">1</span>
           <div>
             <h3>Authenticate</h3>
-            <p>Released binaries carry the supablock OAuth app identity, so
-               <span class="mono">login</span> just works: the OAuth2 flow — PKCE&nbsp;S256, browser
-               consent, loopback callback — storing short-lived, scoped tokens that refresh
-               automatically. Teams can override the app via config; without any OAuth identity it
-               falls back to the supabase-CLI-style dashboard session flow, and
-               <span class="mono">--token sbp_…</span> always works.</p>
+            <p><span class="mono">login</span> just works: an OAuth2 + PKCE browser flow storing
+               short-lived, scoped tokens that refresh automatically. No browser or headless
+               environment? <span class="mono">--token sbp_…</span> always works.</p>
             <div class="code">
               <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
               <pre><span class="p">$</span> supablock login
@@ -957,14 +901,11 @@ Waiting for the callback on http://localhost:53682/callback …
           <span class="n">2</span>
           <div>
             <h3>Mount and browse</h3>
-            <p>The mountpoint defaults to <span class="mono">~/Supabase</span> (created on
-               demand) — override it with <span class="mono">--path</span>, a positional
-               argument, or <span class="mono">config set mountpoint</span>.
-               <span class="mono">mount</span> <strong>returns immediately</strong> — the
-               filesystem runs in the background and you can browse from the same shell.
-               Use <span class="mono">--foreground</span> to block instead (useful when you
-               want Ctrl-C to unmount). Logs go to
-               <span class="mono">~/.local/state/supablock/supablock.log</span>.</p>
+            <p><span class="mono">mount</span> <strong>returns immediately</strong> — the
+               filesystem runs in the background and you browse from the same shell. The
+               mountpoint defaults to <span class="mono">~/Supabase</span>; override it with
+               <span class="mono">--path</span> or <span class="mono">config set mountpoint</span>.
+               <span class="mono">--foreground</span> blocks instead.</p>
             <div class="code">
               <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
               <pre><span class="p">$</span> supablock mount
@@ -980,10 +921,9 @@ Check status: supablock status
           <span class="n">＋</span>
           <div>
             <h3>Onboarding a whole team?</h3>
-            <p>One command applies a shared profile (a flat JSON of config keys your team
-               commits to its dotfiles or wiki — OAuth app, mountpoint convention, TTLs),
-               logs in, and offers the auto-start service. Only known config keys are
-               applied; secrets and tokens never belong in a profile.</p>
+            <p>One command applies a shared profile — a flat JSON of config keys (OAuth app,
+               mountpoint convention, TTLs) — logs in, and offers the auto-start service.
+               Secrets and tokens never belong in a profile.</p>
             <div class="code">
               <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
               <pre><span class="p">$</span> supablock setup https://team.example.com/supablock.json</pre>
@@ -999,12 +939,11 @@ Check status: supablock status
       <p class="sec-label"><svg class="icon" aria-hidden="true"><use href="#i-arrow-path"/></svg>Auto-start</p>
       <h2>Keep it mounted — as a background service</h2>
       <p class="body">
-        <span class="mono">mount</span> runs in the background by default and returns immediately,
-        but it exits when you close the session. One more command turns it into a
-        per-user service that comes up at login and restarts on failure — a
-        <strong>systemd user unit</strong> on Linux, a <strong>launchd agent</strong> on macOS.
-        No root: the unit lands in your home directory and reads the same config and credentials
-        as the CLI. Set a mountpoint first (<span class="mono">supablock config set mountpoint /mnt/supabase</span>).
+        One command turns the mount into a per-user service that comes up at login and restarts
+        on failure — a <strong>systemd user unit</strong> on Linux, a <strong>launchd agent</strong>
+        on macOS. No root, same config and credentials as the CLI, and stopping the service
+        unmounts cleanly. Set a mountpoint first
+        (<span class="mono">supablock config set mountpoint /mnt/supabase</span>).
       </p>
 
       <div class="code">
@@ -1013,13 +952,6 @@ Check status: supablock status
 <span class="p">$</span> supablock service status      <span class="c"># is it installed and running?</span>
 <span class="p">$</span> supablock service uninstall   <span class="c"># remove it</span></pre>
       </div>
-
-      <p class="body">
-        <span class="mono">service status</span> reports the unit path and live state; so does
-        <span class="mono">supablock status</span>. Because it runs under the OS service manager
-        you also get <span class="mono">systemctl --user status supablock</span> and journald logs
-        for free on Linux. Stopping the service unmounts cleanly.
-      </p>
     </div>
   </section>
 
@@ -1057,26 +989,10 @@ Check status: supablock status
       </div>
 
       <div class="oneliner">
-        <p class="what"><strong>All site URLs across the account.</strong></p>
-        <div class="code">
-          <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
-          <pre><span class="p">$</span> grep -r '"site_url"' /mnt/supabase/organizations/*/projects/*/config/auth.json</pre>
-        </div>
-      </div>
-
-      <div class="oneliner">
         <p class="what"><strong>Which storage buckets are public?</strong></p>
         <div class="code">
           <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
           <pre><span class="p">$</span> grep -l '"public": true' /mnt/supabase/organizations/*/projects/*/storage/buckets/*/info.json</pre>
-        </div>
-      </div>
-
-      <div class="oneliner">
-        <p class="what"><strong>Is realtime enabled, per project?</strong></p>
-        <div class="code">
-          <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
-          <pre><span class="p">$</span> grep -H '"enabled"' /mnt/supabase/organizations/*/projects/*/config/realtime.json</pre>
         </div>
       </div>
 
@@ -1126,10 +1042,8 @@ rows-000000.csv  rows-000500.csv  rows-001000.csv
       <p class="body" style="font-size: 13.5px;">
         By default rows are read with the project's <code>service_role</code> key, which bypasses
         RLS so you see every row; <code>db_key publishable</code> switches to the <code>anon</code>
-        key and shows only what RLS allows. Pages are ordered by primary key so paging is stable;
-        CSV is RFC-4180-quoted with <code>NULL</code> as an empty field; JSON is an array of row
-        objects in column order. Only the project's exposed schemas appear, and every request is a
-        GET — no direct database connection, no extra credential.
+        key and shows only what RLS allows. Pages are ordered by primary key so paging is stable,
+        and every request is a GET — no direct database connection, no extra credential.
       </p>
     </div>
   </section>
@@ -1260,16 +1174,15 @@ rows-000000.csv  rows-000500.csv  rows-001000.csv
   var TERM_SCRIPT = [
     { t: "prompt", s: "supablock mount /mnt/supabase" },
     { t: "out", s: "Mounting at <span class='p'>/mnt/supabase</span> (background).\nLog: ~/.local/state/supablock/supablock.log\nCheck status: supablock status\n" },
-    { t: "prompt", s: "ls /mnt/supabase/organizations/my-org/projects/abcdefghijklmnopqrst" },
-    { t: "out", s: "<span class='d'>api-keys</span>  <span class='d'>branches</span>  <span class='d'>config</span>  <span class='d'>functions</span>  <span class='d'>storage</span>  health  info.json\n" },
-    { t: "prompt", s: "cat health" },
+    { t: "prompt", s: "cd /mnt/supabase/organizations/my-org/projects" },
+    { t: "prompt", s: "ls abcdefghijklmnopqrst" },
+    { t: "out", s: "<span class='d'>api-keys</span>  <span class='d'>branches</span>  <span class='d'>config</span>  <span class='d'>database</span>  <span class='d'>functions</span>  health  info.json  <span class='d'>storage</span>\n" },
+    { t: "prompt", s: "cat abcdefghijklmnopqrst/health" },
     { t: "out", s: "auth: <span class='p'>healthy</span>\ndb: <span class='p'>healthy</span>\nrealtime: <span class='p'>healthy</span>\nrest: <span class='p'>healthy</span>\nstorage: <span class='p'>healthy</span>\n" },
-    { t: "prompt", s: "cat storage/buckets/avatars/info.json" },
-    { t: "out", s: "{\n  \"name\": \"avatars\",\n  \"public\": <span class='p'>true</span>,\n  \"file_size_limit\": 52428800\n}\n" },
-    { t: "prompt", s: "diff {staging,production}/config/auth.json" },
+    { t: "prompt", s: "diff {abcdefghijklmnopqrst,tsrqponmlkjihgfedcba}/config/auth.json" },
     { t: "out", s: "<span class='m'>@@ -4,7 +4,7 @@</span>\n<span class='w'>-  \"disable_signup\": false,</span>\n<span class='p'>+  \"disable_signup\": true,</span>\n" },
-    { t: "prompt", s: "touch /mnt/supabase/oops" },
-    { t: "out", s: "<span class='w'>touch: cannot touch '/mnt/supabase/oops': Read-only file system</span>\n" }
+    { t: "prompt", s: "touch oops" },
+    { t: "out", s: "<span class='w'>touch: cannot touch 'oops': Read-only file system</span>\n" }
   ];
 
   var termEl = document.getElementById("term");
