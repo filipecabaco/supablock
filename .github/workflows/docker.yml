@@ -127,16 +127,24 @@ jobs:
           shim=$!
           trap 'kill $shim' EXIT
           # On any failed assert, publish the failing command and every
-          # intermediate output to the job summary — that page is readable
-          # without log access, and is the fastest way to see *why*.
-          trap '{
-            echo "### agent-mode e2e failed at line $LINENO: \`$BASH_COMMAND\`"
-            for f in *.out *.log; do
-              [ -f "$f" ] || continue
-              echo "<details><summary>$f</summary>"; echo
-              echo "\`\`\`"; head -c 3000 "$f"; echo; echo "\`\`\`"; echo "</details>"
-            done
-          } >> "$GITHUB_STEP_SUMMARY"' ERR
+          # intermediate output as ::error annotations — those render on
+          # the run page even without log access.
+          set -E
+          annotate_file() {
+            echo "::error title=e2e diag $1::$(head -c 1200 "$1" | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"}{print}')"
+          }
+          fail_diag() {
+            echo "::error title=agent-mode e2e failed::line $1: $2"
+            for f in *.out *.log; do [ -f "$f" ] && annotate_file "$f"; done
+            return 0
+          }
+          trap 'fail_diag "$LINENO" "$BASH_COMMAND"' ERR
+          # For "this must fail" asserts: report a success that shouldn't be.
+          unexpected() {
+            echo "::error title=agent-mode e2e failed::expected nonzero exit: $1"
+            for f in *.out *.log; do [ -f "$f" ] && annotate_file "$f"; done
+            exit 1
+          }
           for _i in $(seq 1 50); do
             curl -fsS http://127.0.0.1:54340/v1/organizations >/dev/null && break
             sleep 0.1
@@ -241,12 +249,14 @@ jobs:
 
           # grep exit codes agents branch on: 1 = no matches.
           run grep "no-such-needle-anywhere" "$base/database/app/settings/rows-000000.csv" \
-            && exit 1 || test $? = 1
+            && unexpected "grep without a match" || test $? = 1
 
-          run cat "$base/database/public/nope" 2>err.out && exit 1 || test $? = 1
+          run cat "$base/database/public/nope" 2>err.out \
+            && unexpected "cat of a bogus path" || test $? = 1
           grep -q "No such path" err.out
 
-          docker run --rm supablock:smoke ls organizations 2>noauth.out && exit 1 || test $? = 2
+          docker run --rm supablock:smoke ls organizations 2>noauth.out \
+            && unexpected "ls without a credential" || test $? = 2
           grep -q "Not authenticated" noauth.out
 
       # Mounted mode: the full entrypoint flow — credential check (satisfied
@@ -259,14 +269,11 @@ jobs:
           python3 docker/e2e/mgmt_api_shim.py 54341 2>shim.log &
           shim=$!
           trap 'kill $shim' EXIT
-          trap '{
-            echo "### mounted-mode e2e failed at line $LINENO: \`$BASH_COMMAND\`"
-            for f in mount.out shim.log; do
-              [ -f "$f" ] || continue
-              echo "<details><summary>$f</summary>"; echo
-              echo "\`\`\`"; head -c 3000 "$f"; echo; echo "\`\`\`"; echo "</details>"
-            done
-          } >> "$GITHUB_STEP_SUMMARY"' ERR
+          set -E
+          annotate_file() {
+            echo "::error title=e2e diag $1::$(head -c 1200 "$1" | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"}{print}')"
+          }
+          trap 'echo "::error title=mounted-mode e2e failed::line $LINENO: $BASH_COMMAND"; for f in mount.out shim.log; do [ -f "$f" ] && annotate_file "$f"; done' ERR
           for _i in $(seq 1 50); do
             curl -fsS http://127.0.0.1:54341/v1/organizations >/dev/null && break
             sleep 0.1
