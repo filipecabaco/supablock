@@ -34,4 +34,52 @@ defmodule Supablock.ControlTest do
     Control.stop()
     assert {:error, :not_mounted} = Control.send_cmd("flush")
   end
+
+  describe "remote reads (kind / list / read over the socket)" do
+    @health_path "/organizations/org-alpha/projects/projaone1234567890ab/health"
+
+    setup do
+      TestEnv.fake_login!()
+      TestEnv.stub_api!()
+      :ok
+    end
+
+    test "kind classifies without rendering" do
+      assert {:ok, :dir} = Control.remote(:kind, "/organizations")
+      assert {:ok, :file} = Control.remote(:kind, @health_path)
+    end
+
+    test "list returns entries, read returns the exact body" do
+      assert {:ok, ["org-alpha", "org-beta"]} = Control.remote(:list, "/organizations")
+
+      assert {:ok, body} = Control.remote(:read, @health_path)
+      assert body =~ "db: healthy"
+      assert body == Supablock.Render.health(Supablock.Fixtures.health())
+    end
+
+    test "read passes binary bodies through byte-exact" do
+      path = "/organizations/org-alpha/projects/projaone1234567890ab/functions/hello/body"
+      assert {:ok, body} = Control.remote(:read, path)
+      assert body == Supablock.Fixtures.function_body()
+    end
+
+    test "path errors are authoritative, not fallbacks" do
+      assert {:error, :enoent} = Control.remote(:kind, "/organizations/nope")
+      assert {:error, :enoent} = Control.remote(:read, "/organizations/nope")
+    end
+
+    test "remote without a daemon is :unavailable" do
+      Control.stop()
+      assert {:error, :unavailable} = Control.remote(:read, "/organizations")
+    end
+
+    test "Tree prefers the daemon and falls back when it is gone" do
+      assert {:ok, :dir} = Supablock.Tree.kind("/organizations")
+
+      Control.stop()
+      assert {:ok, :dir} = Supablock.Tree.kind("/organizations")
+      assert {:ok, entries} = Supablock.Tree.list("/organizations")
+      assert entries == ["org-alpha", "org-beta"]
+    end
+  end
 end

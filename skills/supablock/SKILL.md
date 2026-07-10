@@ -42,8 +42,9 @@ Pick the first option that works in your environment:
 
 ## Reading — no mount needed
 
-`ls` and `cat` resolve tree paths straight off the API. They work in any
-sandbox: no FUSE, no /dev/fuse, no privileges, no daemon.
+`ls`, `cat`, `head`, `tail`, `find` and `grep` resolve tree paths straight
+off the API. They work in any sandbox: no FUSE, no /dev/fuse, no
+privileges, no daemon.
 
 ```bash
 supablock ls                                    # -> organizations
@@ -51,7 +52,48 @@ supablock ls organizations                      # org slugs
 supablock ls organizations/<org>/projects       # project refs
 supablock cat organizations/<org>/projects/<ref>/health
 supablock cat organizations/<org>/projects/<ref>/config/auth.json
+
+# discover paths without knowing the tree by heart
+supablock find organizations/<org> -name '*.json' -maxdepth 3
+supablock find organizations/<org>/projects/<ref> -type d
+
+# search file contents; directories recurse (grep -r semantics)
+supablock grep -l '"public": true' organizations/<org>/projects/<ref>/storage
+supablock grep -in 'site_url' organizations/<org>/projects/<ref>/config
+
+# peek at big row files before reading all pages
+supablock head -n 20 organizations/<org>/projects/<ref>/database/public/users/rows-000000.csv
 ```
+
+`find` takes `-type f|d`, `-name <glob>`, `-maxdepth <n>` and `-print0`;
+`grep` takes `-i` (ignore case), `-l` (paths only), `-n` (line numbers) and
+`--maxdepth <n>`, and exits `1` when nothing matched — branch on that like
+you would with grep(1). Both print paths you can feed straight back to
+`supablock cat`, including through a pipe — `cat -` reads paths from stdin
+(`-0` pairs with `find -print0` for odd names):
+
+```bash
+supablock find organizations/<org> -type f -name '*.json' | supablock cat -
+```
+
+Keep walks scoped (a start path plus `-maxdepth`) — an unbounded walk of a
+big account burns the 120 req/min budget.
+
+## Batch reads: share one warm cache
+
+Each supablock invocation normally starts with a cold cache. Before a
+burst of reads, start the mountless cache daemon (no FUSE, no privileges):
+
+```bash
+supablock serve &            # every ls/cat/find/grep now reuses its cache
+# ... run your checks ...
+supablock serve stop
+```
+
+While it runs, all supablock reads on the machine resolve through it
+automatically (a live `supablock mount` works the same way), so repeated
+listings and walks cost one set of API requests instead of one per
+invocation. `SUPABLOCK_DIRECT=1` opts a command out.
 
 If FUSE **is** available (e.g. the Docker image run with
 `--device /dev/fuse --cap-add SYS_ADMIN --security-opt apparmor=unconfined`),
@@ -92,9 +134,7 @@ diff <(supablock cat .../projects/<staging>/config/auth.json) \
      <(supablock cat .../projects/<prod>/config/auth.json)
 
 # Any public storage buckets?
-for b in $(supablock ls organizations/<org>/projects/<ref>/storage/buckets); do
-  supablock cat organizations/<org>/projects/<ref>/storage/buckets/$b/info.json | jq -r 'select(.public) | .name'
-done
+supablock grep -l '"public": true' organizations/<org>/projects/<ref>/storage
 
 # What functions are deployed, and at which version?
 supablock ls organizations/<org>/projects/<ref>/functions
@@ -107,13 +147,18 @@ supablock cat organizations/<org>/projects/<ref>/database/public/users/rows-0000
 
 ## Behaviour you should expect
 
-- **Exit codes:** 0 ok · 1 usage/no-such-path · 2 not authenticated ·
-  3 API/network/rate-limit · 4 environment. Branch on them.
+- **Exit codes:** 0 ok · 1 usage/no-such-path (grep: also "no matches") ·
+  2 not authenticated · 3 API/network/rate-limit · 4 environment ·
+  141 downstream pipe closed. Branch on them.
+- **Pipes work like coreutils:** `supablock cat … | jq .`,
+  `supablock cat rows-000000.csv | head -5`, and
+  `supablock find … -type f | while read f; do …` are all fine — output
+  is byte-exact for binary bodies and a closed pipe ends the command
+  quietly (exit 141), never with a stack trace.
 - **Rate limits:** the Management API allows 120 req/min. Exit 3 with a
-  "Rate limited" message means back off and retry. Each `ls`/`cat`
-  invocation has a cold cache, so batch reads
-  (`supablock cat pathA pathB pathC`) and don't loop tightly; a FUSE mount
-  shares one cache across all reads.
+  "Rate limited" message means back off and retry. For bursts, start
+  `supablock serve &` first (shared warm cache — see above) and keep
+  walks scoped with `-maxdepth`; don't loop tightly.
 - **Secrets:** `api-keys/secret` renders `REDACTED …` unless the user opted
   in (`supablock config set expose_secrets true`). Do not enable that
   yourself unless the user asks.

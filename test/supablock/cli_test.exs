@@ -583,6 +583,312 @@ defmodule Supablock.CLITest do
     end
   end
 
+  describe "find / grep / head / tail (agent-friendly reads without a mount)" do
+    @proj_a1 "projaone1234567890ab"
+    @proj_base "organizations/org-alpha/projects/projaone1234567890ab"
+
+    setup do
+      TestEnv.fake_login!()
+      TestEnv.stub_api!()
+      :ok
+    end
+
+    test "find walks the tree in listing order, inclusive of the start" do
+      output =
+        capture_io(fn ->
+          assert CLI.run(["find", "organizations/org-alpha", "-maxdepth", "1"]) == 0
+        end)
+
+      assert output == """
+             organizations/org-alpha
+             organizations/org-alpha/info.json
+             organizations/org-alpha/members.json
+             organizations/org-alpha/projects
+             organizations/org-alpha/regions.json
+             """
+    end
+
+    test "find filters by -type and -name" do
+      output =
+        capture_io(fn ->
+          assert CLI.run(["find", "organizations/org-alpha", "-maxdepth", "1", "-type", "d"]) ==
+                   0
+        end)
+
+      assert output == "organizations/org-alpha\norganizations/org-alpha/projects\n"
+
+      output =
+        capture_io(fn ->
+          assert CLI.run([
+                   "find",
+                   "organizations/org-alpha",
+                   "-maxdepth",
+                   "1",
+                   "-name",
+                   "*.json"
+                 ]) == 0
+        end)
+
+      assert output == """
+             organizations/org-alpha/info.json
+             organizations/org-alpha/members.json
+             organizations/org-alpha/regions.json
+             """
+    end
+
+    test "find never fetches file bodies" do
+      capture_io(fn ->
+        assert CLI.run(["find", "#{@proj_base}/config", "-maxdepth", "1"]) == 0
+      end)
+
+      assert TestEnv.hits("/v1/projects/#{@proj_a1}/config/auth") == 0
+      assert TestEnv.hits("/v1/projects/#{@proj_a1}/config/database/postgres") == 0
+    end
+
+    test "find on a bogus path exits 1" do
+      stderr =
+        capture_io(:stderr, fn ->
+          assert CLI.run(["find", "organizations/nope"]) == 1
+        end)
+
+      assert stderr =~ "No such path"
+    end
+
+    test "find rejects bad flags" do
+      assert capture_io(:stderr, fn -> assert CLI.run(["find", "-type", "x"]) == 1 end) =~
+               "invalid -type"
+
+      assert capture_io(:stderr, fn -> assert CLI.run(["find", "-frobnicate"]) == 1 end) =~
+               "unknown option"
+    end
+
+    test "grep -l prints matching file paths, searching directories recursively" do
+      output =
+        capture_io(fn ->
+          assert CLI.run(["grep", "-l", "site_url", "#{@proj_base}/config"]) == 0
+        end)
+
+      assert output == "#{@proj_base}/config/auth.json\n"
+    end
+
+    test "grep on a single file omits the path prefix; -n adds line numbers" do
+      output =
+        capture_io(fn ->
+          assert CLI.run(["grep", "-n", "site_url", "#{@proj_base}/config/auth.json"]) == 0
+        end)
+
+      assert output == ~s(5:  "site_url": "https://alpha-one.example.com"\n)
+    end
+
+    test "grep prefixes paths when searching multiple files" do
+      output =
+        capture_io(fn ->
+          assert CLI.run([
+                   "grep",
+                   "healthy",
+                   "#{@proj_base}/health",
+                   "#{@proj_base}/config/auth.json"
+                 ]) == 0
+        end)
+
+      assert output =~ "#{@proj_base}/health:auth: healthy"
+      refute output =~ "auth.json"
+    end
+
+    test "grep -i ignores case" do
+      assert capture_io(fn ->
+               assert CLI.run(["grep", "-i", "SITE_URL", "#{@proj_base}/config/auth.json"]) == 0
+             end) =~ "site_url"
+    end
+
+    test "grep exits 1 when nothing matches, like grep(1)" do
+      assert capture_io(fn ->
+               assert CLI.run(["grep", "no-such-string-anywhere", "#{@proj_base}/health"]) == 1
+             end) == ""
+    end
+
+    test "grep reports binary files without dumping bytes" do
+      output =
+        capture_io(fn ->
+          assert CLI.run(["grep", "eszip", "#{@proj_base}/functions/hello/body"]) == 0
+        end)
+
+      assert output == "Binary file #{@proj_base}/functions/hello/body matches\n"
+    end
+
+    test "grep without a pattern is a usage error" do
+      assert capture_io(:stderr, fn -> assert CLI.run(["grep"]) == 1 end) =~
+               "Usage: supablock grep"
+
+      assert capture_io(:stderr, fn -> assert CLI.run(["grep", "-z", "x", "."]) == 1 end) =~
+               "unknown option -z"
+    end
+
+    test "grep rejects an invalid pattern" do
+      assert capture_io(:stderr, fn ->
+               assert CLI.run(["grep", "(", "#{@proj_base}/health"]) == 1
+             end) =~ "bad pattern"
+    end
+
+    test "head and tail print the first/last lines" do
+      output =
+        capture_io(fn ->
+          assert CLI.run(["head", "-n", "2", "#{@proj_base}/health"]) == 0
+        end)
+
+      assert output == "auth: healthy\ndb: healthy\n"
+
+      output =
+        capture_io(fn ->
+          assert CLI.run(["tail", "-n", "1", "#{@proj_base}/health"]) == 0
+        end)
+
+      assert output == "storage: healthy\n"
+    end
+
+    test "head with multiple paths prints ==> headers <==" do
+      output =
+        capture_io(fn ->
+          assert CLI.run(["head", "-n1", "#{@proj_base}/health", "#{@proj_base}/config/auth.json"]) ==
+                   0
+        end)
+
+      assert output ==
+               "==> #{@proj_base}/health <==\nauth: healthy\n\n==> #{@proj_base}/config/auth.json <==\n{\n"
+    end
+
+    test "head passes binary bodies through byte-exact (no unicode errors)" do
+      output =
+        capture_io(fn ->
+          assert CLI.run(["head", "-n", "1", "#{@proj_base}/functions/hello/body"]) == 0
+        end)
+
+      assert output == Supablock.Fixtures.function_body() <> "\n"
+    end
+
+    test "a downstream reader closing the pipe exits 141 quietly" do
+      # Model `supablock ls | head -0`: stdout's device is gone mid-write.
+      # The group leader is swapped for a StringIO that is closed before
+      # the command writes, which fails exactly like a broken pipe
+      # (`{:error, :terminated}`).
+      {:ok, dead} = StringIO.open("")
+      previous = Process.group_leader()
+      Process.group_leader(self(), dead)
+
+      try do
+        StringIO.close(dead)
+        assert CLI.run(["ls"]) == 141
+      after
+        Process.group_leader(self(), previous)
+      end
+    end
+
+    test "cat - reads paths from stdin, one per line (find | cat - pipelines)" do
+      input = "#{@proj_base}/health\n#{@proj_base}/config/auth.json\n"
+
+      output =
+        capture_io(input, fn ->
+          assert CLI.run(["cat", "-"]) == 0
+        end)
+
+      assert output =~ "db: healthy"
+      assert output =~ "site_url"
+    end
+
+    test "cat -0 - reads NUL-delimited paths (find -print0 pairing)" do
+      input = "#{@proj_base}/health" <> <<0>> <> "#{@proj_base}/config/auth.json" <> <<0>>
+
+      output =
+        capture_io(input, fn ->
+          assert CLI.run(["cat", "-0", "-"]) == 0
+        end)
+
+      assert output =~ "db: healthy"
+      assert output =~ "site_url"
+    end
+
+    test "find -print0 emits NUL-delimited paths" do
+      output =
+        capture_io(fn ->
+          assert CLI.run([
+                   "find",
+                   "organizations/org-alpha",
+                   "-maxdepth",
+                   "1",
+                   "-type",
+                   "f",
+                   "-print0"
+                 ]) == 0
+        end)
+
+      assert output ==
+               Enum.join(
+                 [
+                   "organizations/org-alpha/info.json",
+                   "organizations/org-alpha/members.json",
+                   "organizations/org-alpha/regions.json"
+                 ],
+                 <<0>>
+               ) <> <<0>>
+    end
+
+    test "CLI reads work end-to-end through a running daemon" do
+      {:ok, _pid} = Supablock.Control.start(nil)
+      on_exit(fn -> Supablock.Control.stop() end)
+
+      assert capture_io(fn -> assert CLI.run(["ls", "organizations"]) == 0 end) ==
+               "org-alpha\norg-beta\n"
+
+      assert capture_io(fn ->
+               assert CLI.run(["cat", "#{@proj_base}/health"]) == 0
+             end) =~ "db: healthy"
+
+      assert capture_io(fn ->
+               assert CLI.run(["grep", "-l", "site_url", "#{@proj_base}/config"]) == 0
+             end) == "#{@proj_base}/config/auth.json\n"
+    end
+
+    # `serve stop` against a live daemon is not exercised here: the daemon
+    # answers by stopping the VM, which would take the test node with it.
+    test "serve refuses to double-start" do
+      {:ok, _pid} = Supablock.Control.start(nil)
+      on_exit(fn -> Supablock.Control.stop() end)
+
+      stderr = capture_io(:stderr, fn -> assert CLI.run(["serve"]) == 1 end)
+      assert stderr =~ "already running"
+    end
+
+    test "serve stop without a daemon says so" do
+      stderr = capture_io(:stderr, fn -> assert CLI.run(["serve", "stop"]) == 1 end)
+      assert stderr =~ "No supablock daemon running."
+    end
+
+    test "head on a directory says so and exits 1" do
+      stderr =
+        capture_io(:stderr, fn ->
+          assert CLI.run(["head", "organizations"]) == 1
+        end)
+
+      assert stderr =~ "Is a directory: /organizations"
+    end
+
+    test "head without a path is a usage error" do
+      assert capture_io(:stderr, fn -> assert CLI.run(["head"]) == 1 end) =~
+               "Usage: supablock head"
+
+      assert capture_io(:stderr, fn -> assert CLI.run(["tail", "-n", "x", "p"]) == 1 end) =~
+               "non-negative integer"
+    end
+  end
+
+  test "find and grep without auth exit 2" do
+    stderr = capture_io(:stderr, fn -> assert CLI.run(["find"]) == 2 end)
+    assert stderr =~ "Not authenticated. Run: supablock login"
+
+    stderr = capture_io(:stderr, fn -> assert CLI.run(["grep", "x", "."]) == 2 end)
+    assert stderr =~ "Not authenticated. Run: supablock login"
+  end
+
   test "ls and cat without auth exit 2" do
     stderr = capture_io(:stderr, fn -> assert CLI.run(["ls"]) == 2 end)
     assert stderr =~ "Not authenticated. Run: supablock login"

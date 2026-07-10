@@ -10,12 +10,17 @@ defmodule Supablock.CLI do
       supablock mount [--path <dir>] [dir] [--foreground] [--verbose]
       supablock unmount [mountpoint]
       supablock ls [path]
-      supablock cat <path> [path...]
+      supablock cat [-0] <path|-> [path...]
+      supablock head|tail [-n <count>] <path> [path...]
+      supablock find [path] [-type f|d] [-name <glob>] [-maxdepth <n>] [-print0]
+      supablock grep [-iln] [--maxdepth <n>] <pattern> [path...]
+      supablock serve [stop]
       supablock refresh [--check]
       supablock help
 
   Exit codes: 0 ok · 1 usage error · 2 not authenticated · 3 API/network
-  error · 4 environment error.
+  error · 4 environment error · 141 downstream pipe closed (128+SIGPIPE,
+  coreutils-style).
   """
 
   alias Supablock.{
@@ -30,9 +35,10 @@ defmodule Supablock.CLI do
     OAuth,
     Paths,
     Profile,
-    Router,
     Service,
-    Signals
+    Signals,
+    Tree,
+    Walk
   }
 
   @usage """
@@ -57,6 +63,19 @@ defmodule Supablock.CLI do
     supablock unmount [mountpoint]        Unmount a running supablock
     supablock ls [path]                 List a tree directory straight off the API (no mount)
     supablock cat <path> [path...]      Print tree file(s) straight off the API (no mount)
+                                        "-" reads paths from stdin (find … | cat -);
+                                        -0 makes stdin NUL-delimited (find -print0)
+    supablock head <path> [path...]     First lines of tree file(s); -n <count>, default 10
+    supablock tail <path> [path...]     Last lines of tree file(s); -n <count>, default 10
+    supablock find [path]               Walk the tree, print each path (no mount)
+                                        Filters: -type f|d, -name <glob>, -maxdepth <n>;
+                                        -print0 for NUL-delimited output
+    supablock grep <pattern> [path...]  Search file contents (no mount); directories
+                                        recurse. -i ignore case, -l paths only,
+                                        -n line numbers, --maxdepth <n>.
+                                        Exits 1 when nothing matches, like grep(1)
+    supablock serve                     Serve a shared warm cache for ls/cat/find/grep
+                                        (no FUSE needed; stop with: supablock serve stop)
     supablock refresh                   Flush the cache of a mounted supablock
     supablock refresh --check           Report cache staleness without flushing
     supablock service install           Auto-start the mount at login (systemd/launchd)
@@ -98,7 +117,34 @@ defmodule Supablock.CLI do
     # `release eval` boots a clean node: the :supablock application (cache
     # tables and all) is not started until we ask.
     {:ok, _apps} = Application.ensure_all_started(:supablock)
+    stdio_opts = :io.getopts(:standard_io)
 
+    try do
+      dispatch(argv)
+    catch
+      # The downstream reader closed the pipe (supablock cat … | head -1).
+      # Coreutils die of SIGPIPE here; mirror that as a quiet 128+SIGPIPE.
+      :epipe -> 141
+    after
+      # Undo raw_stdout!/0: on OTP 26+ the io server behind stdout can be
+      # shared with other standard devices, so a leaked latin1 flip would
+      # outlive the command (in tests, it bled into ExUnit's captures).
+      restore_stdio(stdio_opts)
+    end
+  end
+
+  defp restore_stdio(opts) when is_list(opts) do
+    case List.keyfind(opts, :encoding, 0) do
+      {:encoding, encoding} -> _ = :io.setopts(:standard_io, encoding: encoding)
+      nil -> :ok
+    end
+
+    :ok
+  end
+
+  defp restore_stdio(_error), do: :ok
+
+  defp dispatch(argv) do
     case argv do
       [] -> help()
       ["help" | _rest] -> help()
@@ -115,6 +161,11 @@ defmodule Supablock.CLI do
       ["unmount" | rest] -> unmount(rest)
       ["ls" | rest] -> ls(rest)
       ["cat" | rest] -> cat(rest)
+      ["head" | rest] -> head_tail(:head, rest)
+      ["tail" | rest] -> head_tail(:tail, rest)
+      ["find" | rest] -> find(rest)
+      ["grep" | rest] -> grep(rest)
+      ["serve" | rest] -> serve(rest)
       ["refresh" | rest] -> refresh(rest)
       ["service" | rest] -> service(rest)
       [unknown | _rest] -> usage_error("Unknown command: #{unknown}")
@@ -462,16 +513,22 @@ defmodule Supablock.CLI do
   end
 
   defp print_mount_status do
-    if File.exists?(Paths.control_socket()) do
-      mountpoint =
-        case File.read(Paths.mount_info_file()) do
-          {:ok, body} -> String.trim(body)
-          {:error, _reason} -> "(unknown)"
-        end
+    cond do
+      not File.exists?(Paths.control_socket()) ->
+        IO.puts("Mounted: no")
 
-      IO.puts("Mounted: yes, at #{mountpoint}")
-    else
-      IO.puts("Mounted: no")
+      File.exists?(Paths.mount_info_file()) ->
+        mountpoint =
+          case File.read(Paths.mount_info_file()) do
+            {:ok, body} -> String.trim(body)
+            {:error, _reason} -> "(unknown)"
+          end
+
+        IO.puts("Mounted: yes, at #{mountpoint}")
+
+      true ->
+        # A control socket without a mountpoint on record: supablock serve.
+        IO.puts("Mounted: no (cache daemon running — supablock serve)")
     end
   end
 
@@ -703,24 +760,52 @@ defmodule Supablock.CLI do
   # mount at all — containers without /dev/fuse, CI, AI-agent sandboxes —
   # and it keeps every guarantee of the mount (GET-only, redaction,
   # deterministic rendering) because it *is* the same code.
+  #
+  # All tree output goes through out/out_bytes so pipelines behave like
+  # coreutils: raw bytes (IO.puts raises on non-UTF-8 bodies), and a
+  # vanished downstream reader ends the command quietly instead of
+  # crashing (see the :epipe catch in run/1).
+
+  defp out(line), do: out_bytes([line, ?\n])
+
+  defp out_bytes(bytes) do
+    case IO.binwrite(bytes) do
+      :ok -> :ok
+      # :terminated — stdout is gone because the reader closed the pipe.
+      {:error, _reason} -> throw(:epipe)
+    end
+  rescue
+    # Some OTP releases raise instead of returning the error tuple.
+    ErlangError -> throw(:epipe)
+  end
+
+  # Tree output is bytes, not chardata. A unicode-mode stdout device (the
+  # default under noshell since OTP 26, and whenever the launcher sets it)
+  # re-encodes binwrite's latin1-typed bytes, double-encoding every UTF-8
+  # body. Byte-oriented mode makes writes pass through verbatim.
+  defp raw_stdout! do
+    _ = :io.setopts(:standard_io, encoding: :latin1)
+    :ok
+  end
 
   defp ls(args) do
     with :authed <- require_auth() do
+      raw_stdout!()
       path = tree_path(List.first(args) || "/")
 
-      case Router.describe(path) do
+      case Tree.kind(path) do
         {:ok, :dir} ->
-          case Router.list(path) do
+          case Tree.list(path) do
             {:ok, entries} ->
-              Enum.each(entries, &IO.puts/1)
+              Enum.each(entries, &out/1)
               0
 
             {:error, reason} ->
               path_error(path, reason)
           end
 
-        {:ok, {:file, _size}} ->
-          IO.puts(Path.basename(path))
+        {:ok, :file} ->
+          out(Path.basename(path))
           0
 
         {:error, reason} ->
@@ -732,13 +817,20 @@ defmodule Supablock.CLI do
   end
 
   defp cat(args) do
-    case args do
+    {null_flags, paths} = Enum.split_with(args, &(&1 in ["-0", "--null"]))
+    null? = null_flags != []
+
+    case paths do
       [] ->
-        usage_error("Usage: supablock cat <path> [path...]")
+        usage_error("Usage: supablock cat [-0] <path|-> [path...]")
 
       paths ->
         with :authed <- require_auth() do
-          Enum.reduce_while(paths, 0, fn path, _ok ->
+          raw_stdout!()
+
+          paths
+          |> expand_stdin_paths(null?)
+          |> Enum.reduce_while(0, fn path, _ok ->
             case cat_one(tree_path(path)) do
               :ok -> {:cont, 0}
               {:error, code} -> {:halt, code}
@@ -750,18 +842,42 @@ defmodule Supablock.CLI do
     end
   end
 
+  # "-" pulls paths from stdin, so discovery pipes into reading with one
+  # warm process on the reading side: supablock find … -type f | supablock
+  # cat -. Line-delimited stdin is consumed lazily (each path is read as it
+  # arrives); -0 pairs with find -print0 for names with spaces or newlines.
+  defp expand_stdin_paths(paths, null?) do
+    Stream.flat_map(paths, fn
+      "-" -> stdin_paths(null?)
+      path -> [path]
+    end)
+  end
+
+  defp stdin_paths(false) do
+    IO.stream(:stdio, :line)
+    |> Stream.map(&String.trim_trailing(&1, "\n"))
+    |> Stream.reject(&(&1 == ""))
+  end
+
+  defp stdin_paths(true) do
+    case IO.read(:stdio, :eof) do
+      data when is_binary(data) -> String.split(data, <<0>>, trim: true)
+      _eof_or_error -> []
+    end
+  end
+
   defp cat_one(path) do
-    case Router.read(path) do
+    case Tree.read(path) do
       {:ok, body} ->
-        IO.binwrite(body)
+        out_bytes(body)
         :ok
 
       {:error, :eio} ->
         # Router says :eio both for "that's a directory" and for real API
-        # trouble; describe (served from the warm cache) tells them apart.
-        case Router.describe(path) do
+        # trouble; kind (resolution only, no render) tells them apart.
+        case Tree.kind(path) do
           {:ok, :dir} ->
-            IO.puts(:stderr, "Is a directory: #{path}")
+            err("Is a directory: #{path}")
             {:error, 1}
 
           _not_a_dir ->
@@ -773,33 +889,417 @@ defmodule Supablock.CLI do
     end
   end
 
-  # Accept mount-style ("/organizations/acme"), relative ("organizations/acme")
-  # and shell-ish (".", "./x") spellings; the Router ignores duplicate slashes.
-  defp tree_path(path) do
-    case String.trim(path) do
-      "." -> "/"
-      "./" <> rest -> "/" <> rest
-      trimmed -> "/" <> trimmed
+  ## head / tail — partial reads (know a rows file before catting all of it)
+
+  defp head_tail(mode, args) do
+    with :authed <- require_auth(),
+         {:ok, count, paths} <- parse_head_tail(mode, args) do
+      raw_stdout!()
+      header? = length(paths) > 1
+
+      paths
+      |> Enum.with_index()
+      |> Enum.reduce_while(0, fn {path, index}, _ok ->
+        if header? do
+          if index > 0, do: out("")
+          out("==> #{path} <==")
+        end
+
+        case head_tail_one(mode, count, tree_path(path)) do
+          :ok -> {:cont, 0}
+          {:error, code} -> {:halt, code}
+        end
+      end)
+    else
+      {:exit, code} -> code
+      {:error, message} -> usage_error(message)
     end
   end
 
+  defp head_tail_one(mode, count, path) do
+    case Tree.read(path) do
+      {:ok, body} ->
+        lines = split_lines(body)
+
+        shown =
+          case mode do
+            :head -> Enum.take(lines, count)
+            :tail -> Enum.take(lines, -count)
+          end
+
+        Enum.each(shown, &out/1)
+        :ok
+
+      {:error, :eio} ->
+        case Tree.kind(path) do
+          {:ok, :dir} ->
+            err("Is a directory: #{path}")
+            {:error, 1}
+
+          _not_a_dir ->
+            {:error, path_error(path, :eio)}
+        end
+
+      {:error, reason} ->
+        {:error, path_error(path, reason)}
+    end
+  end
+
+  defp parse_head_tail(mode, args), do: parse_head_tail(args, 10, [], mode)
+
+  defp parse_head_tail([], _count, [], mode),
+    do: {:error, "Usage: supablock #{mode} [-n <count>] <path> [path...]"}
+
+  defp parse_head_tail([], count, paths, _mode), do: {:ok, count, Enum.reverse(paths)}
+
+  defp parse_head_tail([flag, value | rest], _count, paths, mode)
+       when flag in ["-n", "--lines"] do
+    case Integer.parse(value) do
+      {n, ""} when n >= 0 -> parse_head_tail(rest, n, paths, mode)
+      _other -> {:error, "#{mode}: #{flag} needs a non-negative integer"}
+    end
+  end
+
+  defp parse_head_tail(["-n" <> digits | rest], _count, paths, mode) when digits != "" do
+    case Integer.parse(digits) do
+      {n, ""} when n >= 0 -> parse_head_tail(rest, n, paths, mode)
+      _other -> {:error, "#{mode}: -n needs a non-negative integer"}
+    end
+  end
+
+  defp parse_head_tail([flag], _count, _paths, mode) when flag in ["-n", "--lines"],
+    do: {:error, "#{mode}: #{flag} needs a value"}
+
+  defp parse_head_tail(["-" <> _rest = flag | _more], _count, _paths, mode),
+    do: {:error, "#{mode}: unknown option #{flag}"}
+
+  defp parse_head_tail([path | rest], count, paths, mode),
+    do: parse_head_tail(rest, count, [path | paths], mode)
+
+  ## find — walk the tree, print matching paths (find(1)-style flags)
+
+  defp find(args) do
+    with :authed <- require_auth(),
+         {:ok, start, opts} <- parse_find(args) do
+      raw_stdout!()
+
+      Walk.reduce(start, opts.max_depth, 0, fn
+        {:error, path, reason}, code ->
+          max(code, path_error(path, reason))
+
+        {kind, path}, code ->
+          if find_match?(path, kind, opts) do
+            if opts.print0, do: out_bytes([path, 0]), else: out(path)
+          end
+
+          code
+      end)
+    else
+      {:exit, code} -> code
+      {:error, message} -> usage_error(message)
+    end
+  end
+
+  defp find_match?(path, kind, opts) do
+    (opts.type == nil or opts.type == kind) and
+      (opts.name == nil or Regex.match?(opts.name, Path.basename(path)))
+  end
+
+  defp parse_find(args),
+    do: parse_find(args, nil, %{type: nil, name: nil, max_depth: :infinity, print0: false})
+
+  defp parse_find([], path, opts), do: {:ok, path || ".", opts}
+
+  defp parse_find([flag, value | rest], path, opts) when flag in ["-type", "--type"] do
+    case value do
+      "f" -> parse_find(rest, path, %{opts | type: :file})
+      "d" -> parse_find(rest, path, %{opts | type: :dir})
+      other -> {:error, "find: invalid #{flag} '#{other}' (use f or d)"}
+    end
+  end
+
+  defp parse_find([flag, glob | rest], path, opts) when flag in ["-name", "--name"] do
+    parse_find(rest, path, %{opts | name: glob_regex(glob)})
+  end
+
+  defp parse_find([flag, value | rest], path, opts)
+       when flag in ["-maxdepth", "--maxdepth"] do
+    case Integer.parse(value) do
+      {n, ""} when n >= 0 -> parse_find(rest, path, %{opts | max_depth: n})
+      _other -> {:error, "find: #{flag} needs a non-negative integer"}
+    end
+  end
+
+  defp parse_find([flag | rest], path, opts) when flag in ["-print0", "--print0"] do
+    parse_find(rest, path, %{opts | print0: true})
+  end
+
+  defp parse_find([flag], _path, _opts)
+       when flag in ["-type", "--type", "-name", "--name", "-maxdepth", "--maxdepth"],
+       do: {:error, "find: #{flag} needs a value"}
+
+  defp parse_find(["-" <> _rest = flag | _more], _path, _opts),
+    do: {:error, "find: unknown option #{flag}"}
+
+  defp parse_find([arg | rest], nil, opts), do: parse_find(rest, arg, opts)
+
+  defp parse_find([arg | _rest], _path, _opts),
+    do: {:error, "find: one start path only (extra argument: #{arg})"}
+
+  # Shell-glob basename matching: * and ? only, anchored.
+  defp glob_regex(glob) do
+    pattern =
+      glob
+      |> Regex.escape()
+      |> String.replace("\\*", ".*")
+      |> String.replace("\\?", ".")
+
+    Regex.compile!("^" <> pattern <> "$")
+  end
+
+  ## grep — search file contents; directories recurse (like grep -r)
+
+  defp grep(args) do
+    with :authed <- require_auth(),
+         {:ok, pattern, paths, opts} <- parse_grep(args),
+         {:ok, regex} <- compile_grep_pattern(pattern, opts) do
+      raw_stdout!()
+
+      # grep(1) prefixes matches with the file name unless the operand is
+      # one explicit file.
+      prefix? =
+        case paths do
+          [single] -> Tree.kind(tree_path(single)) != {:ok, :file}
+          _many -> true
+        end
+
+      {matched?, code} =
+        Enum.reduce(paths, {false, 0}, fn path, acc ->
+          grep_path(regex, path, opts, prefix?, acc)
+        end)
+
+      cond do
+        code > 0 -> code
+        matched? -> 0
+        true -> 1
+      end
+    else
+      {:exit, code} -> code
+      {:error, message} -> usage_error(message)
+    end
+  end
+
+  defp grep_path(regex, path, opts, prefix?, {matched?, code}) do
+    case Tree.kind(tree_path(path)) do
+      {:ok, :file} ->
+        grep_file(regex, path, opts, prefix?, {matched?, code})
+
+      {:ok, :dir} ->
+        Walk.reduce(path, opts.max_depth, {matched?, code}, fn
+          {:file, file}, acc -> grep_file(regex, file, opts, prefix?, acc)
+          {:dir, _dir}, acc -> acc
+          {:error, bad, reason}, {m, c} -> {m, max(c, path_error(bad, reason))}
+        end)
+
+      {:error, reason} ->
+        {matched?, max(code, path_error(path, reason))}
+    end
+  end
+
+  defp grep_file(regex, path, opts, prefix?, {matched?, code}) do
+    case Tree.read(tree_path(path)) do
+      {:ok, body} -> {grep_body(regex, path, body, opts, prefix?) or matched?, code}
+      {:error, reason} -> {matched?, max(code, path_error(path, reason))}
+    end
+  end
+
+  defp grep_body(regex, path, body, opts, prefix?) do
+    if String.contains?(body, <<0>>) do
+      # An opaque binary (a function's eszip body): report like grep(1)
+      # instead of dumping bytes into the terminal.
+      if Regex.match?(regex, body) do
+        out(if opts.files_only, do: path, else: "Binary file #{path} matches")
+        true
+      else
+        false
+      end
+    else
+      matches =
+        body
+        |> split_lines()
+        |> Enum.with_index(1)
+        |> Enum.filter(fn {line, _n} -> Regex.match?(regex, line) end)
+
+      cond do
+        matches == [] ->
+          false
+
+        opts.files_only ->
+          out(path)
+          true
+
+        true ->
+          Enum.each(matches, fn {line, n} ->
+            out(grep_line(path, n, line, opts, prefix?))
+          end)
+
+          true
+      end
+    end
+  end
+
+  defp grep_line(path, n, line, opts, prefix?) do
+    IO.iodata_to_binary([
+      if(prefix?, do: [path, ":"], else: []),
+      if(opts.line_numbers, do: [Integer.to_string(n), ":"], else: []),
+      line
+    ])
+  end
+
+  defp compile_grep_pattern(pattern, opts) do
+    case Regex.compile(pattern, if(opts.ignore_case, do: "i", else: "")) do
+      {:ok, regex} -> {:ok, regex}
+      {:error, {message, at}} -> {:error, "grep: bad pattern at #{at}: #{message}"}
+    end
+  end
+
+  @grep_usage "Usage: supablock grep [-iln] [--maxdepth <n>] <pattern> [path...]"
+
+  defp parse_grep(args) do
+    opts = %{ignore_case: false, files_only: false, line_numbers: false, max_depth: :infinity}
+    parse_grep(args, [], opts, false)
+  end
+
+  defp parse_grep([], positional, opts, _raw?) do
+    case Enum.reverse(positional) do
+      [pattern | paths] -> {:ok, pattern, if(paths == [], do: ["."], else: paths), opts}
+      [] -> {:error, @grep_usage}
+    end
+  end
+
+  defp parse_grep(["--" | rest], positional, opts, false),
+    do: parse_grep(rest, positional, opts, true)
+
+  defp parse_grep(["--maxdepth", value | rest], positional, opts, false) do
+    case Integer.parse(value) do
+      {n, ""} when n >= 0 -> parse_grep(rest, positional, %{opts | max_depth: n}, false)
+      _other -> {:error, "grep: --maxdepth needs a non-negative integer"}
+    end
+  end
+
+  defp parse_grep(["--maxdepth"], _positional, _opts, false),
+    do: {:error, "grep: --maxdepth needs a value"}
+
+  defp parse_grep(["-" <> flags = arg | rest], positional, opts, false) when flags != "" do
+    case grep_flags(flags, opts) do
+      {:ok, opts} -> parse_grep(rest, positional, opts, false)
+      :error -> {:error, "grep: unknown option #{arg}\n#{@grep_usage}"}
+    end
+  end
+
+  defp parse_grep([arg | rest], positional, opts, raw?),
+    do: parse_grep(rest, [arg | positional], opts, raw?)
+
+  # Combined short flags (-rin). -r/-R are accepted for muscle memory but
+  # change nothing: directories always recurse.
+  defp grep_flags(flags, opts) do
+    flags
+    |> String.graphemes()
+    |> Enum.reduce_while({:ok, opts}, fn
+      "i", {:ok, opts} -> {:cont, {:ok, %{opts | ignore_case: true}}}
+      "l", {:ok, opts} -> {:cont, {:ok, %{opts | files_only: true}}}
+      "n", {:ok, opts} -> {:cont, {:ok, %{opts | line_numbers: true}}}
+      r, {:ok, opts} when r in ["r", "R"] -> {:cont, {:ok, opts}}
+      _other, _acc -> {:halt, :error}
+    end)
+  end
+
+  ## serve — a mountless cache daemon
+  #
+  # Same warm shared cache a mount gives ls/cat/find/grep (they resolve
+  # through it via the control socket, see Supablock.Tree) — but with no
+  # FUSE, no privileges, no mountpoint. This is the batch-read mode for
+  # sandboxes that can run the CLI but cannot mount.
+
+  defp serve(["stop" | _rest]) do
+    case Control.send_cmd("unmount") do
+      {:ok, "ok"} ->
+        IO.puts("Stopped.")
+        0
+
+      _no_daemon ->
+        IO.puts(:stderr, "No supablock daemon running.")
+        1
+    end
+  end
+
+  defp serve([]) do
+    with :authed <- require_auth() do
+      case Control.send_cmd("check") do
+        {:ok, "ok" <> _stats} ->
+          IO.puts(:stderr, "A supablock daemon is already running (mount or serve).")
+          1
+
+        _not_running ->
+          serve_foreground()
+      end
+    else
+      {:exit, code} -> code
+    end
+  end
+
+  defp serve(_other), do: usage_error("Usage: supablock serve [stop]")
+
+  defp serve_foreground do
+    attach_file_logger()
+    Signals.install()
+
+    case Control.start(nil) do
+      {:ok, _pid} ->
+        IO.puts("Serving a shared cache on #{Paths.control_socket()}")
+        IO.puts("ls/cat/find/grep on this machine now reuse it automatically.")
+        IO.puts("Stop with: supablock serve stop   (or Ctrl-C)")
+        Process.sleep(:infinity)
+        0
+
+      {:error, reason} ->
+        IO.puts(:stderr, "Could not start the cache daemon: #{inspect(reason)}")
+        4
+    end
+  end
+
+  # Body → lines, without a phantom empty line from the trailing newline.
+  defp split_lines(body) do
+    lines = String.split(body, "\n")
+    if List.last(lines) == "", do: Enum.drop(lines, -1), else: lines
+  end
+
+  # Accept mount-style ("/organizations/acme"), relative ("organizations/acme")
+  # and shell-ish (".", "./x") spellings; the Router ignores duplicate slashes.
+  defp tree_path(path), do: Walk.router_path(path)
+
+  # These can fire while raw_stdout!/0 has the io server in byte mode, so
+  # they write bytes (never chardata needing transcoding) and stick to
+  # ASCII text; only `path` can carry non-ASCII, and bytes pass through.
+  defp err(line), do: IO.binwrite(:standard_error, [line, ?\n])
+
   defp path_error(path, :enoent) do
-    IO.puts(:stderr, "No such path: #{path}")
+    err("No such path: #{path}")
     1
   end
 
   defp path_error(path, :eacces) do
-    IO.puts(:stderr, "Access denied for #{path} — run: supablock login")
+    err("Access denied for #{path} - run: supablock login")
     2
   end
 
   defp path_error(path, :eagain) do
-    IO.puts(:stderr, "Rate limited while reading #{path} — try again shortly.")
+    err("Rate limited while reading #{path} - try again shortly.")
     3
   end
 
   defp path_error(path, _reason) do
-    IO.puts(:stderr, "API error reading #{path}")
+    err("API error reading #{path}")
     3
   end
 
