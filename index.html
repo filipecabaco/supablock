@@ -263,8 +263,8 @@
     font-size: 13.5px;
     line-height: 1.6;
     color: #d6d6d6;
-    min-height: 22.5em;
-    overflow-x: auto;
+    height: 43em;
+    overflow: hidden;
     white-space: pre;
   }
 
@@ -574,7 +574,7 @@
     /* let the headline wrap naturally on narrow screens */
     h1 br { display: none; }
     .lede { font-size: 16.5px; }
-    .term-body { min-height: 16em; font-size: 12.5px; padding: 14px 16px 18px; }
+    .term-body { height: 43em; font-size: 12.5px; padding: 14px 16px 18px; overflow: hidden; }
     .code pre { font-size: 12.5px; padding: 13px 72px 13px 14px; }
     .guarantee { padding: 18px 16px; }
     section { padding: 36px 0 6px; }
@@ -647,7 +647,7 @@
 
 <main>
   <div class="wrap hero">
-    <span class="eyebrow">Read-only FUSE filesystem · Elixir</span>
+    <span class="eyebrow">Read-only FUSE filesystem</span>
     <h1>Your Supabase account, <br>mounted at <span class="path mono">/mnt/supabase</span></h1>
     <p class="lede">
       supablock mirrors the Supabase Management API as a browsable directory tree.
