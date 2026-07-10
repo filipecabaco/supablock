@@ -6,7 +6,7 @@
 > project's table rows as a directory tree. Every request is a GET — the
 > tool physically cannot create, change or delete anything.
 
-Two ways to read the tree:
+Three ways to read the tree:
 
 - `supablock ls|cat|head|tail|find|grep` — resolve tree paths straight off
   the API. Works anywhere: no FUSE, no privileges, no mount, no daemon.
@@ -67,9 +67,9 @@ pretty-printed, trailing newline) so diffs are clean; exit codes are 0 ok,
 1 usage/no-such-path (grep: also "no matches"), 2 not authenticated,
 3 API/network/rate-limited, 4 environment, 141 downstream pipe closed;
 output is pipe-safe (`supablock cat … | jq`, `… | head` all behave like
-coreutils); the Management API allows 120 requests/minute (batch reads:
-`supablock cat pathA pathB` amortizes one process and one cache);
-`api-keys/secret` stays REDACTED unless the user opts in.
+coreutils); the Management API allows 120 requests/minute — for batch
+reads start `supablock serve &` (shared warm cache) and keep walks scoped
+with `-maxdepth`; `api-keys/secret` stays REDACTED unless the user opts in.
 
 ## Links
 

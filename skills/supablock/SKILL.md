@@ -134,9 +134,7 @@ diff <(supablock cat .../projects/<staging>/config/auth.json) \
      <(supablock cat .../projects/<prod>/config/auth.json)
 
 # Any public storage buckets?
-for b in $(supablock ls organizations/<org>/projects/<ref>/storage/buckets); do
-  supablock cat organizations/<org>/projects/<ref>/storage/buckets/$b/info.json | jq -r 'select(.public) | .name'
-done
+supablock grep -l '"public": true' organizations/<org>/projects/<ref>/storage
 
 # What functions are deployed, and at which version?
 supablock ls organizations/<org>/projects/<ref>/functions
@@ -158,10 +156,9 @@ supablock cat organizations/<org>/projects/<ref>/database/public/users/rows-0000
   is byte-exact for binary bodies and a closed pipe ends the command
   quietly (exit 141), never with a stack trace.
 - **Rate limits:** the Management API allows 120 req/min. Exit 3 with a
-  "Rate limited" message means back off and retry. Each `ls`/`cat`
-  invocation has a cold cache, so batch reads
-  (`supablock cat pathA pathB pathC`) and don't loop tightly; a FUSE mount
-  shares one cache across all reads.
+  "Rate limited" message means back off and retry. For bursts, start
+  `supablock serve &` first (shared warm cache — see above) and keep
+  walks scoped with `-maxdepth`; don't loop tightly.
 - **Secrets:** `api-keys/secret` renders `REDACTED …` unless the user opted
   in (`supablock config set expose_secrets true`). Do not enable that
   yourself unless the user asks.

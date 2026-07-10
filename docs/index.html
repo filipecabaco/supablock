@@ -856,9 +856,9 @@
         <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
         <pre><span class="c"># no mount, no FUSE, no privileges — works in any sandbox</span>
 <span class="p">$</span> export SUPABLOCK_TOKEN=sbp_...
-<span class="p">$</span> supablock ls organizations/my-org/projects
-<span class="p">$</span> supablock cat organizations/my-org/projects/&lt;ref&gt;/health
+<span class="p">$</span> supablock serve &amp;   <span class="c"># optional: one warm cache for every read below</span>
 <span class="p">$</span> supablock grep -l '"disable_signup": false' organizations/my-org
+<span class="p">$</span> supablock find organizations/my-org -name 'auth.json' | supablock cat - | jq .site_url
 
 <span class="c"># or with zero installation, via the Docker image</span>
 <span class="p">$</span> docker run --rm -e SUPABLOCK_TOKEN filipecabaco/supablock \
@@ -868,11 +868,12 @@
       <div class="facts">
         <div class="fact">
           <span class="k"><svg class="icon" aria-hidden="true"><use href="#i-command-line"/></svg>ls · cat · find · grep, no mount</span>
-          <p><strong>Reads without FUSE.</strong> <code>supablock ls</code>, <code>cat</code>,
+          <p><strong>Reads without FUSE.</strong> <code>ls</code>, <code>cat</code>,
              <code>head</code>, <code>tail</code>, <code>find</code> and <code>grep</code> resolve
-             tree paths straight off the API through the same router as the mount — same
-             guarantees, zero privileges. Stable exit codes (<code>2</code> unauthenticated,
-             <code>3</code> rate-limited) make failures scriptable.</p>
+             tree paths straight off the API — same guarantees as the mount, zero privileges,
+             coreutils semantics and exit codes. They connect with ordinary pipes
+             (<code>find … | cat -</code>), and <code>supablock serve</code> gives them one
+             shared warm cache for batch reads — still no FUSE.</p>
         </div>
         <div class="fact">
           <span class="k"><svg class="icon" aria-hidden="true"><use href="#i-arrow-down-tray"/></svg>npx skills add</span>
@@ -1090,17 +1091,24 @@ rows-000000.csv  rows-000500.csv  rows-001000.csv
             <tr><td><code>supablock mount [--path dir] [dir]</code></td><td>Mount in the background and return immediately (default <code>~/Supabase</code>); recovers stale mounts automatically. <code>--foreground</code> blocks instead.</td></tr>
             <tr><td><code>supablock unmount [dir]</code></td><td>Unmount from another shell.</td></tr>
             <tr><td><code>supablock ls [path]</code></td><td>List a tree directory straight off the API — no mount, no FUSE, no privileges.</td></tr>
-            <tr><td><code>supablock cat &lt;path&gt; [path…]</code></td><td>Print tree file(s) straight off the API; several paths share one process and cache.</td></tr>
-            <tr><td><code>supablock refresh</code></td><td>Flush the cache of a live mount; next reads re-fetch.</td></tr>
+            <tr><td><code>supablock cat &lt;path|-&gt; [path…]</code></td><td>Print tree file(s) straight off the API. <code>-</code> reads paths from stdin as they arrive (<code>find … | cat -</code>); <code>-0</code> takes NUL-delimited stdin.</td></tr>
+            <tr><td><code>supablock head|tail [-n N] &lt;path…&gt;</code></td><td>First/last lines of tree file(s) — sample a big rows file before fetching every page.</td></tr>
+            <tr><td><code>supablock find [path] [filters]</code></td><td>Walk the tree and print paths, find(1)-style: <code>-type f|d</code>, <code>-name &lt;glob&gt;</code>, <code>-maxdepth N</code>, <code>-print0</code>.</td></tr>
+            <tr><td><code>supablock grep [-iln] &lt;pat&gt; [path…]</code></td><td>Search file contents; directories recurse, binary bodies are flagged, exit <code>1</code> means no match — grep(1) semantics.</td></tr>
+            <tr><td><code>supablock serve [stop]</code></td><td>Mountless cache daemon: while it runs, every ls/cat/find/grep on the machine shares its warm cache. No FUSE needed.</td></tr>
+            <tr><td><code>supablock refresh</code></td><td>Flush the cache of a live mount or serve daemon; next reads re-fetch.</td></tr>
             <tr><td><code>supablock refresh --check</code></td><td>Report cache staleness (total / past-TTL entries) without flushing.</td></tr>
             <tr><td><code>supablock service install|uninstall|status</code></td><td>Auto-start the mount at login — systemd user unit (Linux) or launchd agent (macOS).</td></tr>
           </tbody>
         </table>
       </div>
       <p class="body" style="font-size: 13.5px;">
-        Exit codes: <span class="mono">0</span> ok · <span class="mono">1</span> usage ·
-        <span class="mono">2</span> not authenticated · <span class="mono">3</span> API/network ·
-        <span class="mono">4</span> environment.
+        Exit codes: <span class="mono">0</span> ok · <span class="mono">1</span> usage
+        (grep: no matches) · <span class="mono">2</span> not authenticated ·
+        <span class="mono">3</span> API/network · <span class="mono">4</span> environment ·
+        <span class="mono">141</span> downstream pipe closed. Output is pipe-safe:
+        <span class="mono">supablock cat … | head</span> ends quietly, and bodies pass
+        through byte-exact.
       </p>
     </div>
   </section>
@@ -1186,7 +1194,7 @@ rows-000000.csv  rows-000500.csv  rows-001000.csv
 
 <footer>
   <div class="wrap">
-    <span class="mono">supablock v0.1 · Elixir + FUSE · MIT-licensed vendored ports</span>
+    <span class="mono">supablock v0.2 · Elixir + FUSE · MIT-licensed vendored ports</span>
     <span>An independent community tool — not affiliated with or endorsed by Supabase.</span>
   </div>
 </footer>
