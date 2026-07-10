@@ -179,6 +179,12 @@ workflow (`.github/workflows/release.yml`) builds these binaries per
 platform on tag pushes, so nobody needs a local toolchain — grab the
 artifact and run it.
 
+`supablock docker` works from the single binary too: it launches `docker run
+-it` through a `:nouse_stdio` port so docker inherits the binary's own
+terminal — the BEAM cannot reach `/dev/tty` from inside a Burrito binary, but
+because Burrito execs it with `-noshell`, its stdin/stdout/stderr already are
+the terminal.
+
 ### What is (and isn't) inside the single binary
 
 FUSE has a userspace half and a kernel half, and only the first can travel
