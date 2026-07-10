@@ -129,7 +129,6 @@ jobs:
           # On any failed assert, publish the failing command and every
           # intermediate output as ::error annotations — those render on
           # the run page even without log access.
-          set -E
           annotate_file() {
             echo "::error title=e2e diag $1::$(head -c 1200 "$1" | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"}{print}')"
           }
@@ -269,7 +268,6 @@ jobs:
           python3 docker/e2e/mgmt_api_shim.py 54341 2>shim.log &
           shim=$!
           trap 'kill $shim' EXIT
-          set -E
           annotate_file() {
             echo "::error title=e2e diag $1::$(head -c 1200 "$1" | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"}{print}')"
           }
