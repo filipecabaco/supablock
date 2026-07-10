@@ -759,21 +759,23 @@
   <section id="docker">
     <div class="wrap">
       <p class="sec-label"><svg class="icon" aria-hidden="true"><use href="#i-cube"/></svg>Docker</p>
-      <h2>One command — <span class="mono">supablock docker</span></h2>
+      <h2>One command — <span class="mono">docker run</span></h2>
       <p class="body">
         The <a href="https://hub.docker.com/r/filipecabaco/supablock" rel="noopener">filipecabaco/supablock</a>
         image needs nothing on your machine but Docker: it logs you in, mounts your account inside
         the container, and drops you into a shell at <span class="mono">/supabase</span> — with
         <span class="mono">ls</span>, <span class="mono">cat</span>, <span class="mono">grep</span>,
         <span class="mono">find</span> and <span class="mono">diff</span> ready to go. Exiting the
-        shell unmounts and removes the container. <span class="mono">supablock docker</span>
-        assembles the whole invocation for you — volume, FUSE flags, TTY — so you never have to
-        remember the plumbing.
+        shell unmounts and removes the container.
       </p>
 
       <div class="code">
         <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
-        <pre><span class="p">$</span> supablock docker</pre>
+        <pre><span class="p">$</span> docker run -it --rm \
+    --device /dev/fuse --cap-add SYS_ADMIN \
+    --security-opt apparmor=unconfined \
+    -v supablock-config:/root/.config/supablock \
+    filipecabaco/supablock</pre>
       </div>
 
       <div class="facts">
@@ -1068,7 +1070,6 @@ rows-000000.csv  rows-000500.csv  rows-001000.csv
             <tr><td><code>supablock unmount [dir]</code></td><td>Unmount from another shell.</td></tr>
             <tr><td><code>supablock ls [path]</code></td><td>List a tree directory straight off the API — no mount, no FUSE, no privileges.</td></tr>
             <tr><td><code>supablock cat &lt;path&gt; [path…]</code></td><td>Print tree file(s) straight off the API; several paths share one process and cache.</td></tr>
-            <tr><td><code>supablock docker</code></td><td>Interactive containerized session — assembles the whole <code>docker run</code> (volume, FUSE flags, TTY) for you.</td></tr>
             <tr><td><code>supablock refresh</code></td><td>Flush the cache of a live mount; next reads re-fetch.</td></tr>
             <tr><td><code>supablock refresh --check</code></td><td>Report cache staleness (total / past-TTL entries) without flushing.</td></tr>
             <tr><td><code>supablock service install|uninstall|status</code></td><td>Auto-start the mount at login — systemd user unit (Linux) or launchd agent (macOS).</td></tr>
