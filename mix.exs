@@ -83,54 +83,15 @@ defmodule Supablock.MixProject do
   defp elixirc_paths(:test), do: ["lib", "test/support"]
   defp elixirc_paths(_), do: ["lib"]
 
-  # hex.pm is not reachable from the environment this project is developed
-  # in, so every dependency is pinned as a git tag or vendored:
-  #
-  #   * userfs/efuse — vendored (with patches; see vendor/*/mix.exs) because
-  #     upstream needed fixes: libfuse3 port, read-only mount, single-threaded
-  #     loop, bounded reply buffer, errno passthrough, stale-mount watchdog.
-  #   * req and its transitive closure — git tags matching the hex releases.
   defp deps do
     [
       {:userfs, path: "vendor/userfs", runtime: false},
       {:efuse, path: "vendor/efuse", override: true, runtime: false},
-      {:req, git: "https://github.com/wojtekmach/req.git", tag: "v0.5.18", override: true},
-      {:jason, git: "https://github.com/michalmuskala/jason.git", tag: "v1.4.4", override: true},
-      # The `database/` tree (row viewing) reads through a project's Data API
-      # (PostgREST) over HTTPS with `req` — no direct database connection, and
-      # no credential beyond a key fetched from the GET-only Management API.
-      {:finch, git: "https://github.com/sneako/finch.git", tag: "v0.20.0", override: true},
-      {:mint, git: "https://github.com/elixir-mint/mint.git", tag: "v1.9.1", override: true},
-      {:hpax, git: "https://github.com/elixir-mint/hpax.git", tag: "v1.0.4", override: true},
-      {:mime, git: "https://github.com/elixir-plug/mime.git", tag: "v2.0.7", override: true},
-      {:nimble_options,
-       git: "https://github.com/dashbitco/nimble_options.git", tag: "v1.1.1", override: true},
-      {:nimble_pool,
-       git: "https://github.com/dashbitco/nimble_pool.git", tag: "v1.1.0", override: true},
-      {:telemetry,
-       git: "https://github.com/beam-telemetry/telemetry.git", tag: "v1.3.0", override: true},
       {:castore, path: "vendor/castore", override: true},
-      # Build-time only: wraps the release into a single-file binary.
-      {:burrito,
-       git: "https://github.com/burrito-elixir/burrito.git", tag: "v1.5.0", runtime: false},
-      {:typed_struct,
-       git: "https://github.com/ejpcmac/typed_struct.git",
-       tag: "v0.3.0",
-       override: true,
-       runtime: false},
-      # OAuth login callback server: Francis (route DSL) on top of Bandit.
-      # Started on demand during `supablock login` only — boot stays a no-op.
-      {:francis, git: "https://github.com/filipecabaco/francis.git", tag: "v0.3.3"},
-      {:bandit, git: "https://github.com/mtrudel/bandit.git", tag: "1.11.1", override: true},
-      {:thousand_island,
-       git: "https://github.com/mtrudel/thousand_island.git", tag: "1.4.3", override: true},
-      {:websock,
-       git: "https://github.com/phoenixframework/websock.git", tag: "0.5.3", override: true},
-      {:websock_adapter,
-       git: "https://github.com/phoenixframework/websock_adapter.git", tag: "0.5.9", override: true},
-      {:plug, git: "https://github.com/elixir-plug/plug.git", tag: "v1.20.1", override: true},
-      {:plug_crypto,
-       git: "https://github.com/elixir-plug/plug_crypto.git", tag: "v2.1.1", override: true}
+      {:req, "~> 0.5.18"},
+      {:jason, "~> 1.4"},
+      {:francis, "~> 0.3.3"},
+      {:burrito, "~> 1.5.0", runtime: false}
     ]
   end
 end

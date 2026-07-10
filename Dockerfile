@@ -18,9 +18,8 @@
 # Matches the mise.toml toolchain pins (Erlang 27.3.x, Elixir 1.18.4).
 FROM hexpm/elixir:1.18.4-erlang-27.3.4.14-alpine-3.22.5 AS build
 
-# git: every dep is a pinned git tag (no hex.pm; see mix.exs).
 # fuse3-dev + pkgconf: the efuse FUSE port is a small C program.
-RUN apk add --no-cache build-base pkgconf git fuse3-dev
+RUN apk add --no-cache build-base pkgconf fuse3-dev
 
 WORKDIR /app
 ENV MIX_ENV=prod
