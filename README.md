@@ -69,6 +69,64 @@ curl -fsSL https://filipecabaco.github.io/supablock/install.sh | sh
 the rolling `canary` build); `SUPABLOCK_INSTALL_DIR` overrides the default
 `~/.local/bin`.
 
+### Docker
+
+Nothing to install at all — one `docker run` logs you in, mounts your
+account inside the container, and drops you into a shell at the mountpoint:
+
+```bash
+docker run -it --rm \
+  --device /dev/fuse --cap-add SYS_ADMIN \
+  --security-opt apparmor=unconfined \
+  -v supablock-config:/root/.config/supablock \
+  filipecabaco/supablock
+```
+
+On the first run the container has no credential, so it starts the login
+flow: open the printed URL on your host browser, type the verification code
+back at the prompt, and you land in a shell at `/supabase` — `ls
+organizations`, `cat`, `grep` away. The credential is written to the
+`supablock-config` volume on the host, so every later run skips login and
+goes straight to the mounted shell. Exiting the shell stops the container
+and unmounts. (`docker volume rm supablock-config` is the container
+equivalent of `supablock logout`.)
+
+The image is multi-arch (amd64/arm64), Alpine-based and ~100 MB; pushes to
+`main` refresh `filipecabaco/supablock:latest` and version tags publish
+`:X.Y.Z` (`.github/workflows/docker.yml`).
+
+Details worth knowing:
+
+* **The FUSE flags are not optional.** A FUSE mount inside a container
+  needs the host's FUSE device (`--device /dev/fuse`) and mount permission
+  (`--cap-add SYS_ADMIN`; `--security-opt apparmor=unconfined` because the
+  default Docker AppArmor profile denies `mount` on Debian/Ubuntu hosts —
+  harmless where AppArmor isn't in play). The mount lives *inside* the
+  container's namespace; it is not visible on the host.
+* **Run a one-off command instead of a shell** — everything after the image
+  name runs at the mountpoint once it's up:
+
+  ```bash
+  docker run -it --rm --device /dev/fuse --cap-add SYS_ADMIN \
+    --security-opt apparmor=unconfined \
+    -v supablock-config:/root/.config/supablock \
+    filipecabaco/supablock grep -r '"site_url"' organizations
+  ```
+
+* **Plain subcommands pass through** without mounting: `docker run --rm -it
+  … filipecabaco/supablock status` (also `login`, `logout`, `doctor`,
+  `config`, …).
+* **Headless / CI:** skip the login flow entirely with
+  `-e SUPABLOCK_TOKEN=sbp_…` — no volume or TTY needed.
+* **Login flow in a container:** the image intentionally uses the
+  dashboard session flow (URL + verification code) rather than OAuth — the
+  OAuth callback listens on `127.0.0.1:53682`, which port-publishing cannot
+  reach across the container boundary. On Linux you can still opt into
+  OAuth with `--network host` plus your own app identity
+  (`-e SUPABLOCK_OAUTH_CLIENT_ID=… -e SUPABLOCK_OAUTH_CLIENT_SECRET=…`).
+* `SUPABLOCK_MOUNTPOINT` changes the in-container mountpoint (default
+  `/supabase`).
+
 ### Building from source
 
 Prerequisites:
@@ -438,7 +496,10 @@ needs no real project or Postgres to test.
 
 CI (`.github/workflows/ci.yml`) runs the unit suite on every push, and a
 separate job runs the FUSE + supabase-CLI end-to-ends — the same commands as
-above, with the CLI installed and the release prebuilt.
+above, with the CLI installed and the release prebuilt. A third workflow
+(`.github/workflows/docker.yml`) builds the container image per
+architecture, smoke-tests it, and pushes the multi-arch manifest to Docker
+Hub (`filipecabaco/supablock`) on every push to `main` and on version tags.
 
 The e2e suite runs hermetically by default: a local stub Management API
 serves canned fixtures, the supabase CLI is pointed at it with a custom

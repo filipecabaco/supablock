@@ -1,0 +1,19 @@
+# Keep the build context down to what the Dockerfile copies.
+_build/
+deps/
+burrito_out/
+cover/
+doc/
+tmp/
+.git/
+.github/
+docs/
+notes/
+test/
+erl_crash.dump
+*.ez
+supablock-*.tar
+vendor/efuse/c_src/efuse
+vendor/efuse/c_src/*.o
+vendor/efuse/c_src/*.d
+vendor/efuse/priv/efuse

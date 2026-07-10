@@ -601,6 +601,9 @@
   <symbol id="i-arrow-down-tray" viewBox="0 0 24 24">
     <path d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3"/>
   </symbol>
+  <symbol id="i-cube" viewBox="0 0 24 24">
+    <path d="M21 7.5l-9-5.25L3 7.5m18 0l-9 5.25m9-5.25v9l-9 5.25M3 7.5l9 5.25M3 7.5v9l9 5.25m0-9v9"/>
+  </symbol>
 </svg>
 
 <header class="top">
@@ -609,6 +612,7 @@
     <nav class="top-nav">
       <a href="#tree">The tree</a>
       <a href="#install">Install</a>
+      <a href="#docker">Docker</a>
       <a href="#quickstart">Quick start</a>
       <a href="#service">Auto-start</a>
       <a href="#tables">Table data</a>
@@ -801,6 +805,60 @@
 <span class="p">✓</span> credentials mode 0600
 <span class="p">✓</span> efuse port binary compiled</pre>
       </div>
+    </div>
+  </section>
+
+  <section id="docker">
+    <div class="wrap">
+      <p class="sec-label"><svg class="icon" aria-hidden="true"><use href="#i-cube"/></svg>Docker</p>
+      <h2>Or skip the install — one <span class="mono">docker run</span></h2>
+      <p class="body">
+        The <a href="https://hub.docker.com/r/filipecabaco/supablock" rel="noopener">filipecabaco/supablock</a>
+        image needs nothing on your machine but Docker: it logs you in, mounts your account inside
+        the container, and drops you into a shell at <span class="mono">/supabase</span> — with
+        <span class="mono">ls</span>, <span class="mono">cat</span>, <span class="mono">grep</span>,
+        <span class="mono">find</span> and <span class="mono">diff</span> ready to go. Exiting the
+        shell unmounts and removes the container.
+      </p>
+
+      <div class="code">
+        <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
+        <pre><span class="p">$</span> docker run -it --rm \
+    --device /dev/fuse --cap-add SYS_ADMIN \
+    --security-opt apparmor=unconfined \
+    -v supablock-config:/root/.config/supablock \
+    filipecabaco/supablock</pre>
+      </div>
+
+      <div class="facts">
+        <div class="fact">
+          <span class="k"><svg class="icon" aria-hidden="true"><use href="#i-key"/></svg>login once, in the volume</span>
+          <p><strong>Credentials live on your machine.</strong> An empty
+             <code>supablock-config</code> volume triggers the login flow — open the printed URL
+             on your host, type the verification code — and every later run goes straight to the
+             mounted shell. <code>docker volume rm supablock-config</code> logs you out.</p>
+        </div>
+        <div class="fact">
+          <span class="k"><svg class="icon" aria-hidden="true"><use href="#i-lock-closed"/></svg>--device /dev/fuse</span>
+          <p><strong>The flags are FUSE plumbing.</strong> Mounting inside a container needs the
+             host's FUSE device, <code>CAP_SYS_ADMIN</code>, and — on Debian/Ubuntu hosts — an
+             AppArmor exemption for <code>mount</code>. The tree stays inside the container's
+             namespace, read-only as always.</p>
+        </div>
+        <div class="fact">
+          <span class="k"><svg class="icon" aria-hidden="true"><use href="#i-command-line"/></svg>scriptable</span>
+          <p><strong>One-off commands and CI.</strong> Anything after the image name runs at the
+             mountpoint — <code>… filipecabaco/supablock grep -r '"site_url"' organizations</code> —
+             and <code>-e SUPABLOCK_TOKEN=sbp_…</code> skips the login flow entirely for headless
+             use.</p>
+        </div>
+      </div>
+
+      <p class="body">
+        The image is Alpine-based, multi-arch (amd64/arm64) and rebuilt by CI:
+        every push to <span class="mono">main</span> refreshes
+        <span class="mono">:latest</span>, version tags publish <span class="mono">:X.Y.Z</span>.
+      </p>
     </div>
   </section>
 
@@ -1229,11 +1287,21 @@ rows-000000.csv  rows-000500.csv  rows-001000.csv
   document.querySelectorAll(".copy").forEach(function (btn) {
     btn.addEventListener("click", function () {
       var pre = btn.parentElement.querySelector("pre");
-      var text = pre.innerText
-        .split("\n")
-        .filter(function (l) { return l.indexOf("$ ") === 0; })
-        .map(function (l) { return l.slice(2); })
-        .join("\n");
+      // Keep "$ "-prefixed command lines, plus the continuation lines of any
+      // command ending in a backslash (multi-line docker run and friends).
+      var kept = [];
+      var continuing = false;
+      pre.innerText.split("\n").forEach(function (l) {
+        if (l.indexOf("$ ") === 0) {
+          kept.push(l.slice(2));
+        } else if (continuing) {
+          kept.push(l);
+        } else {
+          return;
+        }
+        continuing = /\\\s*$/.test(l);
+      });
+      var text = kept.join("\n");
       if (!text) text = pre.innerText;
       navigator.clipboard.writeText(text).then(function () {
         var label = btn.querySelector("span");
