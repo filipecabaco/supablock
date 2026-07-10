@@ -17,9 +17,7 @@ name: docker
 
 on:
   push:
-    # The feature branch is temporary, for iterating on the e2e itself —
-    # PUSH stays false off main/tags, so these runs never touch Docker Hub.
-    branches: [main, "claude/project-comparison-just-bash-dxjb3v"]
+    branches: [main]
     tags: ["v*"]
   workflow_dispatch:
 
