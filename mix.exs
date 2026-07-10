@@ -83,13 +83,16 @@ defmodule Supablock.MixProject do
   defp elixirc_paths(:test), do: ["lib", "test/support"]
   defp elixirc_paths(_), do: ["lib"]
 
-  # Dependencies are declared with standard hex version requirements, except
-  # for the two vendored packages:
+  # Only direct dependencies are listed; hex resolves the transitive closure
+  # (finch/mint/bandit/telemetry/… used to be pinned here only to force a git
+  # source, which is no longer needed).
   #
-  #   * userfs/efuse — vendored (with patches; see vendor/*/mix.exs) because
-  #     upstream needed fixes: libfuse3 port, read-only mount, single-threaded
-  #     loop, bounded reply buffer, errno passthrough, stale-mount watchdog.
-  #     castore is likewise vendored so it ships with the release.
+  # Vendored path deps (patched, see vendor/*/mix.exs):
+  #   * userfs/efuse — upstream needed fixes: libfuse3 port, read-only mount,
+  #     single-threaded loop, bounded reply buffer, errno passthrough,
+  #     stale-mount watchdog.
+  #   * castore — overrides the hex castore pulled in transitively so the
+  #     release ships a pinned CA bundle.
   #
   # `mix deps.get` needs hex.pm reachable; if the build environment blocks it,
   # configure a hex mirror (HEX_MIRROR) or run deps.get where hex is available.
@@ -97,31 +100,21 @@ defmodule Supablock.MixProject do
     [
       {:userfs, path: "vendor/userfs", runtime: false},
       {:efuse, path: "vendor/efuse", override: true, runtime: false},
-      {:req, "~> 0.5.18", override: true},
-      {:jason, "~> 1.4.4", override: true},
+      {:castore, path: "vendor/castore", override: true},
       # The `database/` tree (row viewing) reads through a project's Data API
       # (PostgREST) over HTTPS with `req` — no direct database connection, and
       # no credential beyond a key fetched from the GET-only Management API.
-      {:finch, "~> 0.20.0", override: true},
-      {:mint, "~> 1.9.1", override: true},
-      {:hpax, "~> 1.0.4", override: true},
-      {:mime, "~> 2.0.7", override: true},
-      {:nimble_options, "~> 1.1.1", override: true},
-      {:nimble_pool, "~> 1.1.0", override: true},
-      {:telemetry, "~> 1.3.0", override: true},
-      {:castore, path: "vendor/castore", override: true},
-      # Build-time only: wraps the release into a single-file binary.
-      {:burrito, "~> 1.5.0", runtime: false},
-      {:typed_struct, "~> 0.3.0", override: true, runtime: false},
+      {:req, "~> 0.5.18"},
+      {:jason, "~> 1.4"},
       # OAuth login callback server: Francis (route DSL) on top of Bandit.
       # Started on demand during `supablock login` only — boot stays a no-op.
       {:francis, "~> 0.3.3"},
-      {:bandit, "~> 1.11.1", override: true},
-      {:thousand_island, "~> 1.4.3", override: true},
-      {:websock, "~> 0.5.3", override: true},
-      {:websock_adapter, "~> 0.5.9", override: true},
-      {:plug, "~> 1.20.1", override: true},
-      {:plug_crypto, "~> 2.1.1", override: true}
+      # Plug.Conn (callback handler) and Plug.Crypto.secure_compare (CLI) are
+      # used directly; plug_crypto ships with plug but is declared explicitly.
+      {:plug, "~> 1.20"},
+      {:plug_crypto, "~> 2.1"},
+      # Build-time only: wraps the release into a single-file binary.
+      {:burrito, "~> 1.5.0", runtime: false}
     ]
   end
 end
