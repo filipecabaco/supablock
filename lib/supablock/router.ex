@@ -64,6 +64,20 @@ defmodule Supablock.Router do
     end
   end
 
+  @doc """
+  Like `describe/1` but never renders a file body — classification costs
+  only the (cached) parent listings. This is what the no-mount walkers
+  (`find`, `grep`) use, so a walk stays as cheap as `ls -R`.
+  """
+  @spec kind(String.t()) :: {:ok, :dir | :file} | {:error, error}
+  def kind(path) do
+    case resolve(segments(path)) do
+      {:dir, _lister} -> {:ok, :dir}
+      {:file, _render} -> {:ok, :file}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
   @spec list(String.t()) :: {:ok, [String.t()]} | {:error, error}
   def list(path) do
     case resolve(segments(path)) do

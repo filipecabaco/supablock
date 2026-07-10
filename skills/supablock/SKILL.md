@@ -42,8 +42,9 @@ Pick the first option that works in your environment:
 
 ## Reading — no mount needed
 
-`ls` and `cat` resolve tree paths straight off the API. They work in any
-sandbox: no FUSE, no /dev/fuse, no privileges, no daemon.
+`ls`, `cat`, `head`, `tail`, `find` and `grep` resolve tree paths straight
+off the API. They work in any sandbox: no FUSE, no /dev/fuse, no
+privileges, no daemon.
 
 ```bash
 supablock ls                                    # -> organizations
@@ -51,7 +52,25 @@ supablock ls organizations                      # org slugs
 supablock ls organizations/<org>/projects       # project refs
 supablock cat organizations/<org>/projects/<ref>/health
 supablock cat organizations/<org>/projects/<ref>/config/auth.json
+
+# discover paths without knowing the tree by heart
+supablock find organizations/<org> -name '*.json' -maxdepth 3
+supablock find organizations/<org>/projects/<ref> -type d
+
+# search file contents; directories recurse (grep -r semantics)
+supablock grep -l '"public": true' organizations/<org>/projects/<ref>/storage
+supablock grep -in 'site_url' organizations/<org>/projects/<ref>/config
+
+# peek at big row files before reading all pages
+supablock head -n 20 organizations/<org>/projects/<ref>/database/public/users/rows-000000.csv
 ```
+
+`find` takes `-type f|d`, `-name <glob>` and `-maxdepth <n>`; `grep` takes
+`-i` (ignore case), `-l` (paths only), `-n` (line numbers) and
+`--maxdepth <n>`, and exits `1` when nothing matched — branch on that like
+you would with grep(1). Both print paths you can feed straight back to
+`supablock cat`. Keep walks scoped (a start path plus `-maxdepth`) — an
+unbounded walk of a big account burns the 120 req/min budget.
 
 If FUSE **is** available (e.g. the Docker image run with
 `--device /dev/fuse --cap-add SYS_ADMIN --security-opt apparmor=unconfined`),

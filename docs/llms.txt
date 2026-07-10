@@ -8,12 +8,16 @@
 
 Two ways to read the tree:
 
-- `supablock ls [path]` / `supablock cat <path>` — resolve tree paths
-  straight off the API. Works anywhere: no FUSE, no privileges, no mount,
-  no daemon. This is the mode for AI agents, CI, and restricted sandboxes.
+- `supablock ls|cat|head|tail|find|grep` — resolve tree paths straight off
+  the API. Works anywhere: no FUSE, no privileges, no mount, no daemon.
+  This is the mode for AI agents, CI, and restricted sandboxes.
+  `find [path] [-type f|d] [-name <glob>] [-maxdepth <n>]` walks the tree
+  and prints paths; `grep [-iln] [--maxdepth <n>] <pattern> [path...]`
+  searches file contents (directories recurse; exit 1 = no matches, like
+  grep(1)); `head`/`tail [-n <count>]` take partial reads of big row files.
 - `supablock mount ~/Supabase` — a real FUSE mount (kernel-enforced
-  read-only) for `grep -r`, `find` and `diff` across the whole account
-  with a shared cache.
+  read-only) so any Unix tool works across the whole account with a
+  shared cache.
 
 Authentication for non-interactive use: set `SUPABLOCK_TOKEN=sbp_…` (a
 personal access token from supabase.com/dashboard/account/tokens). It
@@ -28,6 +32,8 @@ Quick start for an agent with shell access:
     supablock ls organizations/<org>/projects
     supablock cat organizations/<org>/projects/<ref>/health
     supablock cat organizations/<org>/projects/<ref>/config/auth.json
+    supablock find organizations/<org> -name '*.json' -maxdepth 3
+    supablock grep -l '"disable_signup": false' organizations/<org>
 
 Or via Docker, with nothing installed (image: filipecabaco/supablock):
 

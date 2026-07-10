@@ -858,6 +858,7 @@
 <span class="p">$</span> export SUPABLOCK_TOKEN=sbp_...
 <span class="p">$</span> supablock ls organizations/my-org/projects
 <span class="p">$</span> supablock cat organizations/my-org/projects/&lt;ref&gt;/health
+<span class="p">$</span> supablock grep -l '"disable_signup": false' organizations/my-org
 
 <span class="c"># or with zero installation, via the Docker image</span>
 <span class="p">$</span> docker run --rm -e SUPABLOCK_TOKEN filipecabaco/supablock \
@@ -866,11 +867,12 @@
 
       <div class="facts">
         <div class="fact">
-          <span class="k"><svg class="icon" aria-hidden="true"><use href="#i-command-line"/></svg>ls · cat, no mount</span>
-          <p><strong>Reads without FUSE.</strong> <code>supablock ls</code> and
-             <code>supablock cat</code> resolve tree paths straight off the API through the same
-             router as the mount — same guarantees, zero privileges. Stable exit codes
-             (<code>2</code> unauthenticated, <code>3</code> rate-limited) make failures scriptable.</p>
+          <span class="k"><svg class="icon" aria-hidden="true"><use href="#i-command-line"/></svg>ls · cat · find · grep, no mount</span>
+          <p><strong>Reads without FUSE.</strong> <code>supablock ls</code>, <code>cat</code>,
+             <code>head</code>, <code>tail</code>, <code>find</code> and <code>grep</code> resolve
+             tree paths straight off the API through the same router as the mount — same
+             guarantees, zero privileges. Stable exit codes (<code>2</code> unauthenticated,
+             <code>3</code> rate-limited) make failures scriptable.</p>
         </div>
         <div class="fact">
           <span class="k"><svg class="icon" aria-hidden="true"><use href="#i-arrow-down-tray"/></svg>npx skills add</span>
