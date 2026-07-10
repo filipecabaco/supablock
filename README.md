@@ -91,15 +91,8 @@ goes straight to the mounted shell. Exiting the shell stops the container
 and unmounts. (`docker volume rm supablock-config` is the container
 equivalent of `supablock logout`.)
 
-Already have the supablock binary? It remembers that command for you:
-
-```bash
-supablock docker    # assembles the exact docker run above and drops you in
-```
-
-`SUPABLOCK_DOCKER_IMAGE` and `SUPABLOCK_DOCKER_VOLUME` override the image
-and credentials volume, and a set `SUPABLOCK_TOKEN` is forwarded into the
-container (skipping the login flow).
+To skip the login flow, pass a token into the container with
+`-e SUPABLOCK_TOKEN=sbp_...`.
 
 The image is multi-arch (amd64/arm64), Alpine-based and ~32 MB; pushes to
 `main` refresh `filipecabaco/supablock:latest` and version tags publish
@@ -178,12 +171,6 @@ The binary self-extracts on first run and behaves exactly like the launcher
 workflow (`.github/workflows/release.yml`) builds these binaries per
 platform on tag pushes, so nobody needs a local toolchain — grab the
 artifact and run it.
-
-`supablock docker` works from the single binary too: it launches `docker run
--it` through a `:nouse_stdio` port so docker inherits the binary's own
-terminal — the BEAM cannot reach `/dev/tty` from inside a Burrito binary, but
-because Burrito execs it with `-noshell`, its stdin/stdout/stderr already are
-the terminal.
 
 ### What is (and isn't) inside the single binary
 
@@ -442,7 +429,6 @@ supablock ls [path]                 list a tree directory straight off the API (
 supablock cat <path> [path...]      print tree file(s) straight off the API (no mount)
 supablock refresh                   drop the cache; next reads re-fetch
 supablock refresh --check           report cache staleness without flushing
-supablock docker                    interactive containerized session (wraps docker run)
 ```
 
 Exit codes: `0` ok · `1` usage · `2` not authenticated · `3` API/network ·
