@@ -2,12 +2,13 @@
 <!--
   Source for docs/og.png (the Open Graph / Twitter card image).
 
-  Regenerate after edits by screenshotting this file at 1200x630 with
-  deviceScaleFactor 2 (output 2400x1260), e.g. with Playwright:
+  Regenerate after edits by screenshotting this file at exactly 1200x630
+  (most platforms expect that size). Render at deviceScaleFactor 2 for crisp
+  text and let Playwright downscale to CSS pixels:
 
     const page = await browser.newPage({ viewport: { width: 1200, height: 630 }, deviceScaleFactor: 2 });
     await page.goto('file://' + process.cwd() + '/notes/og-card.html');
-    await page.screenshot({ path: 'docs/og.png' });
+    await page.screenshot({ path: 'docs/og.png', scale: 'css' });
 -->
 <html lang="en">
 <head>
