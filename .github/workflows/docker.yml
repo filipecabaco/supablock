@@ -112,6 +112,7 @@ jobs:
             title text not null,
             done boolean not null default false
           );
+          grant select on table public.todos to anon, authenticated, service_role;
           SQL
           cat > supabase/seed.sql <<'SQL'
           insert into public.todos (title, done) values
@@ -133,6 +134,19 @@ jobs:
           for _i in $(seq 1 50); do
             curl -fsS http://127.0.0.1:54340/v1/organizations >/dev/null && break
             sleep 0.1
+          done
+
+          # Probe the Data API exactly like supablock does, so any failure
+          # below comes with the gateway's own error message in the log.
+          echo "service_role key length: ${#SERVICE_ROLE_KEY}"
+          for probe in "/rest/v1/" "/rest/v1/todos?select=*"; do
+            status=$(curl -sS -o probe.out -w '%{http_code}' \
+              -H "apikey: $SERVICE_ROLE_KEY" \
+              -H "Authorization: Bearer $SERVICE_ROLE_KEY" \
+              -H "Accept-Profile: public" -H "Prefer: count=exact" -H "Range: 0-0" \
+              "$API_URL$probe" || echo "curl-failed")
+            echo "probe $probe -> $status"
+            test "$status" = 200 || test "$status" = 206 || head -c 400 probe.out
           done
 
           run() {
