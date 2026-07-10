@@ -21,7 +21,7 @@ defmodule Supablock.MixProject do
   # code. The release workflow sets SUPABLOCK_BUILD_VERSION per build (the
   # tag for versioned releases, "<base>-canary.<sha>" for canary builds);
   # local builds fall back to the static default.
-  @version "0.2.0"
+  @version "0.3.0"
   defp version, do: System.get_env("SUPABLOCK_BUILD_VERSION", @version)
 
   def application do

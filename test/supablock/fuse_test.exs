@@ -94,8 +94,12 @@ defmodule Supablock.FuseTest do
     #     realtime-config storage-config buckets sso third-party (12 -> 36)
     #   per project (x3): postgrest config for database/ schemas (3)
     #   per function (x2): info + body (4)
+    #   per project (x3): logs/<source> for 11 sources (33)
+    #   per project (x3): metrics -> api-keys(reveal) + metrics scrape (6)
+    #     (Metrics.fetch calls the API directly, so its api-keys read is
+    #      a separate hit from api-keys/secret above.)
     # (Data API row/table reads go through the injected stub, not the API.)
-    budget = 51
+    budget = 90
     assert TestEnv.total_hits() <= budget
 
     # walking again is free (everything within TTL)

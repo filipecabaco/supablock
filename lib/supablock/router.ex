@@ -41,12 +41,12 @@ defmodule Supablock.Router do
 
   require Logger
 
-  alias Supablock.{Cache, Client, Config, Database, Endpoints, Render}
+  alias Supablock.{Cache, Client, Config, Database, Endpoints, Logs, Metrics, Render}
 
   @type node_kind :: :dir | {:file, non_neg_integer}
   @type error :: :enoent | :eio | :eagain | :eacces
 
-  @project_children ~w(info.json health config api-keys functions storage branches database)
+  @project_children ~w(info.json health config api-keys functions storage branches database logs metrics)
   @config_children ~w(auth.json database.json realtime.json storage.json auth)
   @auth_config_children ~w(sso third-party)
   @api_key_children ~w(publishable secret)
@@ -248,6 +248,40 @@ defmodule Supablock.Router do
   # made until someone descends into the folder.
   defp resolve_project(project, ["database" | rest]) do
     resolve_database(project_ref(project), rest)
+  end
+
+  defp resolve_project(_project, ["logs"]) do
+    {:dir, fn -> {:ok, Logs.sources()} end}
+  end
+
+  defp resolve_project(project, ["logs", source]) do
+    if Logs.valid_source?(source) do
+      ref = project_ref(project)
+
+      {:file,
+       fn ->
+         case Logs.fetch(ref, source) do
+           {:ok, data} -> {:ok, Render.logs(data)}
+           {:error, reason} -> {:error, map_error(reason)}
+         end
+       end}
+    else
+      {:error, :enoent}
+    end
+  end
+
+  defp resolve_project(_project, ["logs" | _rest]), do: {:error, :enoent}
+
+  defp resolve_project(project, ["metrics"]) do
+    ref = project_ref(project)
+
+    {:file,
+     fn ->
+       case Metrics.fetch(ref) do
+         {:ok, body} -> {:ok, body}
+         {:error, reason} -> {:error, map_error(reason)}
+       end
+     end}
   end
 
   defp resolve_project(_project, _rest), do: {:error, :enoent}

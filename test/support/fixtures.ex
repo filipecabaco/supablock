@@ -205,6 +205,38 @@ defmodule Supablock.Fixtures do
      end}
   end
 
+  def logs do
+    # The real API returns rows DESC (newest first) with `timestamp` as an
+    # integer count of microseconds since the epoch; fixtures mirror that.
+    %{
+      "result" => [
+        %{
+          "timestamp" => 1_783_684_801_000_000,
+          "event_message" => "statement: SELECT 1",
+          "metadata" => %{"user" => "anon"}
+        },
+        %{
+          "timestamp" => 1_783_684_800_000_000,
+          "event_message" => "connection authorized: user=postgres",
+          "metadata" => %{"user" => "postgres"}
+        }
+      ]
+    }
+  end
+
+  @doc "Prometheus-format metrics text returned by the privileged metrics endpoint."
+  def metrics do
+    """
+    # HELP pg_stat_activity_count Number of connections in pg_stat_activity
+    # TYPE pg_stat_activity_count gauge
+    pg_stat_activity_count{datname="postgres",state="active"} 1
+    pg_stat_activity_count{datname="postgres",state="idle"} 3
+    # HELP pg_database_size_bytes Database size in bytes
+    # TYPE pg_database_size_bytes gauge
+    pg_database_size_bytes{datname="postgres"} 8192000
+    """
+  end
+
   @doc "Default route table for the stub: path (without query) -> JSON value."
   def routes do
     %{
@@ -271,7 +303,14 @@ defmodule Supablock.Fixtures do
       "/v1/projects/projaone1234567890ab/branches" => branches(),
       "/v1/projects/projatwo1234567890ab/branches" => [],
       "/v1/projects/projbone1234567890ab/branches" => [],
-      "/v1/projects/available-regions" => regions_route()
+      "/v1/projects/available-regions" => regions_route(),
+      "/v1/projects/projaone1234567890ab/analytics/endpoints/logs.all" =>
+        {:params, fn _params -> {200, logs()} end},
+      "/v1/projects/projatwo1234567890ab/analytics/endpoints/logs.all" =>
+        {:params, fn _params -> {200, logs()} end},
+      "/v1/projects/projbone1234567890ab/analytics/endpoints/logs.all" =>
+        {:params, fn _params -> {200, logs()} end},
+      "/customer/v1/privileged/metrics" => {:raw, "text/plain; version=0.0.4", metrics()}
     }
   end
 end

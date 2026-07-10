@@ -729,7 +729,9 @@
         <span class="t">│   └──</span> body                             <span class="c"># the deployed eszip bundle</span>
         <span class="t">├──</span> <span class="d">storage/</span><span class="d">buckets/</span>&lt;name&gt;<span class="d">/</span>info.json  <span class="c"># visibility, size limit, MIME types</span>
         <span class="t">├──</span> <span class="d">branches/</span>&lt;branch&gt;<span class="d">/</span>info.json        <span class="c"># preview branches</span>
-        <span class="t">└──</span> <span class="d">database/</span>&lt;schema&gt;<span class="d">/</span>&lt;table&gt;<span class="d">/</span>rows-*.csv <span class="c"># rows via the Data API, GET-only</span></pre>
+        <span class="t">├──</span> <span class="d">database/</span>&lt;schema&gt;<span class="d">/</span>&lt;table&gt;<span class="d">/</span>rows-*.csv <span class="c"># rows via the Data API, GET-only</span>
+        <span class="t">├──</span> <span class="d">logs/</span>&lt;source&gt;                        <span class="c"># NDJSON: postgres, auth, edge, storage…</span>
+        <span class="t">└──</span> metrics                          <span class="c"># Prometheus text for the whole project</span></pre>
       </div>
 
       <p class="body">
@@ -1092,7 +1094,7 @@ rows-000000.csv  rows-000500.csv  rows-001000.csv
             <tr><td><code>supablock unmount [dir]</code></td><td>Unmount from another shell.</td></tr>
             <tr><td><code>supablock ls [path]</code></td><td>List a tree directory straight off the API — no mount, no FUSE, no privileges.</td></tr>
             <tr><td><code>supablock cat &lt;path|-&gt; [path…]</code></td><td>Print tree file(s) straight off the API. <code>-</code> reads paths from stdin as they arrive (<code>find … | cat -</code>); <code>-0</code> takes NUL-delimited stdin.</td></tr>
-            <tr><td><code>supablock head|tail [-n N] &lt;path…&gt;</code></td><td>First/last lines of tree file(s) — sample a big rows file before fetching every page.</td></tr>
+            <tr><td><code>supablock head|tail [-n N] &lt;path…&gt;</code></td><td>First/last lines of tree file(s) — sample a big rows file before fetching every page. <code>tail -f</code> follows a <code>logs/&lt;source&gt;</code> file, polling for new entries (<code>-s N</code> sets the interval, default 30s).</td></tr>
             <tr><td><code>supablock find [path] [filters]</code></td><td>Walk the tree and print paths, find(1)-style: <code>-type f|d</code>, <code>-name &lt;glob&gt;</code>, <code>-maxdepth N</code>, <code>-print0</code>.</td></tr>
             <tr><td><code>supablock grep [-iln] &lt;pat&gt; [path…]</code></td><td>Search file contents; directories recurse, binary bodies are flagged, exit <code>1</code> means no match — grep(1) semantics.</td></tr>
             <tr><td><code>supablock serve [stop]</code></td><td>Mountless cache daemon: while it runs, every ls/cat/find/grep on the machine shares its warm cache. No FUSE needed.</td></tr>
@@ -1194,7 +1196,7 @@ rows-000000.csv  rows-000500.csv  rows-001000.csv
 
 <footer>
   <div class="wrap">
-    <span class="mono">supablock v0.2 · Elixir + FUSE · MIT-licensed vendored ports</span>
+    <span class="mono">supablock v0.3 · Elixir + FUSE · MIT-licensed vendored ports</span>
     <span>An independent community tool — not affiliated with or endorsed by Supabase.</span>
   </div>
 </footer>
