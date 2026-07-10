@@ -7,7 +7,10 @@ insert into public.todos (title, done) values
   ('ship it', false),
   ('handle, commas', false),
   ('say "quoted things"', false),
-  ('emoji ✅ and ünïcødé', true);
+  -- Unicode spelled in \u escapes so this DML stays pure ASCII: the CLI's
+  -- seeding connection double-encodes raw UTF-8 bytes, while server-side
+  -- escape parsing stores the real codepoints.
+  (E'emoji \u2705 and \u00FCn\u00EFc\u00F8d\u00E9', true);
 
 -- 1200 rows -> rows-000000 / rows-000500 / rows-001000 at the default page
 -- size; jsonb + text[] columns render as JSON-encoded CSV fields.
