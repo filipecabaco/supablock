@@ -103,12 +103,17 @@ jobs:
           mkdir e2e-local
           cd e2e-local
           supabase init
-          cat > supabase/seed.sql <<'SQL'
+          # Schema goes in a migration; seed.sql is data-only (the CLI seeds
+          # it as a prepared batch, so DDL+DML in one file fails to prepare).
+          mkdir -p supabase/migrations
+          cat > supabase/migrations/20260101000000_todos.sql <<'SQL'
           create table public.todos (
             id serial primary key,
             title text not null,
             done boolean not null default false
           );
+          SQL
+          cat > supabase/seed.sql <<'SQL'
           insert into public.todos (title, done) values
             ('write the docker e2e', true),
             ('ship it', false);

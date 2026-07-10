@@ -633,7 +633,9 @@ defmodule Supablock.CLITest do
     end
 
     test "a missing docker binary exits 4" do
-      empty = Path.join(System.tmp_dir!(), "supablock-nodocker-#{System.unique_integer([:positive])}")
+      empty =
+        Path.join(System.tmp_dir!(), "supablock-nodocker-#{System.unique_integer([:positive])}")
+
       File.mkdir_p!(empty)
       original_path = System.get_env("PATH")
       System.put_env("PATH", empty)
@@ -650,7 +652,9 @@ defmodule Supablock.CLITest do
     test "without a terminal it refuses politely" do
       # capture_io swaps the group leader for a StringIO, so :io.columns/0
       # fails — exactly the no-TTY condition the command checks for.
-      dir = Path.join(System.tmp_dir!(), "supablock-fakedocker-#{System.unique_integer([:positive])}")
+      dir =
+        Path.join(System.tmp_dir!(), "supablock-fakedocker-#{System.unique_integer([:positive])}")
+
       File.mkdir_p!(dir)
       docker = Path.join(dir, "docker")
       File.write!(docker, "#!/bin/sh\nexit 0\n")
