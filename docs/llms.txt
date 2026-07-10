@@ -1,0 +1,65 @@
+# supablock
+
+> Browse and verify a Supabase account as a read-only filesystem. supablock
+> mirrors the Supabase Management API (organizations, projects, config, API
+> keys, edge functions, storage buckets, auth providers, branches) and each
+> project's table rows as a directory tree. Every request is a GET — the
+> tool physically cannot create, change or delete anything.
+
+Two ways to read the tree:
+
+- `supablock ls [path]` / `supablock cat <path>` — resolve tree paths
+  straight off the API. Works anywhere: no FUSE, no privileges, no mount,
+  no daemon. This is the mode for AI agents, CI, and restricted sandboxes.
+- `supablock mount ~/Supabase` — a real FUSE mount (kernel-enforced
+  read-only) for `grep -r`, `find` and `diff` across the whole account
+  with a shared cache.
+
+Authentication for non-interactive use: set `SUPABLOCK_TOKEN=sbp_…` (a
+personal access token from supabase.com/dashboard/account/tokens). It
+overrides any stored credential and is never written to disk. Interactive
+use: `supablock login`.
+
+Quick start for an agent with shell access:
+
+    curl -fsSL https://filipecabaco.github.io/supablock/install.sh | sh
+    export SUPABLOCK_TOKEN=sbp_...          # ask the user for this
+    supablock ls organizations
+    supablock ls organizations/<org>/projects
+    supablock cat organizations/<org>/projects/<ref>/health
+    supablock cat organizations/<org>/projects/<ref>/config/auth.json
+
+Or via Docker, with nothing installed (image: filipecabaco/supablock):
+
+    docker run --rm -e SUPABLOCK_TOKEN=$SUPABLOCK_TOKEN \
+      filipecabaco/supablock cat organizations/<org>/projects/<ref>/health
+
+Tree shape (all paths under the root):
+
+    organizations/<org>/{info.json,members.json,regions.json}
+    organizations/<org>/projects/<ref>/info.json
+    organizations/<org>/projects/<ref>/health
+    organizations/<org>/projects/<ref>/config/{auth,database,realtime,storage}.json
+    organizations/<org>/projects/<ref>/config/auth/sso/<id>/info.json
+    organizations/<org>/projects/<ref>/config/auth/third-party/<id>/info.json
+    organizations/<org>/projects/<ref>/api-keys/{publishable,secret}
+    organizations/<org>/projects/<ref>/functions/<slug>/{info.json,body}
+    organizations/<org>/projects/<ref>/storage/buckets/<name>/info.json
+    organizations/<org>/projects/<ref>/branches/<branch>/info.json
+    organizations/<org>/projects/<ref>/database/<schema>/<table>/rows-000000.csv
+
+Facts agents should know: JSON output is deterministic (sorted keys,
+pretty-printed, trailing newline) so diffs are clean; exit codes are 0 ok,
+1 usage/no-such-path, 2 not authenticated, 3 API/network/rate-limited,
+4 environment; the Management API allows 120 requests/minute (batch reads:
+`supablock cat pathA pathB` amortizes one process and one cache);
+`api-keys/secret` stays REDACTED unless the user opts in.
+
+## Links
+
+- [Full documentation](https://filipecabaco.github.io/supablock/)
+- [README](https://github.com/filipecabaco/supablock)
+- [Agent skill (SKILL.md)](https://github.com/filipecabaco/supablock/blob/main/skills/supablock/SKILL.md):
+  install with `npx skills add filipecabaco/supablock`
+- [Docker image](https://hub.docker.com/r/filipecabaco/supablock)
+- [Installer](https://filipecabaco.github.io/supablock/install.sh)

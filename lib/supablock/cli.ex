@@ -9,7 +9,10 @@ defmodule Supablock.CLI do
       supablock config set <key> <value> | config get <key> | config list
       supablock mount [--path <dir>] [dir] [--foreground] [--verbose]
       supablock unmount [mountpoint]
+      supablock ls [path]
+      supablock cat <path> [path...]
       supablock refresh [--check]
+      supablock docker
       supablock help
 
   Exit codes: 0 ok · 1 usage error · 2 not authenticated · 3 API/network
@@ -28,6 +31,7 @@ defmodule Supablock.CLI do
     OAuth,
     Paths,
     Profile,
+    Router,
     Service,
     Signals
   }
@@ -52,8 +56,12 @@ defmodule Supablock.CLI do
     supablock mount [--path <dir>] [dir]  Mount in background and return (default ~/Supabase)
     supablock mount --foreground [dir]    Mount in foreground (blocks; Ctrl-C unmounts)
     supablock unmount [mountpoint]        Unmount a running supablock
+    supablock ls [path]                 List a tree directory straight off the API (no mount)
+    supablock cat <path> [path...]      Print tree file(s) straight off the API (no mount)
     supablock refresh                   Flush the cache of a mounted supablock
     supablock refresh --check           Report cache staleness without flushing
+    supablock docker                    Interactive containerized session: login once
+                                         (kept in a volume), shell at the mounted tree
     supablock service install           Auto-start the mount at login (systemd/launchd)
     supablock service uninstall         Remove the auto-start service
     supablock service status            Show the auto-start service state
@@ -108,7 +116,10 @@ defmodule Supablock.CLI do
       ["config" | rest] -> config(rest)
       ["mount" | rest] -> mount(rest)
       ["unmount" | rest] -> unmount(rest)
+      ["ls" | rest] -> ls(rest)
+      ["cat" | rest] -> cat(rest)
       ["refresh" | rest] -> refresh(rest)
+      ["docker" | rest] -> docker(rest)
       ["service" | rest] -> service(rest)
       [unknown | _rest] -> usage_error("Unknown command: #{unknown}")
     end
@@ -687,6 +698,165 @@ defmodule Supablock.CLI do
             0
         end
     end
+  end
+
+  ## ls / cat — the tree without a mount
+  #
+  # The same paths the FUSE tree serves, resolved by the same Router, read
+  # straight off the API. This is the path for environments that cannot
+  # mount at all — containers without /dev/fuse, CI, AI-agent sandboxes —
+  # and it keeps every guarantee of the mount (GET-only, redaction,
+  # deterministic rendering) because it *is* the same code.
+
+  defp ls(args) do
+    with :authed <- require_auth() do
+      path = tree_path(List.first(args) || "/")
+
+      case Router.describe(path) do
+        {:ok, :dir} ->
+          case Router.list(path) do
+            {:ok, entries} ->
+              Enum.each(entries, &IO.puts/1)
+              0
+
+            {:error, reason} ->
+              path_error(path, reason)
+          end
+
+        {:ok, {:file, _size}} ->
+          IO.puts(Path.basename(path))
+          0
+
+        {:error, reason} ->
+          path_error(path, reason)
+      end
+    else
+      {:exit, code} -> code
+    end
+  end
+
+  defp cat(args) do
+    case args do
+      [] ->
+        usage_error("Usage: supablock cat <path> [path...]")
+
+      paths ->
+        with :authed <- require_auth() do
+          Enum.reduce_while(paths, 0, fn path, _ok ->
+            case cat_one(tree_path(path)) do
+              :ok -> {:cont, 0}
+              {:error, code} -> {:halt, code}
+            end
+          end)
+        else
+          {:exit, code} -> code
+        end
+    end
+  end
+
+  defp cat_one(path) do
+    case Router.read(path) do
+      {:ok, body} ->
+        IO.binwrite(body)
+        :ok
+
+      {:error, :eio} ->
+        # Router says :eio both for "that's a directory" and for real API
+        # trouble; describe (served from the warm cache) tells them apart.
+        case Router.describe(path) do
+          {:ok, :dir} ->
+            IO.puts(:stderr, "Is a directory: #{path}")
+            {:error, 1}
+
+          _not_a_dir ->
+            {:error, path_error(path, :eio)}
+        end
+
+      {:error, reason} ->
+        {:error, path_error(path, reason)}
+    end
+  end
+
+  # Accept mount-style ("/organizations/acme"), relative ("organizations/acme")
+  # and shell-ish (".", "./x") spellings; the Router ignores duplicate slashes.
+  defp tree_path(path) do
+    case String.trim(path) do
+      "." -> "/"
+      "./" <> rest -> "/" <> rest
+      trimmed -> "/" <> trimmed
+    end
+  end
+
+  defp path_error(path, :enoent) do
+    IO.puts(:stderr, "No such path: #{path}")
+    1
+  end
+
+  defp path_error(path, :eacces) do
+    IO.puts(:stderr, "Access denied for #{path} — run: supablock login")
+    2
+  end
+
+  defp path_error(path, :eagain) do
+    IO.puts(:stderr, "Rate limited while reading #{path} — try again shortly.")
+    3
+  end
+
+  defp path_error(path, _reason) do
+    IO.puts(:stderr, "API error reading #{path}")
+    3
+  end
+
+  ## docker — the containerized supablock without knowing the flags
+  #
+  # `supablock docker` is deliberately one thing: an interactive session in
+  # the container — login on first run (credentials persist in a named
+  # volume), then a shell at the mounted tree. It assembles the whole
+  # `docker run` invocation (volume, FUSE privileges, TTY, SUPABLOCK_TOKEN
+  # forwarding) so nobody has to remember it.
+
+  @docker_image "filipecabaco/supablock"
+
+  defp docker(args) do
+    cond do
+      args != [] ->
+        usage_error(
+          "supablock docker opens an interactive mounted shell and takes no arguments.\n" <>
+            "For one-off reads use: supablock ls|cat (or docker run the image directly)."
+        )
+
+      System.find_executable("docker") == nil ->
+        IO.puts(:stderr, "docker not found on PATH — install Docker, or run supablock natively.")
+        4
+
+      not match?({:ok, _columns}, :io.columns()) ->
+        IO.puts(:stderr, "supablock docker is interactive and needs a terminal.")
+        4
+
+      true ->
+        # Hand docker the real terminal: BEAM port pipes cannot carry a TTY,
+        # and both the login prompt and the mounted shell need one.
+        cmd = Enum.map_join(["docker" | docker_argv()], " ", &sh_escape/1)
+        {_out, status} = System.cmd("sh", ["-c", cmd <> " </dev/tty >/dev/tty 2>/dev/tty"])
+        status
+    end
+  end
+
+  # The exact invocation the README documents, built once here.
+  # SUPABLOCK_DOCKER_IMAGE / SUPABLOCK_DOCKER_VOLUME override the defaults.
+  @doc false
+  def docker_argv do
+    image = System.get_env("SUPABLOCK_DOCKER_IMAGE") || @docker_image
+    volume = System.get_env("SUPABLOCK_DOCKER_VOLUME") || "supablock-config"
+    token = if System.get_env("SUPABLOCK_TOKEN"), do: ["-e", "SUPABLOCK_TOKEN"], else: []
+
+    Enum.concat([
+      ~w(run --rm -it),
+      ~w(--device /dev/fuse --cap-add SYS_ADMIN --security-opt apparmor=unconfined),
+      ["-v", volume <> ":/root/.config/supablock"],
+      token,
+      [image]
+    ])
   end
 
   defp wait_for_shutdown do

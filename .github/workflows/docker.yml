@@ -1,0 +1,265 @@
+# Builds the container image (see Dockerfile) and pushes it to Docker Hub as
+# filipecabaco/supablock — the source of the quick-start:
+#
+#   docker run -it --rm --device /dev/fuse --cap-add SYS_ADMIN \
+#     --security-opt apparmor=unconfined \
+#     -v supablock-config:/root/.config/supablock filipecabaco/supablock
+#
+# Pushes to main refresh :latest; tag pushes (v*) add :X.Y.Z and :X.Y.
+# Each architecture builds natively (no QEMU — emulating the Erlang compile
+# would be painfully slow), is smoke-tested, pushed by digest, and a final
+# job stitches the digests into one multi-arch manifest.
+#
+# Required repo secrets: DOCKERHUB_USERNAME, DOCKERHUB_TOKEN (a Docker Hub
+# access token with Read & Write scope).
+
+name: docker
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  IMAGE: filipecabaco/supablock
+  # Push only from main and version tags; a workflow_dispatch on any other
+  # branch still builds and smoke-tests, without touching Docker Hub.
+  PUSH: ${{ startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main' }}
+
+# Newest main push wins; tag builds are never cancelled.
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            platform: linux/amd64
+          - runner: ubuntu-24.04-arm
+            platform: linux/arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      # linux/arm64 -> linux-arm64: usable in artifact names and cache scopes.
+      - name: Prepare platform slug
+        run: |
+          platform="${{ matrix.platform }}"
+          echo "PLATFORM_SLUG=${platform//\//-}" >> "$GITHUB_ENV"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        if: env.PUSH == 'true'
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build image (local, for the smoke test)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          load: true
+          tags: supablock:smoke
+          cache-from: type=gha,scope=${{ env.PLATFORM_SLUG }}
+          cache-to: type=gha,mode=max,scope=${{ env.PLATFORM_SLUG }}
+
+      # `help` boots the bundled ERTS, proving the runtime stage has every
+      # shared library the release needs. `doctor` reports rather than gates:
+      # /dev/fuse is legitimately absent on the runner.
+      - name: Smoke test
+        run: |
+          docker run --rm supablock:smoke help
+          docker run --rm supablock:smoke doctor || true
+
+      - name: Report image size
+        run: |
+          size=$(docker image inspect supablock:smoke --format '{{.Size}}')
+          echo "Image size: $((size / 1000000)) MB ($size bytes)"
+          docker history --format 'table {{.Size}}\t{{.CreatedBy}}' supablock:smoke | head -15
+
+      # The e2e project is real: `supabase start` runs the same local stack
+      # (Postgres, PostgREST, working keys) any developer gets, seeded with a
+      # table. Only the platform Management API (org/project metadata) has no
+      # local emulator — docker/e2e/mgmt_api_shim.py serves that thin layer
+      # and hands supablock the stack's real service_role key, so the
+      # database/ tree reads real rows through real PostgREST.
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Start a seeded local Supabase project
+        run: |
+          mkdir e2e-local
+          cd e2e-local
+          supabase init
+          # Schema goes in a migration; seed.sql is data-only (the CLI seeds
+          # it as a prepared batch, so DDL+DML in one file fails to prepare).
+          mkdir -p supabase/migrations
+          cat > supabase/migrations/20260101000000_todos.sql <<'SQL'
+          create table public.todos (
+            id serial primary key,
+            title text not null,
+            done boolean not null default false
+          );
+          grant select on table public.todos to anon, authenticated, service_role;
+          SQL
+          cat > supabase/seed.sql <<'SQL'
+          insert into public.todos (title, done) values
+            ('write the docker e2e', true),
+            ('ship it', false);
+          SQL
+          supabase start -x studio,mailpit,imgproxy,edge-runtime,logflare,vector
+          supabase status -o env | tee ../supabase.env
+
+      # Agent mode: ls/cat against the real project — no FUSE device, no
+      # capabilities, the exact command an AI agent runs. Also asserts the
+      # exit codes agents branch on (1 no-such-path, 2 unauthenticated).
+      - name: E2E — agent mode (ls/cat, no FUSE flags)
+        run: |
+          set -a && . ./supabase.env && set +a
+          python3 docker/e2e/mgmt_api_shim.py 54340 &
+          shim=$!
+          trap 'kill $shim' EXIT
+          for _i in $(seq 1 50); do
+            curl -fsS http://127.0.0.1:54340/v1/organizations >/dev/null && break
+            sleep 0.1
+          done
+
+          # Probe the Data API exactly like supablock does, so any failure
+          # below comes with the gateway's own error message in the log.
+          echo "service_role key length: ${#SERVICE_ROLE_KEY}"
+          for probe in "/rest/v1/" "/rest/v1/todos?select=*"; do
+            status=$(curl -sS -o probe.out -w '%{http_code}' \
+              -H "apikey: $SERVICE_ROLE_KEY" \
+              -H "Authorization: Bearer $SERVICE_ROLE_KEY" \
+              -H "Accept-Profile: public" -H "Prefer: count=exact" -H "Range: 0-0" \
+              "$API_URL$probe" || echo "curl-failed")
+            echo "probe $probe -> $status"
+            test "$status" = 200 || test "$status" = 206 || head -c 400 probe.out
+          done
+
+          run() {
+            docker run --rm --network host \
+              -e SUPABLOCK_TOKEN=sbp_STUBSTUBSTUBSTUBSTUBSTUBSTUBSTUBSTUB \
+              -e SUPABLOCK_API_URL=http://127.0.0.1:54340 \
+              -e SUPABLOCK_DATA_API_URL_SUPABLOCKLOCAL123456="$API_URL" \
+              supablock:smoke "$@"
+          }
+
+          test "$(run ls)" = "organizations"
+          test "$(run ls organizations)" = "org-local"
+          test "$(run ls organizations/org-local/projects)" = "supablocklocal123456"
+
+          base=organizations/org-local/projects/supablocklocal123456
+          run ls "$base/database/public" | tee tables.out
+          grep -qx "todos" tables.out
+
+          run cat "$base/database/public/todos/rows-000000.csv" | tee rows.out
+          head -1 rows.out | grep -q "title"
+          grep -q "write the docker e2e" rows.out
+          grep -q "ship it" rows.out
+
+          run cat "$base/database/public/nope" 2>err.out && exit 1 || test $? = 1
+          grep -q "No such path" err.out
+
+          docker run --rm supablock:smoke ls organizations 2>noauth.out && exit 1 || test $? = 2
+          grep -q "Not authenticated" noauth.out
+
+      # Mounted mode: the full entrypoint flow — credential check (satisfied
+      # by SUPABLOCK_TOKEN), background mount, wait, then the command runs at
+      # the mountpoint over a real FUSE mount inside the container, reading
+      # the same real rows. GitHub-hosted runners expose /dev/fuse.
+      - name: E2E — mounted mode (FUSE inside the container)
+        run: |
+          set -a && . ./supabase.env && set +a
+          python3 docker/e2e/mgmt_api_shim.py 54341 &
+          shim=$!
+          trap 'kill $shim' EXIT
+          for _i in $(seq 1 50); do
+            curl -fsS http://127.0.0.1:54341/v1/organizations >/dev/null && break
+            sleep 0.1
+          done
+
+          docker run --rm --network host \
+            --device /dev/fuse --cap-add SYS_ADMIN --security-opt apparmor=unconfined \
+            -e SUPABLOCK_TOKEN=sbp_STUBSTUBSTUBSTUBSTUBSTUBSTUBSTUBSTUB \
+            -e SUPABLOCK_API_URL=http://127.0.0.1:54341 \
+            -e SUPABLOCK_DATA_API_URL_SUPABLOCKLOCAL123456="$API_URL" \
+            supablock:smoke \
+            sh -c 'pwd && ls organizations && cat organizations/org-local/projects/*/database/public/todos/rows-000000.csv' \
+            | tee mount.out
+
+          grep -qx "/supabase" mount.out
+          grep -qx "org-local" mount.out
+          grep -q "ship it" mount.out
+
+      - name: Push by digest
+        id: push
+        if: env.PUSH == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ env.PLATFORM_SLUG }}
+
+      - name: Export digest
+        if: env.PUSH == 'true'
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.push.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - uses: actions/upload-artifact@v4
+        if: env.PUSH == 'true'
+        with:
+          name: digests-${{ env.PLATFORM_SLUG }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-*
+          merge-multiple: true
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Create and push the multi-arch manifest
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf '${{ env.IMAGE }}@sha256:%s ' *)
+
+      - name: Inspect the pushed image
+        run: docker buildx imagetools inspect "${{ env.IMAGE }}:${{ steps.meta.outputs.version }}"

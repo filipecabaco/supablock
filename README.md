@@ -69,6 +69,75 @@ curl -fsSL https://filipecabaco.github.io/supablock/install.sh | sh
 the rolling `canary` build); `SUPABLOCK_INSTALL_DIR` overrides the default
 `~/.local/bin`.
 
+### Docker
+
+Nothing to install at all — one `docker run` logs you in, mounts your
+account inside the container, and drops you into a shell at the mountpoint:
+
+```bash
+docker run -it --rm \
+  --device /dev/fuse --cap-add SYS_ADMIN \
+  --security-opt apparmor=unconfined \
+  -v supablock-config:/root/.config/supablock \
+  filipecabaco/supablock
+```
+
+On the first run the container has no credential, so it starts the login
+flow: open the printed URL on your host browser, type the verification code
+back at the prompt, and you land in a shell at `/supabase` — `ls
+organizations`, `cat`, `grep` away. The credential is written to the
+`supablock-config` volume on the host, so every later run skips login and
+goes straight to the mounted shell. Exiting the shell stops the container
+and unmounts. (`docker volume rm supablock-config` is the container
+equivalent of `supablock logout`.)
+
+Already have the supablock binary? It remembers that command for you:
+
+```bash
+supablock docker    # assembles the exact docker run above and drops you in
+```
+
+`SUPABLOCK_DOCKER_IMAGE` and `SUPABLOCK_DOCKER_VOLUME` override the image
+and credentials volume, and a set `SUPABLOCK_TOKEN` is forwarded into the
+container (skipping the login flow).
+
+The image is multi-arch (amd64/arm64), Alpine-based and ~32 MB; pushes to
+`main` refresh `filipecabaco/supablock:latest` and version tags publish
+`:X.Y.Z` (`.github/workflows/docker.yml`).
+
+Details worth knowing:
+
+* **The FUSE flags are not optional.** A FUSE mount inside a container
+  needs the host's FUSE device (`--device /dev/fuse`) and mount permission
+  (`--cap-add SYS_ADMIN`; `--security-opt apparmor=unconfined` because the
+  default Docker AppArmor profile denies `mount` on Debian/Ubuntu hosts —
+  harmless where AppArmor isn't in play). The mount lives *inside* the
+  container's namespace; it is not visible on the host.
+* **Run a one-off command instead of a shell** — everything after the image
+  name runs at the mountpoint once it's up:
+
+  ```bash
+  docker run -it --rm --device /dev/fuse --cap-add SYS_ADMIN \
+    --security-opt apparmor=unconfined \
+    -v supablock-config:/root/.config/supablock \
+    filipecabaco/supablock grep -r '"site_url"' organizations
+  ```
+
+* **Plain subcommands pass through** without mounting: `docker run --rm -it
+  … filipecabaco/supablock status` (also `login`, `logout`, `doctor`,
+  `config`, …). `ls` and `cat` read the tree API-side, so they need none
+  of the FUSE flags at all — see [For AI agents](#for-ai-agents).
+* **Headless / CI:** skip the login flow entirely with
+  `-e SUPABLOCK_TOKEN=sbp_…` — no volume or TTY needed.
+* **Login flow in a container:** the image intentionally uses the
+  dashboard session flow (URL + verification code) rather than OAuth — the
+  OAuth callback listens on `127.0.0.1:53682`, which port-publishing cannot
+  reach across the container boundary. On Linux you can still opt into
+  OAuth with `--network host` plus your own app identity
+  (`-e SUPABLOCK_OAUTH_CLIENT_ID=… -e SUPABLOCK_OAUTH_CLIENT_SECRET=…`).
+* `SUPABLOCK_MOUNTPOINT` changes the in-container mountpoint (default
+  `/supabase`).
+
 ### Building from source
 
 Prerequisites:
@@ -223,6 +292,27 @@ ls /mnt/supabase/organizations
 cat /mnt/supabase/organizations/*/projects/*/health
 ```
 
+### Reading without a mount: `ls` and `cat`
+
+The same tree can be read straight off the API — no FUSE, no `/dev/fuse`,
+no privileges, no background process. `supablock ls` and `supablock cat`
+resolve the exact paths the mount serves, through the same router, with
+the same guarantees (GET-only, redaction, deterministic output):
+
+```bash
+supablock ls organizations
+supablock ls organizations/my-org/projects
+supablock cat organizations/my-org/projects/<ref>/health
+supablock cat organizations/my-org/projects/<ref>/config/auth.json
+```
+
+This is the right mode for restricted environments — minimal containers,
+CI, AI-agent sandboxes — and for quick one-off checks where starting a
+mount isn't worth it. Each invocation is a fresh process with a cold
+cache, so for many reads (or `grep -r` across the account) prefer a real
+mount; for a handful of targeted reads, `ls`/`cat` is simpler. `cat`
+takes several paths at once, which shares one process and one cache.
+
 ## Example one-liners
 
 ```bash
@@ -342,12 +432,51 @@ supablock doctor                    environment checks with fix hints
 supablock config set|get|list       mountpoint, TTLs, timeouts, expose_secrets, oauth.*
 supablock mount [mountpoint]        mount in the foreground (default ~/Supabase)
 supablock unmount [mountpoint]      unmount from another shell
+supablock ls [path]                 list a tree directory straight off the API (no mount)
+supablock cat <path> [path...]      print tree file(s) straight off the API (no mount)
 supablock refresh                   drop the cache; next reads re-fetch
 supablock refresh --check           report cache staleness without flushing
+supablock docker                    interactive containerized session (wraps docker run)
 ```
 
 Exit codes: `0` ok · `1` usage · `2` not authenticated · `3` API/network ·
 `4` environment (doctor-detectable).
+
+## For AI agents
+
+supablock is a good fit for agents: it is read-only by construction (an
+agent cannot break anything by exploring), its output is deterministic,
+and the filesystem shape means agents' existing file tools — or plain
+`ls`/`cat` — are the whole integration. Three affordances exist
+specifically for agent use:
+
+* **An agent skill.** `skills/supablock/SKILL.md` teaches an agent how to
+  get the tool, authenticate, and verify account state, with recipes for
+  the common checks (health, signup policy, public buckets, config drift).
+  Install it into a skills-aware agent (Claude Code and friends) with:
+
+  ```bash
+  npx skills add filipecabaco/supablock
+  ```
+
+* **No-mount reads.** `supablock ls|cat` (see above) work in any sandbox —
+  no FUSE device, no privileges, no daemon — and honour `SUPABLOCK_TOKEN`
+  for headless auth. Exit codes are stable and scriptable. The Docker
+  image needs none of the FUSE flags in this mode:
+
+  ```bash
+  docker run --rm -e SUPABLOCK_TOKEN=sbp_... filipecabaco/supablock \
+    cat organizations/<org>/projects/<ref>/health
+  ```
+
+* **llms.txt.** A machine-oriented summary of the tool lives at
+  [filipecabaco.github.io/supablock/llms.txt](https://filipecabaco.github.io/supablock/llms.txt)
+  — point an agent at it and it knows the tree shape, the auth story and
+  the ground rules (rate limits, redaction, exit codes).
+
+Give an agent a scoped, revocable personal access token rather than your
+interactive credential, and leave `expose_secrets` off — the tree then
+contains nothing more sensitive than the account metadata itself.
 
 ## Auto-start (service)
 
@@ -438,7 +567,18 @@ needs no real project or Postgres to test.
 
 CI (`.github/workflows/ci.yml`) runs the unit suite on every push, and a
 separate job runs the FUSE + supabase-CLI end-to-ends — the same commands as
-above, with the CLI installed and the release prebuilt.
+above, with the CLI installed and the release prebuilt. A third workflow
+(`.github/workflows/docker.yml`) builds the container image per
+architecture and end-to-end-tests the real image against a real local
+Supabase project — `supabase start` via `supabase/setup-cli`, seeded
+with a table; only the platform Management API metadata layer, which
+has no local emulator, is served by a thin shim
+(`docker/e2e/mgmt_api_shim.py`) that hands supablock the stack's real
+keys. Both modes are exercised: agent-style `ls`/`cat` with no FUSE
+flags, and the full entrypoint flow over a FUSE mount inside the
+container, each reading real rows through the local PostgREST. Only
+then is the multi-arch manifest pushed to Docker Hub
+(`filipecabaco/supablock`), on pushes to `main` and version tags.
 
 The e2e suite runs hermetically by default: a local stub Management API
 serves canned fixtures, the supabase CLI is pointed at it with a custom
