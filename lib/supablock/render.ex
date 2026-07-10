@@ -33,6 +33,25 @@ defmodule Supablock.Render do
 
   def health(other), do: json(other)
 
+  @doc """
+  Render the analytics logs response as NDJSON — one compact JSON object per
+  line, in chronological order (oldest first, newest last). This makes
+  `tail -n N` show the N most-recent entries and `tail -f` extend naturally.
+
+  Sorts by `timestamp` ascending rather than trusting the API's order, so the
+  chronological guarantee holds even if rows come back out of order. Returns a
+  lone newline when the response shape is unexpected or empty.
+  """
+  @spec logs(term) :: binary
+  def logs(%{"result" => rows}) when is_list(rows) do
+    rows
+    |> Enum.sort_by(& &1["timestamp"])
+    |> Enum.map_join("\n", &Jason.encode!/1)
+    |> then(&if(&1 == "", do: "\n", else: &1 <> "\n"))
+  end
+
+  def logs(_other), do: "\n"
+
   defp per_service?(%{"name" => name}) when is_binary(name), do: true
   defp per_service?(_other), do: false
 

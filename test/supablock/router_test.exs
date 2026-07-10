@@ -51,7 +51,9 @@ defmodule Supablock.RouterTest do
                  "functions",
                  "storage",
                  "branches",
-                 "database"
+                 "database",
+                 "logs",
+                 "metrics"
                ]
     end
 
@@ -85,6 +87,22 @@ defmodule Supablock.RouterTest do
       # org-alpha's second project 404s the sso endpoint in the fixtures.
       base = "/organizations/org-alpha/projects/projatwo1234567890ab/config/auth"
       assert {:ok, []} = Router.list("#{base}/sso")
+    end
+
+    test "logs directory lists all sources" do
+      base = "/organizations/org-alpha/projects/#{@proj_a1}"
+      assert {:ok, :dir} = Router.describe("#{base}/logs")
+      assert {:ok, sources} = Router.list("#{base}/logs")
+
+      for src <-
+            ~w(auth auth-audit edge functions functions-edge pgbouncer postgres postgrest realtime storage supavisor) do
+        assert src in sources, "expected #{src} in logs sources"
+      end
+    end
+
+    test "metrics is a file" do
+      path = "/organizations/org-alpha/projects/#{@proj_a1}/metrics"
+      assert {:ok, :file} = Router.kind(path)
     end
   end
 
@@ -165,6 +183,50 @@ defmodule Supablock.RouterTest do
     test "reading a directory is an error" do
       assert {:error, :eio} = Router.read("/organizations")
       assert {:error, :eio} = Router.list("/organizations/org-alpha/regions.json")
+    end
+
+    test "log source file returns NDJSON rows, chronological, trailing newline" do
+      path = "/organizations/org-alpha/projects/#{@proj_a1}/logs/auth"
+      assert {:ok, body} = Router.read(path)
+      assert String.ends_with?(body, "\n")
+
+      rows =
+        body
+        |> String.split("\n", trim: true)
+        |> Enum.map(&Jason.decode!/1)
+
+      assert [%{"event_message" => _, "timestamp" => _} | _] = rows
+      # Chronological: earlier timestamp comes first.
+      timestamps = Enum.map(rows, & &1["timestamp"])
+      assert timestamps == Enum.sort(timestamps)
+
+      assert {:ok, {:file, size}} = Router.describe(path)
+      assert size == byte_size(body)
+    end
+
+    test "all log sources are readable as NDJSON" do
+      base = "/organizations/org-alpha/projects/#{@proj_a1}/logs"
+
+      for source <-
+            ~w(auth auth-audit edge functions functions-edge pgbouncer postgres postgrest realtime storage supavisor) do
+        assert {:ok, body} = Router.read("#{base}/#{source}"), "expected ok for #{source}"
+        lines = String.split(body, "\n", trim: true)
+        assert Enum.all?(lines, fn line -> match?({:ok, %{}}, Jason.decode(line)) end)
+      end
+    end
+
+    test "unknown log source is :enoent" do
+      assert {:error, :enoent} =
+               Router.describe("/organizations/org-alpha/projects/#{@proj_a1}/logs/unknown")
+    end
+
+    test "metrics file returns Prometheus text" do
+      path = "/organizations/org-alpha/projects/#{@proj_a1}/metrics"
+      assert {:ok, body} = Router.read(path)
+      assert body =~ "pg_stat_activity_count"
+      assert body =~ "pg_database_size_bytes"
+      assert {:ok, {:file, size}} = Router.describe(path)
+      assert size == byte_size(body)
     end
   end
 

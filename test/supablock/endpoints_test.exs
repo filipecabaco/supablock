@@ -41,6 +41,25 @@ defmodule Supablock.EndpointsTest do
              "/v1/projects/abc/functions/hello/body"
   end
 
+  test "logs endpoint encodes the SQL query into the path" do
+    sql =
+      "SELECT timestamp, event_message, metadata FROM auth_logs ORDER BY timestamp DESC LIMIT 100"
+
+    path =
+      Endpoints.path(:logs, %{
+        ref: "abc",
+        sql: sql,
+        iso_start: "2026-07-10T00:00:00Z",
+        iso_end: "2026-07-11T00:00:00Z"
+      })
+
+    assert String.starts_with?(path, "/v1/projects/abc/analytics/endpoints/logs.all?sql=")
+    assert path =~ URI.encode_www_form(sql)
+    assert path =~ "iso_timestamp_start=#{URI.encode_www_form("2026-07-10T00:00:00Z")}"
+    assert path =~ "iso_timestamp_end=#{URI.encode_www_form("2026-07-11T00:00:00Z")}"
+    assert Endpoints.ttl_class(:logs) == "logs"
+  end
+
   test "every endpoint carries a known TTL class" do
     keys = [
       :realtime_config,
@@ -49,11 +68,12 @@ defmodule Supablock.EndpointsTest do
       :sso_providers,
       :third_party_auth,
       :function_body,
-      :postgrest_config
+      :postgrest_config,
+      :logs
     ]
 
     for key <- keys do
-      assert Endpoints.ttl_class(key) in ["orgs", "project", "health", "static"]
+      assert Endpoints.ttl_class(key) in ["orgs", "project", "health", "static", "logs"]
     end
   end
 end

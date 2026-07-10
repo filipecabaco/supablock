@@ -25,10 +25,12 @@ config, keys, functions and table data with ordinary Unix tools — `ls`,
                 ├── functions/hello/        # info.json · body (raw eszip bundle)
                 ├── storage/buckets/
                 ├── branches/
-                └── database/               # rows via the project's Data API
-                    └── public/users/
-                        ├── rows-000000.csv # rows 0–499
-                        └── rows-000500.csv # rows 500–999, …
+                ├── database/               # rows via the project's Data API
+                │   └── public/users/
+                │       ├── rows-000000.csv # rows 0–499
+                │       └── rows-000500.csv # rows 500–999, …
+                ├── logs/<source>           # NDJSON: postgres, auth, edge, storage, …
+                └── metrics                 # Prometheus text, project-wide
 ```
 
 **It cannot change anything.** Every request is a `GET`, and every mount is
@@ -159,6 +161,8 @@ supablock cat  organizations/my-org/projects/<ref>/config/auth.json
 supablock head -n 20 organizations/my-org/projects/<ref>/database/public/users/rows-000000.csv
 supablock find organizations/my-org -name '*.json' -maxdepth 3
 supablock grep -l '"disable_signup": false' organizations/my-org
+supablock tail -f organizations/my-org/projects/<ref>/logs/postgres
+supablock cat  organizations/my-org/projects/<ref>/metrics
 ```
 
 `find` and `grep` walk directories recursively (`-maxdepth` bounds the
@@ -248,6 +252,7 @@ supablock unmount [mountpoint]      unmount from another shell
 supablock ls|cat <path>             read the tree straight off the API (no mount)
                                     cat -: paths from stdin; -0: NUL-delimited
 supablock head|tail [-n N] <path>   first/last lines of tree files (no mount)
+                                    tail -f [-s secs] follows a logs/<source> file
 supablock find [path] [filters]     walk the tree; -type f|d, -name <glob>, -maxdepth N,
                                     -print0
 supablock grep [-iln] <pat> [path]  search file contents; dirs recurse, exit 1 = no match

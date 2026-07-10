@@ -32,6 +32,7 @@ defmodule Supablock.CLI do
     Credentials,
     Doctor,
     Fs,
+    Logs,
     OAuth,
     Paths,
     Profile,
@@ -67,6 +68,8 @@ defmodule Supablock.CLI do
                                         -0 makes stdin NUL-delimited (find -print0)
     supablock head <path> [path...]     First lines of tree file(s); -n <count>, default 10
     supablock tail <path> [path...]     Last lines of tree file(s); -n <count>, default 10
+                                        -f streams new entries; -s <secs> sets the poll
+                                        interval (default 30s). Works on log file paths.
     supablock find [path]               Walk the tree, print each path (no mount)
                                         Filters: -type f|d, -name <glob>, -maxdepth <n>;
                                         -print0 for NUL-delimited output
@@ -893,23 +896,41 @@ defmodule Supablock.CLI do
 
   defp head_tail(mode, args) do
     with :authed <- require_auth(),
-         {:ok, count, paths} <- parse_head_tail(mode, args) do
+         {:ok, count, paths, follow_opts} <- parse_head_tail(mode, args) do
       raw_stdout!()
-      header? = length(paths) > 1
 
-      paths
-      |> Enum.with_index()
-      |> Enum.reduce_while(0, fn {path, index}, _ok ->
-        if header? do
-          if index > 0, do: out("")
-          out("==> #{path} <==")
-        end
+      cond do
+        follow_opts != nil and mode != :tail ->
+          usage_error("tail: -f is only supported for tail")
 
-        case head_tail_one(mode, count, tree_path(path)) do
-          :ok -> {:cont, 0}
-          {:error, code} -> {:halt, code}
-        end
-      end)
+        follow_opts != nil and length(paths) != 1 ->
+          usage_error("tail: -f requires exactly one path")
+
+        follow_opts != nil ->
+          [path] = paths
+
+          case tail_follow(tree_path(path), count, follow_opts) do
+            :ok -> 0
+            {:error, code} -> code
+          end
+
+        true ->
+          header? = length(paths) > 1
+
+          paths
+          |> Enum.with_index()
+          |> Enum.reduce_while(0, fn {path, index}, _ok ->
+            if header? do
+              if index > 0, do: out("")
+              out("==> #{path} <==")
+            end
+
+            case head_tail_one(mode, count, tree_path(path)) do
+              :ok -> {:cont, 0}
+              {:error, code} -> {:halt, code}
+            end
+          end)
+      end
     else
       {:exit, code} -> code
       {:error, message} -> usage_error(message)
@@ -945,36 +966,156 @@ defmodule Supablock.CLI do
     end
   end
 
-  defp parse_head_tail(mode, args), do: parse_head_tail(args, 10, [], mode)
+  ## tail -f — follow a log file, polling for new entries
 
-  defp parse_head_tail([], _count, [], mode),
-    do: {:error, "Usage: supablock #{mode} [-n <count>] <path> [path...]"}
+  defp tail_follow(path, count, follow_opts) do
+    case Tree.read(path) do
+      {:ok, body} ->
+        lines = split_lines(body)
+        Enum.each(Enum.take(lines, -count), &out/1)
 
-  defp parse_head_tail([], count, paths, _mode), do: {:ok, count, Enum.reverse(paths)}
+        case parse_log_path(path) do
+          {:ok, ref, source} ->
+            # Fall back to now (microseconds) so the first poll only fetches
+            # entries that arrive after we started watching.
+            last_us = last_log_timestamp(body) || DateTime.to_unix(DateTime.utc_now(), :microsecond)
+            tail_log_follow_loop(ref, source, follow_opts.interval, last_us)
 
-  defp parse_head_tail([flag, value | rest], _count, paths, mode)
+          :error ->
+            IO.puts(:stderr, "tail: -f is only supported for log file paths (.../logs/<source>)")
+            {:error, 1}
+        end
+
+      {:error, :eio} ->
+        case Tree.kind(path) do
+          {:ok, :dir} ->
+            err("Is a directory: #{path}")
+            {:error, 1}
+
+          _not_a_dir ->
+            {:error, path_error(path, :eio)}
+        end
+
+      {:error, reason} ->
+        {:error, path_error(path, reason)}
+    end
+  end
+
+  defp tail_log_follow_loop(ref, source, interval, last_us) do
+    Process.sleep(interval * 1_000)
+
+    case Logs.fetch_since(ref, source, last_us) do
+      {:ok, %{"result" => rows}} when is_list(rows) ->
+        new_rows =
+          Enum.filter(rows, fn r -> is_integer(r["timestamp"]) and r["timestamp"] > last_us end)
+
+        Enum.each(new_rows, fn row -> out_bytes([Jason.encode!(row), "\n"]) end)
+
+        new_last_us =
+          new_rows
+          |> Enum.map(& &1["timestamp"])
+          |> Enum.max(fn -> nil end)
+
+        tail_log_follow_loop(ref, source, interval, new_last_us || last_us)
+
+      {:error, :rate_limited} ->
+        err("tail: rate limited — backing off 60s")
+        Process.sleep(60_000)
+        tail_log_follow_loop(ref, source, interval, last_us)
+
+      # Unrecoverable: the token or project won't fix itself by retrying.
+      {:error, reason} when reason in [:unauthorized, :forbidden, :not_found] ->
+        err("tail: #{reason} — stopping")
+        {:error, 1}
+
+      # Transient (timeout, transport, 5xx): warn and keep polling.
+      {:error, reason} ->
+        err("tail: #{inspect(reason)} — retrying")
+        tail_log_follow_loop(ref, source, interval, last_us)
+
+      # Unexpected success shape (no "result" list): skip this poll, keep going.
+      {:ok, _other} ->
+        tail_log_follow_loop(ref, source, interval, last_us)
+    end
+  end
+
+  defp parse_log_path(path) do
+    case String.split(path, "/", trim: true) do
+      ["organizations", _org, "projects", ref, "logs", source] ->
+        if Logs.valid_source?(source), do: {:ok, ref, source}, else: :error
+
+      _other ->
+        :error
+    end
+  end
+
+  defp last_log_timestamp(body) do
+    body
+    |> String.split("\n", trim: true)
+    |> List.last()
+    |> case do
+      nil ->
+        nil
+
+      line ->
+        case Jason.decode(line) do
+          {:ok, %{"timestamp" => ts}} when is_integer(ts) -> ts
+          _ -> nil
+        end
+    end
+  end
+
+  defp parse_head_tail(mode, args), do: parse_head_tail(args, 10, [], false, 30, mode)
+
+  defp parse_head_tail([], _count, [], _follow?, _interval, mode),
+    do: {:error, "Usage: supablock #{mode} [-n <count>] [-f [-s <secs>]] <path> [path...]"}
+
+  defp parse_head_tail([], count, paths, follow?, interval, _mode) do
+    follow_opts = if follow?, do: %{interval: interval}, else: nil
+    {:ok, count, Enum.reverse(paths), follow_opts}
+  end
+
+  defp parse_head_tail([flag, value | rest], _count, paths, follow?, interval, mode)
        when flag in ["-n", "--lines"] do
     case Integer.parse(value) do
-      {n, ""} when n >= 0 -> parse_head_tail(rest, n, paths, mode)
+      {n, ""} when n >= 0 -> parse_head_tail(rest, n, paths, follow?, interval, mode)
       _other -> {:error, "#{mode}: #{flag} needs a non-negative integer"}
     end
   end
 
-  defp parse_head_tail(["-n" <> digits | rest], _count, paths, mode) when digits != "" do
+  defp parse_head_tail(["-n" <> digits | rest], _count, paths, follow?, interval, mode)
+       when digits != "" do
     case Integer.parse(digits) do
-      {n, ""} when n >= 0 -> parse_head_tail(rest, n, paths, mode)
+      {n, ""} when n >= 0 -> parse_head_tail(rest, n, paths, follow?, interval, mode)
       _other -> {:error, "#{mode}: -n needs a non-negative integer"}
     end
   end
 
-  defp parse_head_tail([flag], _count, _paths, mode) when flag in ["-n", "--lines"],
-    do: {:error, "#{mode}: #{flag} needs a value"}
+  defp parse_head_tail([flag], _count, _paths, _follow?, _interval, mode)
+       when flag in ["-n", "--lines"],
+       do: {:error, "#{mode}: #{flag} needs a value"}
 
-  defp parse_head_tail(["-" <> _rest = flag | _more], _count, _paths, mode),
+  defp parse_head_tail([flag | rest], count, paths, _follow?, interval, mode)
+       when flag in ["-f", "--follow"],
+       do: parse_head_tail(rest, count, paths, true, interval, mode)
+
+  defp parse_head_tail([flag, value | rest], count, paths, follow?, _interval, mode)
+       when flag in ["-s", "--interval"] do
+    case Integer.parse(value) do
+      {n, ""} when n > 0 -> parse_head_tail(rest, count, paths, follow?, n, mode)
+      _other -> {:error, "#{mode}: #{flag} needs a positive integer"}
+    end
+  end
+
+  defp parse_head_tail([flag], _count, _paths, _follow?, _interval, mode)
+       when flag in ["-s", "--interval"],
+       do: {:error, "#{mode}: #{flag} needs a value"}
+
+  defp parse_head_tail(["-" <> _rest = flag | _more], _count, _paths, _follow?, _interval, mode),
     do: {:error, "#{mode}: unknown option #{flag}"}
 
-  defp parse_head_tail([path | rest], count, paths, mode),
-    do: parse_head_tail(rest, count, [path | paths], mode)
+  defp parse_head_tail([path | rest], count, paths, follow?, interval, mode),
+    do: parse_head_tail(rest, count, [path | paths], follow?, interval, mode)
 
   ## find — walk the tree, print matching paths (find(1)-style flags)
 

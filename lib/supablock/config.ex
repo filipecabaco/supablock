@@ -14,12 +14,14 @@ defmodule Supablock.Config do
     "db_page_size" => 500,
     "db_format" => "csv",
     "db_key" => "secret",
+    "log_limit" => 100,
     "ttl" => %{
       "orgs" => 60,
       "project" => 30,
       "health" => 10,
       "static" => 300,
-      "db" => 30
+      "db" => 30,
+      "logs" => 60
     }
   }
 
@@ -36,7 +38,9 @@ defmodule Supablock.Config do
     "ttl.project",
     "ttl.health",
     "ttl.static",
-    "ttl.db"
+    "ttl.db",
+    "ttl.logs",
+    "log_limit"
   ]
 
   def defaults, do: @defaults

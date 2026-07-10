@@ -35,6 +35,7 @@ defmodule Supablock.Endpoints do
           | :function_body
           | :branches
           | :regions
+          | :logs
 
   @spec path(key, map) :: String.t()
   def path(key, args \\ %{})
@@ -71,6 +72,13 @@ defmodule Supablock.Endpoints do
   def path(:regions, %{slug: slug}),
     do: "/v1/projects/available-regions?organization_slug=#{slug}"
 
+  def path(:logs, %{ref: ref, sql: sql, iso_start: iso_start, iso_end: iso_end}),
+    do:
+      "/v1/projects/#{ref}/analytics/endpoints/logs.all" <>
+        "?sql=#{URI.encode_www_form(sql)}" <>
+        "&iso_timestamp_start=#{URI.encode_www_form(iso_start)}" <>
+        "&iso_timestamp_end=#{URI.encode_www_form(iso_end)}"
+
   @doc "TTL class for the endpoint, matching the `ttl` config map keys."
   @spec ttl_class(key) :: String.t()
   def ttl_class(key) when key in [:orgs, :org, :org_members], do: "orgs"
@@ -84,4 +92,5 @@ defmodule Supablock.Endpoints do
   def ttl_class(:postgrest_config), do: "project"
   def ttl_class(:health), do: "health"
   def ttl_class(key) when key in [:api_keys, :regions], do: "static"
+  def ttl_class(:logs), do: "logs"
 end
