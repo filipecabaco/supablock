@@ -6,14 +6,24 @@
 > project's table rows as a directory tree. Every request is a GET — the
 > tool physically cannot create, change or delete anything.
 
-Two ways to read the tree:
+Three ways to read the tree:
 
-- `supablock ls [path]` / `supablock cat <path>` — resolve tree paths
-  straight off the API. Works anywhere: no FUSE, no privileges, no mount,
-  no daemon. This is the mode for AI agents, CI, and restricted sandboxes.
+- `supablock ls|cat|head|tail|find|grep` — resolve tree paths straight off
+  the API. Works anywhere: no FUSE, no privileges, no mount, no daemon.
+  This is the mode for AI agents, CI, and restricted sandboxes.
+  `find [path] [-type f|d] [-name <glob>] [-maxdepth <n>] [-print0]` walks
+  the tree and prints paths; `grep [-iln] [--maxdepth <n>] <pattern>
+  [path...]` searches file contents (directories recurse; exit 1 = no
+  matches, like grep(1)); `head`/`tail [-n <count>]` take partial reads of
+  big row files; `cat -` reads paths from stdin (`-0` = NUL-delimited), so
+  `find … -type f | supablock cat -` pipelines discovery into reading.
+- `supablock serve` — a mountless cache daemon (still no FUSE, no
+  privileges): while it runs, every ls/cat/find/grep on the machine
+  automatically reads through its shared warm cache instead of starting
+  cold. Start it before batch reads; `supablock serve stop` ends it.
 - `supablock mount ~/Supabase` — a real FUSE mount (kernel-enforced
-  read-only) for `grep -r`, `find` and `diff` across the whole account
-  with a shared cache.
+  read-only) so any Unix tool works across the whole account with a
+  shared cache. ls/cat/find/grep reuse a mount's cache the same way.
 
 Authentication for non-interactive use: set `SUPABLOCK_TOKEN=sbp_…` (a
 personal access token from supabase.com/dashboard/account/tokens). It
@@ -28,6 +38,10 @@ Quick start for an agent with shell access:
     supablock ls organizations/<org>/projects
     supablock cat organizations/<org>/projects/<ref>/health
     supablock cat organizations/<org>/projects/<ref>/config/auth.json
+    supablock serve &   # optional: one warm cache for everything below
+    supablock find organizations/<org> -name '*.json' -maxdepth 3
+    supablock grep -l '"disable_signup": false' organizations/<org>
+    supablock find organizations/<org> -type f -name '*.json' | supablock cat -
 
 Or via Docker, with nothing installed (image: filipecabaco/supablock):
 
@@ -50,10 +64,12 @@ Tree shape (all paths under the root):
 
 Facts agents should know: JSON output is deterministic (sorted keys,
 pretty-printed, trailing newline) so diffs are clean; exit codes are 0 ok,
-1 usage/no-such-path, 2 not authenticated, 3 API/network/rate-limited,
-4 environment; the Management API allows 120 requests/minute (batch reads:
-`supablock cat pathA pathB` amortizes one process and one cache);
-`api-keys/secret` stays REDACTED unless the user opts in.
+1 usage/no-such-path (grep: also "no matches"), 2 not authenticated,
+3 API/network/rate-limited, 4 environment, 141 downstream pipe closed;
+output is pipe-safe (`supablock cat … | jq`, `… | head` all behave like
+coreutils); the Management API allows 120 requests/minute — for batch
+reads start `supablock serve &` (shared warm cache) and keep walks scoped
+with `-maxdepth`; `api-keys/secret` stays REDACTED unless the user opts in.
 
 ## Links
 
