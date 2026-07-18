@@ -905,6 +905,29 @@ defmodule Supablock.CLITest do
     assert stderr =~ "Unknown command: docker"
   end
 
+  describe "completions" do
+    test "emits a script per shell, no auth required" do
+      bash = capture_io(fn -> assert CLI.run(["completions", "bash"]) == 0 end)
+      assert bash =~ "complete -F _supablock supablock"
+      assert bash =~ "snapshot"
+      assert bash =~ "expose_secrets"
+
+      zsh = capture_io(fn -> assert CLI.run(["completions", "zsh"]) == 0 end)
+      assert zsh =~ "compdef _supablock supablock"
+
+      fish = capture_io(fn -> assert CLI.run(["completions", "fish"]) == 0 end)
+      assert fish =~ "complete -c supablock"
+      assert fish =~ "__supablock_paths"
+    end
+
+    test "unknown shell exits 1" do
+      stderr =
+        capture_io(:stderr, fn -> assert CLI.run(["completions", "tcsh"]) == 1 end)
+
+      assert stderr =~ "Unknown shell"
+    end
+  end
+
   describe "status --json" do
     test "unauthenticated: authenticated false, exit 2" do
       output = capture_io(fn -> assert CLI.run(["status", "--json"]) == 2 end)

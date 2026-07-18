@@ -92,6 +92,8 @@ defmodule Supablock.CLI do
                                         (no FUSE needed; stop with: supablock serve stop)
     supablock refresh                   Flush the cache of a mounted supablock
     supablock refresh --check           Report cache staleness without flushing
+    supablock completions <shell>       Completion script for bash, zsh or fish
+                                        (bash/zsh: eval "$(supablock completions bash)")
     supablock service install           Auto-start the mount at login (systemd/launchd)
     supablock service uninstall         Remove the auto-start service
     supablock service status            Show the auto-start service state
@@ -182,6 +184,7 @@ defmodule Supablock.CLI do
       ["snapshot" | rest] -> snapshot(rest)
       ["diff" | rest] -> diff_cmd(rest)
       ["mcp" | _rest] -> mcp()
+      ["completions" | rest] -> completions(rest)
       ["serve" | rest] -> serve(rest)
       ["refresh" | rest] -> refresh(rest)
       ["service" | rest] -> service(rest)
@@ -1545,6 +1548,22 @@ defmodule Supablock.CLI do
   defp print_added(rel, body) do
     out("Only in tree: #{rel} (#{byte_size(body)} bytes)")
   end
+
+  ## completions
+
+  defp completions([shell]) do
+    case Supablock.Completions.script(shell) do
+      {:ok, script} ->
+        IO.write(script)
+        0
+
+      :unknown ->
+        usage_error("Unknown shell: #{shell}. Supported: bash, zsh, fish")
+    end
+  end
+
+  defp completions(_other),
+    do: usage_error("Usage: supablock completions bash|zsh|fish")
 
   ## mcp — the tree as an MCP stdio server
 
