@@ -86,6 +86,8 @@ defmodule Supablock.CLI do
                                         unified diffs for changed files (--brief for
                                         names only), --all as in snapshot. Exits 0 when
                                         identical, 1 on differences, 2 on errors
+    supablock mcp                       Serve the tree as an MCP server on stdio
+                                        (tools: ls, cat, find, grep) for AI clients
     supablock serve                     Serve a shared warm cache for ls/cat/find/grep
                                         (no FUSE needed; stop with: supablock serve stop)
     supablock refresh                   Flush the cache of a mounted supablock
@@ -179,6 +181,7 @@ defmodule Supablock.CLI do
       ["grep" | rest] -> grep(rest)
       ["snapshot" | rest] -> snapshot(rest)
       ["diff" | rest] -> diff_cmd(rest)
+      ["mcp" | _rest] -> mcp()
       ["serve" | rest] -> serve(rest)
       ["refresh" | rest] -> refresh(rest)
       ["service" | rest] -> service(rest)
@@ -1485,6 +1488,22 @@ defmodule Supablock.CLI do
 
   defp print_added(rel, body) do
     out("Only in tree: #{rel} (#{byte_size(body)} bytes)")
+  end
+
+  ## mcp — the tree as an MCP stdio server
+
+  defp mcp do
+    with :authed <- require_auth() do
+      # stdout is the protocol channel: nothing but JSON-RPC may reach it,
+      # so the default (stdout) log handler is replaced by the file logger.
+      _ = :logger.remove_handler(:default)
+      attach_file_logger()
+      raw_stdout!()
+      Supablock.MCP.serve()
+      0
+    else
+      {:exit, code} -> code
+    end
   end
 
   ## serve — a mountless cache daemon
