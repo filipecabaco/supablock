@@ -54,7 +54,7 @@ defmodule Supablock.CLI do
     supablock login --token sbp_...     Authenticate with a personal access token
     supablock login --no-browser        Print the login URL instead of opening it
     supablock logout                    Delete (and revoke) the stored credential
-    supablock status                    Auth, mount and rate-limit overview
+    supablock status [--json]           Auth, mount and rate-limit overview
     supablock whoami                    Alias of status
     supablock doctor                    Check the environment for FUSE readiness
     supablock config set <key> <value>  Set a config key
@@ -167,8 +167,8 @@ defmodule Supablock.CLI do
       ["setup" | rest] -> setup(rest)
       ["login" | rest] -> login(rest)
       ["logout" | _rest] -> logout()
-      ["status" | _rest] -> status()
-      ["whoami" | _rest] -> status()
+      ["status" | rest] -> status(rest)
+      ["whoami" | rest] -> status(rest)
       ["doctor" | _rest] -> doctor()
       ["config" | rest] -> config(rest)
       ["mount" | rest] -> mount(rest)
@@ -499,7 +499,11 @@ defmodule Supablock.CLI do
 
   ## status
 
-  defp status do
+  defp status(args) do
+    if "--json" in args, do: status_json(), else: status_text()
+  end
+
+  defp status_text do
     case Credentials.load() do
       :missing ->
         IO.puts("Not authenticated. Run: supablock login")
@@ -529,23 +533,75 @@ defmodule Supablock.CLI do
     end
   end
 
-  defp print_mount_status do
+  # The same facts as the text form, machine-readable (sorted keys, stable
+  # rendering via Render.json). Exit codes match the text form.
+  defp status_json do
+    {code, fields} =
+      case Credentials.load() do
+        :missing ->
+          {2, %{"authenticated" => false}}
+
+        {:ok, _token} ->
+          {code, auth_fields} =
+            case Auth.validate() do
+              {:ok, org_count} ->
+                {0, %{"authenticated" => true, "organizations" => org_count}}
+
+              {:error, :unauthorized} ->
+                {2, %{"authenticated" => false, "error" => "token no longer valid"}}
+
+              {:error, reason} ->
+                {3, %{"authenticated" => false, "error" => describe_error(reason)}}
+            end
+
+          {code, Map.put(auth_fields, "token", Credentials.masked())}
+      end
+
+    {mounted?, mountpoint, daemon} = mount_state()
+
+    rate_limits =
+      for {scope, remaining, _reset} <- Supablock.Client.ratelimits() do
+        %{"scope" => scope, "remaining" => remaining}
+      end
+
+    fields
+    |> Map.merge(%{
+      "mounted" => mounted?,
+      "mountpoint" => mountpoint,
+      "daemon" => daemon,
+      "rate_limits" => rate_limits
+    })
+    |> Supablock.Render.json()
+    |> IO.write()
+
+    code
+  end
+
+  defp mount_state do
     cond do
       not File.exists?(Paths.control_socket()) ->
-        IO.puts("Mounted: no")
+        {false, nil, "none"}
 
       File.exists?(Paths.mount_info_file()) ->
         mountpoint =
           case File.read(Paths.mount_info_file()) do
             {:ok, body} -> String.trim(body)
-            {:error, _reason} -> "(unknown)"
+            {:error, _reason} -> nil
           end
 
-        IO.puts("Mounted: yes, at #{mountpoint}")
+        {true, mountpoint, "mount"}
 
       true ->
         # A control socket without a mountpoint on record: supablock serve.
-        IO.puts("Mounted: no (cache daemon running — supablock serve)")
+        {false, nil, "serve"}
+    end
+  end
+
+  defp print_mount_status do
+    case mount_state() do
+      {true, mountpoint, _daemon} -> IO.puts("Mounted: yes, at #{mountpoint || "(unknown)"}")
+      {false, _mp, "serve"} -> IO.puts("Mounted: no (cache daemon running — supablock serve)")
+      {false, _mp, _daemon} -> IO.puts("Mounted: no")
     end
   end
 

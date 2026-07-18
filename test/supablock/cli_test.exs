@@ -905,6 +905,29 @@ defmodule Supablock.CLITest do
     assert stderr =~ "Unknown command: docker"
   end
 
+  describe "status --json" do
+    test "unauthenticated: authenticated false, exit 2" do
+      output = capture_io(fn -> assert CLI.run(["status", "--json"]) == 2 end)
+      assert {:ok, decoded} = Jason.decode(output)
+      assert decoded["authenticated"] == false
+      assert decoded["mounted"] == false
+      assert decoded["daemon"] == "none"
+    end
+
+    test "authenticated: org count, masked token, exit 0" do
+      TestEnv.fake_login!()
+      TestEnv.stub_api!()
+
+      output = capture_io(fn -> assert CLI.run(["status", "--json"]) == 0 end)
+      assert {:ok, decoded} = Jason.decode(output)
+      assert decoded["authenticated"] == true
+      assert decoded["organizations"] == 2
+      assert is_binary(decoded["token"])
+      refute decoded["token"] =~ ~r/^sbp_[a-z0-9]{36,}$/
+      assert is_list(decoded["rate_limits"])
+    end
+  end
+
   describe "snapshot / diff (drift tracking)" do
     @snap_base "organizations/org-alpha/projects/projaone1234567890ab"
 
