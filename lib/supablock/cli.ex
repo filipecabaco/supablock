@@ -38,6 +38,7 @@ defmodule Supablock.CLI do
     Profile,
     Service,
     Signals,
+    Snapshot,
     Tree,
     Walk
   }
@@ -77,6 +78,14 @@ defmodule Supablock.CLI do
                                         recurse. -i ignore case, -l paths only,
                                         -n line numbers, --maxdepth <n>.
                                         Exits 1 when nothing matches, like grep(1)
+    supablock snapshot <dir> [path]     Write the tree to a real directory. Skips logs,
+                                        metrics, database rows and function bodies
+                                        unless --all; --prune deletes snapshot files
+                                        that no longer exist in the tree
+    supablock diff <dir> [path]         Compare the live tree against a snapshot dir:
+                                        unified diffs for changed files (--brief for
+                                        names only), --all as in snapshot. Exits 0 when
+                                        identical, 1 on differences, 2 on errors
     supablock serve                     Serve a shared warm cache for ls/cat/find/grep
                                         (no FUSE needed; stop with: supablock serve stop)
     supablock refresh                   Flush the cache of a mounted supablock
@@ -168,6 +177,8 @@ defmodule Supablock.CLI do
       ["tail" | rest] -> head_tail(:tail, rest)
       ["find" | rest] -> find(rest)
       ["grep" | rest] -> grep(rest)
+      ["snapshot" | rest] -> snapshot(rest)
+      ["diff" | rest] -> diff_cmd(rest)
       ["serve" | rest] -> serve(rest)
       ["refresh" | rest] -> refresh(rest)
       ["service" | rest] -> service(rest)
@@ -1353,6 +1364,127 @@ defmodule Supablock.CLI do
       r, {:ok, opts} when r in ["r", "R"] -> {:cont, {:ok, opts}}
       _other, _acc -> {:halt, :error}
     end)
+  end
+
+  ## snapshot / diff — materialize the tree, then track drift against it
+
+  defp snapshot(args) do
+    {opts, rest, invalid} = OptionParser.parse(args, strict: [all: :boolean, prune: :boolean])
+
+    case {rest, invalid} do
+      {[dir | scope], []} when length(scope) <= 1 ->
+        with :authed <- require_auth() do
+          raw_stdout!()
+          start = List.first(scope) || "."
+          stats = :counters.new(3, [])
+
+          Snapshot.write(start, dir, [all: opts[:all] || false, prune: opts[:prune] || false], fn
+            {:wrote, _rel, bytes} ->
+              :counters.add(stats, 1, 1)
+              :counters.add(stats, 2, bytes)
+
+            {:pruned, rel} ->
+              out("pruned: #{rel}")
+
+            {:error, path, reason} ->
+              :counters.put(stats, 3, max(:counters.get(stats, 3), path_error(path, reason)))
+          end)
+
+          files = :counters.get(stats, 1)
+          bytes = :counters.get(stats, 2)
+          out("Snapshot: #{files} files (#{bytes} bytes) -> #{dir}")
+          :counters.get(stats, 3)
+        else
+          {:exit, code} -> code
+        end
+
+      _bad ->
+        usage_error("Usage: supablock snapshot <dir> [path] [--all] [--prune]")
+    end
+  end
+
+  defp diff_cmd(args) do
+    {opts, rest, invalid} = OptionParser.parse(args, strict: [all: :boolean, brief: :boolean])
+
+    case {rest, invalid} do
+      {[dir | scope], []} when length(scope) <= 1 ->
+        cond do
+          not File.dir?(dir) ->
+            IO.puts(:stderr, "Not a snapshot directory: #{dir}")
+            2
+
+          true ->
+            with :authed <- require_auth() do
+              raw_stdout!()
+              start = List.first(scope) || "."
+              brief? = opts[:brief] || false
+
+              result =
+                Snapshot.diff(start, dir, [all: opts[:all] || false], fn
+                  {:changed, rel, snap_file, body} ->
+                    if brief?,
+                      do: out("changed: #{rel}"),
+                      else: print_unified_diff(rel, snap_file, body)
+
+                  {:added, rel, body} ->
+                    if brief?, do: out("added: #{rel}"), else: print_added(rel, body)
+
+                  {:removed, rel} ->
+                    if brief?, do: out("removed: #{rel}"), else: out("Only in snapshot: #{rel}")
+
+                  {:error, path, reason} ->
+                    _ = path_error(path, reason)
+                    :ok
+                end)
+
+              cond do
+                result.errors > 0 -> 2
+                result.different? -> 1
+                true -> 0
+              end
+            else
+              {:exit, code} -> code
+            end
+        end
+
+      _bad ->
+        usage_error("Usage: supablock diff <dir> [path] [--all] [--brief]")
+    end
+  end
+
+  # A unified diff via diff(1) when available (snapshot/… vs tree/… labels,
+  # so the output reads old -> new); a plain marker line otherwise.
+  defp print_unified_diff(rel, snap_file, live_body) do
+    case System.find_executable("diff") do
+      nil ->
+        out("Files differ: #{rel}")
+
+      diff_bin ->
+        tmp =
+          Path.join(
+            System.tmp_dir!(),
+            "supablock-diff-#{:erlang.unique_integer([:positive])}"
+          )
+
+        try do
+          File.write!(tmp, live_body)
+
+          {output, _code} =
+            System.cmd(
+              diff_bin,
+              ["-u", "--label", "snapshot/#{rel}", "--label", "tree/#{rel}", snap_file, tmp],
+              stderr_to_stdout: true
+            )
+
+          out_bytes(output)
+        after
+          File.rm(tmp)
+        end
+    end
+  end
+
+  defp print_added(rel, body) do
+    out("Only in tree: #{rel} (#{byte_size(body)} bytes)")
   end
 
   ## serve — a mountless cache daemon

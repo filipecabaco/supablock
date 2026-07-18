@@ -904,4 +904,103 @@ defmodule Supablock.CLITest do
     stderr = capture_io(:stderr, fn -> assert CLI.run(["docker"]) == 1 end)
     assert stderr =~ "Unknown command: docker"
   end
+
+  describe "snapshot / diff (drift tracking)" do
+    @snap_base "organizations/org-alpha/projects/projaone1234567890ab"
+
+    setup do
+      TestEnv.fake_login!()
+      TestEnv.stub_api!()
+
+      dir = Path.join(System.tmp_dir!(), "supablock-snap-#{System.unique_integer([:positive])}")
+      on_exit(fn -> File.rm_rf(dir) end)
+      %{dir: dir}
+    end
+
+    test "snapshot writes the config surface, skipping volatile subtrees", %{dir: dir} do
+      output = capture_io(fn -> assert CLI.run(["snapshot", dir]) == 0 end)
+      assert output =~ ~r/Snapshot: \d+ files \(\d+ bytes\) -> /
+
+      assert File.exists?(Path.join(dir, "organizations/org-alpha/info.json"))
+      assert File.exists?(Path.join(dir, "#{@snap_base}/config/auth.json"))
+      assert File.exists?(Path.join(dir, "#{@snap_base}/advisors/security.json"))
+      assert File.exists?(Path.join(dir, "#{@snap_base}/database/migrations.json"))
+      assert File.exists?(Path.join(dir, "#{@snap_base}/types.ts"))
+
+      # volatile/heavy subtrees are skipped by default
+      refute File.exists?(Path.join(dir, "#{@snap_base}/metrics"))
+      refute File.exists?(Path.join(dir, "#{@snap_base}/logs"))
+      refute File.exists?(Path.join(dir, "#{@snap_base}/functions/hello/body"))
+
+      # redaction carries into snapshots
+      assert File.read!(Path.join(dir, "#{@snap_base}/api-keys/secret")) =~ "REDACTED"
+      assert File.read!(Path.join(dir, "#{@snap_base}/secrets.json")) =~ ~s("REDACTED")
+    end
+
+    test "snapshot scoped to a subtree writes only that subtree", %{dir: dir} do
+      capture_io(fn ->
+        assert CLI.run(["snapshot", dir, "organizations/org-beta"]) == 0
+      end)
+
+      assert File.exists?(Path.join(dir, "organizations/org-beta/info.json"))
+      refute File.exists?(Path.join(dir, "organizations/org-alpha"))
+    end
+
+    test "diff is quiet and 0 on an identical tree, unified output and 1 on drift", %{dir: dir} do
+      capture_io(fn -> assert CLI.run(["snapshot", dir]) == 0 end)
+      assert capture_io(fn -> assert CLI.run(["diff", dir]) == 0 end) == ""
+
+      # rewrite one snapshot file to simulate config drift since the snapshot
+      target = Path.join(dir, "#{@snap_base}/config/auth.json")
+      File.write!(target, String.replace(File.read!(target), "3600", "60"))
+
+      output = capture_io(fn -> assert CLI.run(["diff", dir]) == 1 end)
+      assert output =~ "snapshot/#{@snap_base}/config/auth.json"
+      assert output =~ "tree/#{@snap_base}/config/auth.json"
+      assert output =~ "+  \"jwt_exp\": 3600"
+
+      output = capture_io(fn -> assert CLI.run(["diff", dir, "--brief"]) == 1 end)
+      assert output == "changed: #{@snap_base}/config/auth.json\n"
+    end
+
+    test "diff reports files only in the tree or only in the snapshot", %{dir: dir} do
+      capture_io(fn -> assert CLI.run(["snapshot", dir]) == 0 end)
+
+      File.rm!(Path.join(dir, "#{@snap_base}/config/auth.json"))
+      File.write!(Path.join(dir, "organizations/org-alpha/stale.json"), "{}\n")
+
+      output = capture_io(fn -> assert CLI.run(["diff", dir, "--brief"]) == 1 end)
+      assert output =~ "added: #{@snap_base}/config/auth.json"
+      assert output =~ "removed: organizations/org-alpha/stale.json"
+    end
+
+    test "diff respects the scope argument", %{dir: dir} do
+      capture_io(fn -> assert CLI.run(["snapshot", dir]) == 0 end)
+      File.write!(Path.join(dir, "organizations/org-alpha/stale.json"), "{}\n")
+
+      # outside the scope: the beta subtree still matches its snapshot
+      assert capture_io(fn ->
+               assert CLI.run(["diff", dir, "organizations/org-beta"]) == 0
+             end) == ""
+    end
+
+    test "snapshot --prune removes stale snapshot files", %{dir: dir} do
+      capture_io(fn -> assert CLI.run(["snapshot", dir]) == 0 end)
+      stale = Path.join(dir, "organizations/org-alpha/stale.json")
+      File.write!(stale, "{}\n")
+
+      output = capture_io(fn -> assert CLI.run(["snapshot", dir, "--prune"]) == 0 end)
+      assert output =~ "pruned: organizations/org-alpha/stale.json"
+      refute File.exists?(stale)
+    end
+
+    test "diff on a missing snapshot directory exits 2" do
+      stderr =
+        capture_io(:stderr, fn ->
+          assert CLI.run(["diff", "/nonexistent-snapshot-dir"]) == 2
+        end)
+
+      assert stderr =~ "Not a snapshot directory"
+    end
+  end
 end
