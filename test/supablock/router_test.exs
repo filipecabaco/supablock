@@ -485,14 +485,28 @@ defmodule Supablock.RouterTest do
 
     test "an empty table has no page files and no readable page" do
       base = "/organizations/org-alpha/projects/#{@proj_a1}/database/app/empty"
-      assert {:ok, []} = Router.list(base)
+      assert {:ok, ["schema.json"]} = Router.list(base)
       assert {:error, :enoent} = Router.describe("#{base}/rows-000000.csv")
     end
 
     test "a table lists one page file per page_size rows" do
       path = "/organizations/org-alpha/projects/#{@proj_a1}/database/app/widgets"
       assert {:ok, files} = Router.list(path)
-      assert files == ["rows-000000.csv", "rows-000500.csv", "rows-001000.csv"]
+      assert files == ["schema.json", "rows-000000.csv", "rows-000500.csv", "rows-001000.csv"]
+    end
+
+    test "schema.json renders columns in ordinal order with pk and required" do
+      path = "/organizations/org-alpha/projects/#{@proj_a1}/database/app/widgets/schema.json"
+      assert {:ok, :file} = Router.kind(path)
+      assert {:ok, body} = Router.read(path)
+      assert {:ok, decoded} = Jason.decode(body)
+
+      assert %{"columns" => columns, "primary_key" => ["id"], "required" => ["id"]} = decoded
+      assert Enum.map(columns, & &1["name"]) == ["id", "name"]
+      assert [%{"type" => "string", "format" => "text"} | _rest] = columns
+
+      assert {:ok, {:file, size}} = Router.describe(path)
+      assert size == byte_size(body)
     end
 
     test "reading a csv page renders header + rows with exact stat size" do

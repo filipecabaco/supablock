@@ -117,11 +117,13 @@ defmodule Supablock.DataApiStub do
           columns
           |> Enum.map(fn column ->
             description = if column in pk, do: "Note:\nThis is a Primary Key.<pk/>", else: ""
-            {column, %{"type" => "string", "description" => description}}
+
+            {column,
+             %{"type" => "string", "format" => "text", "description" => description}}
           end)
           |> Jason.OrderedObject.new()
 
-        {table, %{"properties" => properties}}
+        {table, %{"properties" => properties, "required" => pk}}
       end)
       |> Jason.OrderedObject.new()
 

@@ -44,6 +44,7 @@ defmodule Supablock.Router do
                   readonly.json              # read-only mode status
                   <schema>/
                     <table>/
+                      schema.json            # columns, types, primary key
                       rows-000000.csv        # rows 0..page_size-1
                       rows-000500.csv        # ...
                 types.ts                     # generated TypeScript types
@@ -407,9 +408,13 @@ defmodule Supablock.Router do
     {:dir,
      fn ->
        with {:ok, count} <- Database.row_count(ref, schema, table) do
-         {:ok, page_filenames(count)}
+         {:ok, ["schema.json" | page_filenames(count)]}
        end
      end}
+  end
+
+  defp resolve_table(ref, schema, table, ["schema.json"]) do
+    {:file, fn -> Database.table_schema(ref, schema, table) end}
   end
 
   defp resolve_table(ref, schema, table, [file]) do
