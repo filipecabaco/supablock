@@ -15,23 +15,39 @@ defmodule Supablock.Router do
               <project-ref>/
                 info.json
                 health
+                advisors/security.json         # advisor lints (RLS off, slow queries, …)
+                advisors/performance.json
                 config/auth.json
                 config/database.json
+                config/disk.json
+                config/pgbouncer.json
+                config/pooler.json
+                config/postgrest.json
                 config/realtime.json
                 config/storage.json
                 config/auth/sso/<provider-id>/info.json
                 config/auth/third-party/<integration-id>/info.json
                 api-keys/publishable
                 api-keys/secret
+                secrets.json                   # edge-function secret names (values REDACTED)
+                network/restrictions.json
+                network/ssl-enforcement.json
+                network/custom-hostname.json   # `{}` when never configured
+                network/vanity-subdomain.json
                 functions/<fn-slug>/info.json
                 functions/<fn-slug>/body       # raw eszip bundle
                 storage/buckets/<bucket>/info.json
                 branches/<branch>/info.json
-                database/                    # every project; served via its Data API
+                database/                    # every project; rows served via its Data API
+                  backups.json               # Management API: backup schedule + restore points
+                  migrations.json            # applied migrations (version + name)
+                  readonly.json              # read-only mode status
                   <schema>/
                     <table>/
                       rows-000000.csv        # rows 0..page_size-1
                       rows-000500.csv        # ...
+                types.ts                     # generated TypeScript types
+                upgrade-eligibility.json     # `{}` when unavailable
 
   Dynamic segments are validated against the cached parent listing, so a
   bogus name is a cheap `:enoent` (plus negative caching) rather than an API
@@ -46,10 +62,14 @@ defmodule Supablock.Router do
   @type node_kind :: :dir | {:file, non_neg_integer}
   @type error :: :enoent | :eio | :eagain | :eacces
 
-  @project_children ~w(info.json health config api-keys functions storage branches database logs metrics)
-  @config_children ~w(auth.json database.json realtime.json storage.json auth)
+  @project_children ~w(info.json health advisors config api-keys secrets.json functions storage branches database network logs metrics types.ts upgrade-eligibility.json)
+  @config_children ~w(auth.json database.json disk.json pgbouncer.json pooler.json postgrest.json realtime.json storage.json auth)
   @auth_config_children ~w(sso third-party)
   @api_key_children ~w(publishable secret)
+  @advisor_children ~w(performance.json security.json)
+  @network_children ~w(custom-hostname.json restrictions.json ssl-enforcement.json vanity-subdomain.json)
+  # Management-API files living alongside the Data-API schema directories.
+  @database_files ~w(backups.json migrations.json readonly.json)
 
   @redacted_body "REDACTED — run: supablock config set expose_secrets true\n"
 
@@ -160,6 +180,18 @@ defmodule Supablock.Router do
   defp resolve_project(project, ["config", "database.json"]),
     do: file(:db_config, %{ref: project_ref(project)}, &Render.json/1)
 
+  defp resolve_project(project, ["config", "disk.json"]),
+    do: file(:disk_config, %{ref: project_ref(project)}, &Render.json/1)
+
+  defp resolve_project(project, ["config", "pgbouncer.json"]),
+    do: file(:pgbouncer_config, %{ref: project_ref(project)}, &Render.json/1)
+
+  defp resolve_project(project, ["config", "pooler.json"]),
+    do: file(:pooler_config, %{ref: project_ref(project)}, &Render.json/1)
+
+  defp resolve_project(project, ["config", "postgrest.json"]),
+    do: file(:postgrest_config, %{ref: project_ref(project)}, &Render.json/1)
+
   defp resolve_project(project, ["config", "realtime.json"]),
     do: file(:realtime_config, %{ref: project_ref(project)}, &Render.json/1)
 
@@ -206,6 +238,48 @@ defmodule Supablock.Router do
       {:file, fn -> {:ok, @redacted_body} end}
     end
   end
+
+  defp resolve_project(_project, ["advisors"]) do
+    {:dir, fn -> {:ok, @advisor_children} end}
+  end
+
+  defp resolve_project(project, ["advisors", "security.json"]),
+    do: file(:advisors_security, %{ref: project_ref(project)}, &Render.json/1)
+
+  defp resolve_project(project, ["advisors", "performance.json"]),
+    do: file(:advisors_performance, %{ref: project_ref(project)}, &Render.json/1)
+
+  defp resolve_project(_project, ["network"]) do
+    {:dir, fn -> {:ok, @network_children} end}
+  end
+
+  defp resolve_project(project, ["network", "restrictions.json"]),
+    do: file(:network_restrictions, %{ref: project_ref(project)}, &Render.json/1)
+
+  defp resolve_project(project, ["network", "ssl-enforcement.json"]),
+    do: file(:ssl_enforcement, %{ref: project_ref(project)}, &Render.json/1)
+
+  # Never configured on most projects — the endpoint 404s. The file still
+  # exists and reads as `{}`, so cross-project sweeps see a consistent tree.
+  defp resolve_project(project, ["network", "custom-hostname.json"]),
+    do: optional_file(:custom_hostname, %{ref: project_ref(project)})
+
+  defp resolve_project(project, ["network", "vanity-subdomain.json"]),
+    do: optional_file(:vanity_subdomain, %{ref: project_ref(project)})
+
+  # Generated TypeScript definitions for the project's database. Generation
+  # can take a while on large schemas, so this read gets a longer timeout.
+  defp resolve_project(project, ["types.ts"]),
+    do: file(:typescript_types, %{ref: project_ref(project)}, &Render.typescript/1, timeout_ms: 30_000)
+
+  defp resolve_project(project, ["upgrade-eligibility.json"]),
+    do: optional_file(:upgrade_eligibility, %{ref: project_ref(project)})
+
+  # Edge-function secrets: the endpoint returns names *and* values, so values
+  # are redacted at render time unless expose_secrets is on — the names alone
+  # are what audits need.
+  defp resolve_project(project, ["secrets.json"]),
+    do: file(:secrets, %{ref: project_ref(project)}, &render_secrets/1)
 
   defp resolve_project(project, ["functions"]) do
     {:dir, fn -> with {:ok, entries} <- function_entries(project), do: {:ok, names(entries)} end}
@@ -289,8 +363,26 @@ defmodule Supablock.Router do
   ## database/<schema>/<table>/rows-<offset>.<ext>
 
   defp resolve_database(ref, []) do
-    {:dir, fn -> with {:ok, schemas} <- Database.schemas(ref), do: {:ok, string_names(schemas)} end}
+    {:dir,
+     fn ->
+       case Database.schemas(ref) do
+         {:ok, schemas} ->
+           {:ok, @database_files ++ string_names(schemas)}
+
+         # The static files come from the Management API, not the Data API —
+         # keep them reachable even when the Data API is unavailable.
+         {:error, _reason} ->
+           {:ok, @database_files}
+       end
+     end}
   end
+
+  defp resolve_database(ref, ["backups.json"]), do: file(:backups, %{ref: ref}, &Render.json/1)
+
+  defp resolve_database(ref, ["migrations.json"]),
+    do: file(:migrations, %{ref: ref}, &Render.json/1)
+
+  defp resolve_database(ref, ["readonly.json"]), do: file(:readonly, %{ref: ref}, &Render.json/1)
 
   defp resolve_database(ref, [schema_seg | rest]) do
     with {:ok, schemas} <- Database.schemas(ref),
@@ -424,11 +516,25 @@ defmodule Supablock.Router do
 
   ## Leaves
 
-  defp file(endpoint, args, render_fun) do
+  defp file(endpoint, args, render_fun, opts \\ []) do
     {:file,
      fn ->
-       with {:ok, value} <- fetch(endpoint, args) do
+       with {:ok, value} <- fetch(endpoint, args, opts) do
          {:ok, render_fun.(value)}
+       end
+     end}
+  end
+
+  # A file whose endpoint 404s when the feature was never configured
+  # (custom hostname, vanity subdomain, upgrade eligibility): render the
+  # missing resource as `{}` instead of erroring the read.
+  defp optional_file(endpoint, args) do
+    {:file,
+     fn ->
+       case fetch(endpoint, args) do
+         {:ok, value} -> {:ok, Render.json(value)}
+         {:error, :enoent} -> {:ok, "{}\n"}
+         {:error, reason} -> {:error, reason}
        end
      end}
   end
@@ -451,6 +557,24 @@ defmodule Supablock.Router do
   end
 
   defp render_api_keys(other, _kind), do: Render.json(other)
+
+  # `GET /secrets` has no names-only mode — values always come over the wire,
+  # so they are redacted here at render time (never written anywhere) unless
+  # the user opted in with expose_secrets.
+  defp render_secrets(secrets) when is_list(secrets) do
+    if Config.get("expose_secrets") do
+      Render.json(secrets)
+    else
+      secrets
+      |> Enum.map(fn
+        %{} = secret -> Map.replace(secret, "value", "REDACTED")
+        other -> other
+      end)
+      |> Render.json()
+    end
+  end
+
+  defp render_secrets(other), do: Render.json(other)
 
   defp classify_key(key) do
     name = to_string(key["name"] || "")
@@ -575,11 +699,11 @@ defmodule Supablock.Router do
 
   ## Fetch + error mapping
 
-  defp fetch(endpoint, args) do
+  defp fetch(endpoint, args, opts \\ []) do
     url = Endpoints.path(endpoint, args)
     ttl_ms = Config.ttl_ms(Endpoints.ttl_class(endpoint))
 
-    case Cache.fetch(url, ttl_ms, fn -> Client.get(url) end) do
+    case Cache.fetch(url, ttl_ms, fn -> Client.get(url, opts) end) do
       {:ok, value} -> {:ok, value}
       {:error, reason} -> {:error, map_error(reason)}
     end

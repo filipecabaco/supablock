@@ -34,6 +34,17 @@ defmodule Supablock.Render do
   def health(other), do: json(other)
 
   @doc """
+  Render the generated-TypeScript-types response (`{"types": "..."}`) as the
+  raw source text. Falls back to sorted JSON when the shape is unexpected.
+  """
+  @spec typescript(term) :: binary
+  def typescript(%{"types" => types}) when is_binary(types) do
+    if String.ends_with?(types, "\n"), do: types, else: types <> "\n"
+  end
+
+  def typescript(other), do: json(other)
+
+  @doc """
   Render the analytics logs response as NDJSON — one compact JSON object per
   line, in chronological order (oldest first, newest last). This makes
   `tail -n N` show the N most-recent entries and `tail -f` extend naturally.

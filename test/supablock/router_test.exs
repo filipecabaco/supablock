@@ -46,14 +46,19 @@ defmodule Supablock.RouterTest do
                [
                  "info.json",
                  "health",
+                 "advisors",
                  "config",
                  "api-keys",
+                 "secrets.json",
                  "functions",
                  "storage",
                  "branches",
                  "database",
+                 "network",
                  "logs",
-                 "metrics"
+                 "metrics",
+                 "types.ts",
+                 "upgrade-eligibility.json"
                ]
     end
 
@@ -132,8 +137,18 @@ defmodule Supablock.RouterTest do
     test "config leaves" do
       base = "/organizations/org-alpha/projects/#{@proj_a1}/config"
 
-      assert {:ok, ["auth.json", "database.json", "realtime.json", "storage.json", "auth"]} =
-               Router.list(base)
+      assert {:ok,
+              [
+                "auth.json",
+                "database.json",
+                "disk.json",
+                "pgbouncer.json",
+                "pooler.json",
+                "postgrest.json",
+                "realtime.json",
+                "storage.json",
+                "auth"
+              ]} = Router.list(base)
 
       assert {:ok, body} = Router.read("#{base}/auth.json")
       assert body =~ ~s("site_url")
@@ -143,6 +158,79 @@ defmodule Supablock.RouterTest do
       assert body =~ ~s("private_only")
       assert {:ok, body} = Router.read("#{base}/storage.json")
       assert body =~ ~s("fileSizeLimit")
+      assert {:ok, body} = Router.read("#{base}/disk.json")
+      assert body =~ ~s("iops")
+      assert {:ok, body} = Router.read("#{base}/pgbouncer.json")
+      assert body =~ ~s("pool_mode")
+      assert {:ok, body} = Router.read("#{base}/pooler.json")
+      assert body =~ ~s("database_type")
+      assert {:ok, body} = Router.read("#{base}/postgrest.json")
+      assert body =~ ~s("db_schema")
+    end
+
+    test "advisors directory and lint files" do
+      base = "/organizations/org-alpha/projects/#{@proj_a1}/advisors"
+      assert {:ok, :dir} = Router.describe(base)
+      assert {:ok, ["performance.json", "security.json"]} = Router.list(base)
+
+      assert {:ok, body} = Router.read("#{base}/security.json")
+      assert body =~ "rls_disabled_in_public"
+      assert body =~ ~s("level": "ERROR")
+
+      assert {:ok, body} = Router.read("#{base}/performance.json")
+      assert body =~ ~s("lints": [])
+    end
+
+    test "network directory: present resources render, unconfigured ones read as {}" do
+      base = "/organizations/org-alpha/projects/#{@proj_a1}/network"
+
+      assert {:ok,
+              [
+                "custom-hostname.json",
+                "restrictions.json",
+                "ssl-enforcement.json",
+                "vanity-subdomain.json"
+              ]} = Router.list(base)
+
+      assert {:ok, body} = Router.read("#{base}/restrictions.json")
+      assert body =~ "dbAllowedCidrs"
+      assert {:ok, body} = Router.read("#{base}/ssl-enforcement.json")
+      assert body =~ "currentConfig"
+      assert {:ok, body} = Router.read("#{base}/custom-hostname.json")
+      assert body =~ "db.example.com"
+
+      # projatwo has no custom hostname: the endpoint 404s, the file reads {}
+      other = "/organizations/org-alpha/projects/projatwo1234567890ab/network"
+      assert {:ok, "{}\n"} = Router.read("#{other}/custom-hostname.json")
+      assert {:ok, {:file, 3}} = Router.describe("#{other}/custom-hostname.json")
+      assert {:ok, "{}\n"} = Router.read("#{other}/vanity-subdomain.json")
+    end
+
+    test "types.ts renders the raw generated TypeScript source" do
+      path = "/organizations/org-alpha/projects/#{@proj_a1}/types.ts"
+      assert {:ok, :file} = Router.kind(path)
+      assert {:ok, body} = Router.read(path)
+      assert body == "export type Json = string | number\nexport interface Database {}\n"
+    end
+
+    test "upgrade-eligibility.json renders" do
+      path = "/organizations/org-alpha/projects/#{@proj_a1}/upgrade-eligibility.json"
+      assert {:ok, body} = Router.read(path)
+      assert body =~ ~s("eligible": true)
+    end
+
+    test "database dir carries backups/migrations/readonly files alongside schemas" do
+      base = "/organizations/org-alpha/projects/#{@proj_a1}/database"
+      assert {:ok, entries} = Router.list(base)
+      assert ["backups.json", "migrations.json", "readonly.json" | schemas] = entries
+      assert "public" in schemas
+
+      assert {:ok, body} = Router.read("#{base}/backups.json")
+      assert body =~ ~s("pitr_enabled")
+      assert {:ok, body} = Router.read("#{base}/migrations.json")
+      assert body =~ "add_users"
+      assert {:ok, body} = Router.read("#{base}/readonly.json")
+      assert body =~ ~s("enabled": false)
     end
 
     test "storage bucket and auth provider info.json render from the cached listing" do
@@ -250,6 +338,30 @@ defmodule Supablock.RouterTest do
       :ok = Config.set("expose_secrets", "true")
       path = "/organizations/org-alpha/projects/#{@proj_a1}/api-keys/secret"
       assert {:ok, "sb_secret_TOPSECRETVALUE\n"} = Router.read(path)
+    end
+  end
+
+  describe "secrets.json" do
+    test "names are visible but values are redacted by default" do
+      path = "/organizations/org-alpha/projects/#{@proj_a1}/secrets.json"
+      assert {:ok, body} = Router.read(path)
+      assert body =~ "STRIPE_KEY"
+      assert body =~ ~s("value": "REDACTED")
+      refute body =~ "sk_live_SUPERSECRET"
+      assert {:ok, {:file, size}} = Router.describe(path)
+      assert size == byte_size(body)
+    end
+
+    test "values are shown when expose_secrets is enabled" do
+      :ok = Config.set("expose_secrets", "true")
+      path = "/organizations/org-alpha/projects/#{@proj_a1}/secrets.json"
+      assert {:ok, body} = Router.read(path)
+      assert body =~ "sk_live_SUPERSECRET"
+    end
+
+    test "an empty secrets list renders as []" do
+      path = "/organizations/org-alpha/projects/projatwo1234567890ab/secrets.json"
+      assert {:ok, "[]\n"} = Router.read(path)
     end
   end
 
@@ -364,7 +476,8 @@ defmodule Supablock.RouterTest do
 
     test "schemas and tables are listed" do
       base = "/organizations/org-alpha/projects/#{@proj_a1}/database"
-      assert {:ok, ["app", "public"]} = Router.list(base)
+      assert {:ok, ["backups.json", "migrations.json", "readonly.json", "app", "public"]} =
+               Router.list(base)
       assert {:ok, :dir} = Router.describe("#{base}/app")
       assert {:ok, ["empty", "widgets"]} = Router.list("#{base}/app")
       assert {:ok, []} = Router.list("#{base}/public")

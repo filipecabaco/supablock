@@ -60,6 +60,42 @@ defmodule Supablock.EndpointsTest do
     assert Endpoints.ttl_class(:logs) == "logs"
   end
 
+  test "advisor, types, secrets and database endpoints" do
+    assert Endpoints.path(:advisors_security, %{ref: "abc"}) ==
+             "/v1/projects/abc/advisors/security"
+
+    assert Endpoints.path(:advisors_performance, %{ref: "abc"}) ==
+             "/v1/projects/abc/advisors/performance"
+
+    assert Endpoints.path(:typescript_types, %{ref: "abc"}) == "/v1/projects/abc/types/typescript"
+    assert Endpoints.path(:secrets, %{ref: "abc"}) == "/v1/projects/abc/secrets"
+    assert Endpoints.path(:migrations, %{ref: "abc"}) == "/v1/projects/abc/database/migrations"
+    assert Endpoints.path(:backups, %{ref: "abc"}) == "/v1/projects/abc/database/backups"
+    assert Endpoints.path(:readonly, %{ref: "abc"}) == "/v1/projects/abc/readonly"
+  end
+
+  test "network and upgrade endpoints" do
+    assert Endpoints.path(:network_restrictions, %{ref: "abc"}) ==
+             "/v1/projects/abc/network-restrictions"
+
+    assert Endpoints.path(:ssl_enforcement, %{ref: "abc"}) == "/v1/projects/abc/ssl-enforcement"
+    assert Endpoints.path(:custom_hostname, %{ref: "abc"}) == "/v1/projects/abc/custom-hostname"
+    assert Endpoints.path(:vanity_subdomain, %{ref: "abc"}) == "/v1/projects/abc/vanity-subdomain"
+
+    assert Endpoints.path(:upgrade_eligibility, %{ref: "abc"}) ==
+             "/v1/projects/abc/upgrade/eligibility"
+  end
+
+  test "database config endpoints" do
+    assert Endpoints.path(:pgbouncer_config, %{ref: "abc"}) ==
+             "/v1/projects/abc/config/database/pgbouncer"
+
+    assert Endpoints.path(:pooler_config, %{ref: "abc"}) ==
+             "/v1/projects/abc/config/database/pooler"
+
+    assert Endpoints.path(:disk_config, %{ref: "abc"}) == "/v1/projects/abc/config/disk"
+  end
+
   test "every endpoint carries a known TTL class" do
     keys = [
       :realtime_config,
@@ -69,7 +105,22 @@ defmodule Supablock.EndpointsTest do
       :third_party_auth,
       :function_body,
       :postgrest_config,
-      :logs
+      :logs,
+      :advisors_security,
+      :advisors_performance,
+      :typescript_types,
+      :secrets,
+      :migrations,
+      :backups,
+      :readonly,
+      :network_restrictions,
+      :ssl_enforcement,
+      :custom_hostname,
+      :vanity_subdomain,
+      :upgrade_eligibility,
+      :pgbouncer_config,
+      :pooler_config,
+      :disk_config
     ]
 
     for key <- keys do
