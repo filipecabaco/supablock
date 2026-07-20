@@ -59,6 +59,19 @@ defmodule Supablock.ClientTest do
     assert {:error, {:http, 500}} = Client.get("/v1/projects/y")
   end
 
+  test "a 400 entitlement gate is :unavailable, a plain 400 stays {:http, 400}" do
+    TestEnv.stub_api!(%{
+      "/v1/projects/a" => {:status, 400, %{"error" => %{"code" => "entitlement_required"}}},
+      "/v1/projects/b" =>
+        {:status, 400, %{"message" => "Custom domains require the Custom Domain add-on."}},
+      "/v1/projects/c" => {:status, 400, %{"message" => "invalid request body"}}
+    })
+
+    assert {:error, :unavailable} = Client.get("/v1/projects/a")
+    assert {:error, :unavailable} = Client.get("/v1/projects/b")
+    assert {:error, {:http, 400}} = Client.get("/v1/projects/c")
+  end
+
   test "rate limit headers land in the ratelimit table with the right scope" do
     TestEnv.stub_api!(%{
       "/v1/projects/projaone1234567890ab/health" => fn conn ->

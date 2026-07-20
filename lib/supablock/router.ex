@@ -56,8 +56,6 @@ defmodule Supablock.Router do
   stable.
   """
 
-  require Logger
-
   alias Supablock.{Cache, Client, Config, Database, Endpoints, Logs, Metrics, Render}
 
   @type node_kind :: :dir | {:file, non_neg_integer}
@@ -271,7 +269,10 @@ defmodule Supablock.Router do
   # Generated TypeScript definitions for the project's database. Generation
   # can take a while on large schemas, so this read gets a longer timeout.
   defp resolve_project(project, ["types.ts"]),
-    do: file(:typescript_types, %{ref: project_ref(project)}, &Render.typescript/1, timeout_ms: 30_000)
+    do:
+      file(:typescript_types, %{ref: project_ref(project)}, &Render.typescript/1,
+        timeout_ms: 30_000
+      )
 
   defp resolve_project(project, ["upgrade-eligibility.json"]),
     do: optional_file(:upgrade_eligibility, %{ref: project_ref(project)})
@@ -530,15 +531,15 @@ defmodule Supablock.Router do
      end}
   end
 
-  # A file whose endpoint 404s when the feature was never configured
-  # (custom hostname, vanity subdomain, upgrade eligibility): render the
-  # missing resource as `{}` instead of erroring the read.
+  # An endpoint whose feature may be unavailable per project: unconfigured
+  # (:enoent), plan/add-on gated (:enoent), or not permitted (:eacces). These
+  # read as `{}` rather than erroring, so sweeps and `diff` see a stable tree.
   defp optional_file(endpoint, args) do
     {:file,
      fn ->
        case fetch(endpoint, args) do
          {:ok, value} -> {:ok, Render.json(value)}
-         {:error, :enoent} -> {:ok, "{}\n"}
+         {:error, reason} when reason in [:enoent, :eacces] -> {:ok, "{}\n"}
          {:error, reason} -> {:error, reason}
        end
      end}
@@ -714,13 +715,8 @@ defmodule Supablock.Router do
     end
   end
 
-  defp map_error(:not_found), do: :enoent
-
-  defp map_error(reason) when reason in [:unauthorized, :forbidden] do
-    Logger.warning("supablock: API said #{reason} — run: supablock login")
-    :eacces
-  end
-
+  defp map_error(reason) when reason in [:not_found, :unavailable], do: :enoent
+  defp map_error(reason) when reason in [:unauthorized, :forbidden], do: :eacces
   defp map_error(:rate_limited), do: :eagain
   defp map_error(_other), do: :eio
 end

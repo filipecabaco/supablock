@@ -206,6 +206,24 @@ defmodule Supablock.RouterTest do
       assert {:ok, "{}\n"} = Router.read("#{other}/vanity-subdomain.json")
     end
 
+    test "optional network surfaces read {} when plan/add-on gated or forbidden" do
+      routes = Supablock.Fixtures.routes()
+
+      TestEnv.stub_api!(%{
+        routes
+        | "/v1/projects/#{@proj_a1}/custom-hostname" =>
+            {:status, 400, %{"error" => %{"code" => "entitlement_required"}}},
+          "/v1/projects/#{@proj_a1}/vanity-subdomain" =>
+            {:status, 403, %{"message" => "account lacks the necessary privileges"}}
+      })
+
+      Cache.flush()
+
+      base = "/organizations/org-alpha/projects/#{@proj_a1}/network"
+      assert {:ok, "{}\n"} = Router.read("#{base}/custom-hostname.json")
+      assert {:ok, "{}\n"} = Router.read("#{base}/vanity-subdomain.json")
+    end
+
     test "types.ts renders the raw generated TypeScript source" do
       path = "/organizations/org-alpha/projects/#{@proj_a1}/types.ts"
       assert {:ok, :file} = Router.kind(path)
@@ -476,8 +494,10 @@ defmodule Supablock.RouterTest do
 
     test "schemas and tables are listed" do
       base = "/organizations/org-alpha/projects/#{@proj_a1}/database"
+
       assert {:ok, ["backups.json", "migrations.json", "readonly.json", "app", "public"]} =
                Router.list(base)
+
       assert {:ok, :dir} = Router.describe("#{base}/app")
       assert {:ok, ["empty", "widgets"]} = Router.list("#{base}/app")
       assert {:ok, []} = Router.list("#{base}/public")

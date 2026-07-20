@@ -374,16 +374,25 @@
     overflow-x: auto;
   }
 
-  .tree pre {
-    margin: 0;
-    padding: 18px 20px;
+  .tree .ft {
+    display: grid;
+    grid-template-columns: max-content max-content;
+    column-gap: 3ch;
+    width: max-content;
+    padding: 18px 22px;
+    font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
     font-size: 13px;
-    line-height: 1.72;
+    line-height: 1.75;
     color: #cdcdcd;
   }
 
+  /* The description is its own grid column, so it aligns no matter how deep
+     or long the path on its left is — no hand-counted spaces. */
+  .tree .path { white-space: pre; }
+  .tree .note { color: #6b6b6b; }
+  .tree .note:not(:empty)::before { content: "· "; color: #3d3d3d; }
+
   .tree .d { color: #8ab4f8; }        /* directory */
-  .tree .c { color: #6b6b6b; }        /* annotation */
   .tree .t { color: #4a4a4a; }        /* tree-drawing glyphs */
 
   .copy {
@@ -650,12 +659,11 @@
     <span class="eyebrow">Read-only FUSE filesystem</span>
     <h1>Your Supabase account, <br>mounted at <span class="path mono">/mnt/supabase</span></h1>
     <p class="lede">
-      supablock mirrors the Supabase Management API as a browsable directory tree.
-      Log in once, mount, and inspect <strong>organizations, projects, config, API keys,
-      edge functions, storage buckets, auth providers and realtime</strong> — plus table
-      rows as CSV or JSON — with the tools you already trust:
-      <strong class="mono">ls</strong>, <strong class="mono">cat</strong>,
-      <strong class="mono">grep</strong>, <strong class="mono">diff</strong>.
+      supablock mirrors the Supabase Management API as a browsable directory tree. Log in once,
+      mount, and inspect <strong>projects, config, keys, functions, storage</strong> and table
+      rows with the tools you already trust: <strong class="mono">ls</strong>,
+      <strong class="mono">cat</strong>, <strong class="mono">grep</strong>,
+      <strong class="mono">diff</strong>.
     </p>
 
     <div class="term">
@@ -673,25 +681,21 @@
       <p class="sec-label"><svg class="icon" aria-hidden="true"><use href="#i-folder"/></svg>Why a filesystem</p>
       <h2>Everything is a file. Now your infrastructure is too.</h2>
       <p class="body">
-        No SDK, no dashboard tab farm, no one-off scripts. Your whole account becomes
-        greppable, diffable and scriptable, and the guarantees are built in:
+        No SDK, no dashboard tab farm, no one-off scripts. Your whole account, greppable and
+        diffable, with the guarantees built in:
       </p>
       <div class="facts">
         <div class="fact">
           <span class="k"><svg class="icon" aria-hidden="true"><use href="#i-lock-closed"/></svg>mount -o ro</span>
-          <p><strong>Read-only by construction.</strong> The Management API sees only GET; the
-             <code>database/</code> tree reads through the Data API with GET only; the kernel
-             rejects every write with <code>EROFS</code>.</p>
+          <p>Every request is a GET; the kernel rejects writes with <code>EROFS</code>.</p>
         </div>
         <div class="fact">
           <span class="k"><svg class="icon" aria-hidden="true"><use href="#i-arrow-path"/></svg>ttl + single-flight</span>
-          <p><strong>Cached &amp; rate-limit friendly.</strong> <code>ls -R</code> costs one request per
-             endpoint, not hundreds. A 429 degrades to <code>EAGAIN</code> — never a hang.</p>
+          <p><code>ls -R</code> is one request per endpoint; a 429 becomes <code>EAGAIN</code>, never a hang.</p>
         </div>
         <div class="fact">
           <span class="k"><svg class="icon" aria-hidden="true"><use href="#i-key"/></svg>sbp_…f23a</span>
-          <p><strong>Token-safe.</strong> Stored at mode 0600, never logged, never rendered into
-             the tree. Secret API keys stay redacted unless you opt in.</p>
+          <p>Token stored 0600, never logged; secret keys redacted unless you opt in.</p>
         </div>
       </div>
     </div>
@@ -702,55 +706,52 @@
       <p class="sec-label"><svg class="icon" aria-hidden="true"><use href="#i-folder"/></svg>What you can browse</p>
       <h2>One tree, your whole account</h2>
       <p class="body">
-        Every read-only surface of the Supabase Management API is a path. Organizations nest
-        projects; each project unfolds into its config, keys, edge functions, storage and auth —
-        and, if you opt in, its table rows. Directories are lazy and cached, so the tree only
-        talks to the API for the parts you actually open.
+        Every read-only surface of the Management API is a path. Directories are lazy and cached,
+        so the tree only calls the API for what you open.
       </p>
 
       <div class="tree">
-<pre><span class="t">/</span>mnt/supabase
-<span class="t">└──</span> <span class="d">organizations/</span>&lt;org&gt;<span class="d">/</span>
-    <span class="t">├──</span> info.json  members.json  regions.json     <span class="c"># org metadata, members, regions</span>
-    <span class="t">└──</span> <span class="d">projects/</span>&lt;ref&gt;<span class="d">/</span>
-        <span class="t">├──</span> info.json                            <span class="c"># project metadata</span>
-        <span class="t">├──</span> health                               <span class="c"># auth · db · realtime · rest · storage</span>
-        <span class="t">├──</span> <span class="d">advisors/</span>
-        <span class="t">│   ├──</span> security.json                    <span class="c"># lints: RLS off, exposed views…</span>
-        <span class="t">│   └──</span> performance.json                 <span class="c"># slow queries, missing indexes…</span>
-        <span class="t">├──</span> <span class="d">config/</span>
-        <span class="t">│   ├──</span> auth.json   database.json        <span class="c"># core project settings</span>
-        <span class="t">│   ├──</span> realtime.json   storage.json     <span class="c"># realtime & storage settings</span>
-        <span class="t">│   ├──</span> disk.json   postgrest.json       <span class="c"># disk & Data API settings</span>
-        <span class="t">│   ├──</span> pgbouncer.json   pooler.json     <span class="c"># connection pooling</span>
-        <span class="t">│   └──</span> <span class="d">auth/</span>
-        <span class="t">│       ├──</span> <span class="d">sso/</span>&lt;id&gt;<span class="d">/</span>info.json        <span class="c"># SAML SSO providers</span>
-        <span class="t">│       └──</span> <span class="d">third-party/</span>&lt;id&gt;<span class="d">/</span>info.json <span class="c"># Firebase · Auth0 · Cognito · …</span>
-        <span class="t">├──</span> <span class="d">api-keys/</span>
-        <span class="t">│   ├──</span> publishable                      <span class="c"># always shown</span>
-        <span class="t">│   └──</span> secret                           <span class="c"># redacted until you opt in</span>
-        <span class="t">├──</span> secrets.json                         <span class="c"># edge-function secret names, values redacted</span>
-        <span class="t">├──</span> <span class="d">functions/</span>&lt;slug&gt;<span class="d">/</span>
-        <span class="t">│   ├──</span> info.json                        <span class="c"># metadata, verify_jwt, version…</span>
-        <span class="t">│   └──</span> body                             <span class="c"># the deployed eszip bundle</span>
-        <span class="t">├──</span> <span class="d">storage/</span><span class="d">buckets/</span>&lt;name&gt;<span class="d">/</span>info.json  <span class="c"># visibility, size limit, MIME types</span>
-        <span class="t">├──</span> <span class="d">branches/</span>&lt;branch&gt;<span class="d">/</span>info.json        <span class="c"># preview branches</span>
-        <span class="t">├──</span> <span class="d">database/</span>
-        <span class="t">│   ├──</span> backups.json  migrations.json    <span class="c"># + readonly.json — DB state files</span>
-        <span class="t">│   └──</span> &lt;schema&gt;<span class="d">/</span>&lt;table&gt;<span class="d">/</span>
-        <span class="t">│       ├──</span> schema.json                  <span class="c"># columns, types, primary key</span>
-        <span class="t">│       └──</span> rows-*.csv                   <span class="c"># rows via the Data API, GET-only</span>
-        <span class="t">├──</span> <span class="d">network/</span>                             <span class="c"># restrictions · ssl-enforcement ·</span>
-        <span class="t">│</span>                                        <span class="c">#   custom-hostname · vanity-subdomain</span>
-        <span class="t">├──</span> <span class="d">logs/</span>&lt;source&gt;                        <span class="c"># NDJSON: postgres, auth, edge, storage…</span>
-        <span class="t">├──</span> metrics                              <span class="c"># Prometheus text for the whole project</span>
-        <span class="t">└──</span> types.ts                             <span class="c"># generated TypeScript types</span></pre>
+<div class="ft"><span class="path"><span class="t">/</span>mnt/supabase</span><span class="note"></span>
+<span class="path"><span class="t">└──</span> <span class="d">organizations/</span>&lt;org&gt;<span class="d">/</span></span><span class="note"></span>
+<span class="path">    <span class="t">├──</span> info.json  members.json  regions.json</span><span class="note">org metadata, members, regions</span>
+<span class="path">    <span class="t">└──</span> <span class="d">projects/</span>&lt;ref&gt;<span class="d">/</span></span><span class="note"></span>
+<span class="path">        <span class="t">├──</span> info.json</span><span class="note">project metadata</span>
+<span class="path">        <span class="t">├──</span> health</span><span class="note">auth · db · realtime · rest · storage</span>
+<span class="path">        <span class="t">├──</span> <span class="d">advisors/</span></span><span class="note"></span>
+<span class="path">        <span class="t">│   ├──</span> security.json</span><span class="note">lints: RLS off, exposed views…</span>
+<span class="path">        <span class="t">│   └──</span> performance.json</span><span class="note">slow queries, missing indexes…</span>
+<span class="path">        <span class="t">├──</span> <span class="d">config/</span></span><span class="note"></span>
+<span class="path">        <span class="t">│   ├──</span> auth.json   database.json</span><span class="note">core project settings</span>
+<span class="path">        <span class="t">│   ├──</span> realtime.json   storage.json</span><span class="note">realtime &amp; storage settings</span>
+<span class="path">        <span class="t">│   ├──</span> disk.json   postgrest.json</span><span class="note">disk &amp; Data API settings</span>
+<span class="path">        <span class="t">│   ├──</span> pgbouncer.json   pooler.json</span><span class="note">connection pooling</span>
+<span class="path">        <span class="t">│   └──</span> <span class="d">auth/</span></span><span class="note"></span>
+<span class="path">        <span class="t">│       ├──</span> <span class="d">sso/</span>&lt;id&gt;<span class="d">/</span>info.json</span><span class="note">SAML SSO providers</span>
+<span class="path">        <span class="t">│       └──</span> <span class="d">third-party/</span>&lt;id&gt;<span class="d">/</span>info.json</span><span class="note">Firebase · Auth0 · Cognito · …</span>
+<span class="path">        <span class="t">├──</span> <span class="d">api-keys/</span></span><span class="note"></span>
+<span class="path">        <span class="t">│   ├──</span> publishable</span><span class="note">always shown</span>
+<span class="path">        <span class="t">│   └──</span> secret</span><span class="note">redacted until you opt in</span>
+<span class="path">        <span class="t">├──</span> secrets.json</span><span class="note">edge-function secret names, values redacted</span>
+<span class="path">        <span class="t">├──</span> <span class="d">functions/</span>&lt;slug&gt;<span class="d">/</span></span><span class="note"></span>
+<span class="path">        <span class="t">│   ├──</span> info.json</span><span class="note">metadata, verify_jwt, version…</span>
+<span class="path">        <span class="t">│   └──</span> body</span><span class="note">the deployed eszip bundle</span>
+<span class="path">        <span class="t">├──</span> <span class="d">storage/</span><span class="d">buckets/</span>&lt;name&gt;<span class="d">/</span>info.json</span><span class="note">visibility, size limit, MIME types</span>
+<span class="path">        <span class="t">├──</span> <span class="d">branches/</span>&lt;branch&gt;<span class="d">/</span>info.json</span><span class="note">preview branches</span>
+<span class="path">        <span class="t">├──</span> <span class="d">database/</span></span><span class="note"></span>
+<span class="path">        <span class="t">│   ├──</span> backups.json  migrations.json</span><span class="note">+ readonly.json, DB state files</span>
+<span class="path">        <span class="t">│   └──</span> &lt;schema&gt;<span class="d">/</span>&lt;table&gt;<span class="d">/</span></span><span class="note"></span>
+<span class="path">        <span class="t">│       ├──</span> schema.json</span><span class="note">columns, types, primary key</span>
+<span class="path">        <span class="t">│       └──</span> rows-*.csv</span><span class="note">rows via the Data API, GET-only</span>
+<span class="path">        <span class="t">├──</span> <span class="d">network/</span></span><span class="note">restrictions, SSL, custom &amp; vanity domains</span>
+<span class="path">        <span class="t">├──</span> <span class="d">logs/</span>&lt;source&gt;</span><span class="note">NDJSON: postgres, auth, edge, storage…</span>
+<span class="path">        <span class="t">├──</span> metrics</span><span class="note">Prometheus text for the whole project</span>
+<span class="path">        <span class="t">└──</span> types.ts</span><span class="note">generated TypeScript types</span></div>
       </div>
 
       <p class="body">
-        JSON files are pretty-printed with sorted keys, so <span class="mono">diff</span> between
-        projects is clean; edge-function <span class="mono">body</span> files are the deployed
-        eszip bundles as raw bytes.
+        JSON is pretty-printed with sorted keys, so <span class="mono">diff</span> between projects
+        stays clean. Surfaces gated behind a plan or add-on (custom domains, vanity subdomains) read
+        as <span class="mono">{}</span> rather than erroring, so cross-project sweeps stay uniform.
       </p>
     </div>
   </section>
@@ -760,13 +761,10 @@
       <p class="sec-label"><svg class="icon" aria-hidden="true"><use href="#i-arrow-down-tray"/></svg>Install</p>
       <h2>Install in one line</h2>
       <p class="body">
-        The installer downloads the single-file binary for your platform from the GitHub
-        releases — no Erlang/Elixir needed. FUSE is built in on Linux; on macOS install
+        A single-file binary, no Erlang/Elixir needed. FUSE is built in on Linux; macOS needs
         <a href="https://macfuse.github.io" rel="noopener">macFUSE</a> or
-        <a href="https://www.fuse-t.org" rel="noopener">FUSE-T</a> first. (Prefer building
-        from source? The
-        <a href="https://github.com/filipecabaco/supablock#building-from-source" rel="noopener">README</a>
-        has the full recipe.)
+        <a href="https://www.fuse-t.org" rel="noopener">FUSE-T</a>. Building from source? See the
+        <a href="https://github.com/filipecabaco/supablock#building-from-source" rel="noopener">README</a>.
       </p>
 
       <div class="code">
@@ -795,12 +793,10 @@
       <p class="sec-label"><svg class="icon" aria-hidden="true"><use href="#i-cube"/></svg>Docker</p>
       <h2>One command — <span class="mono">docker run</span></h2>
       <p class="body">
-        The <a href="https://hub.docker.com/r/filipecabaco/supablock" rel="noopener">filipecabaco/supablock</a>
-        image needs nothing on your machine but Docker: it logs you in, mounts your account inside
-        the container, and drops you into a shell at <span class="mono">/supabase</span> — with
-        <span class="mono">ls</span>, <span class="mono">cat</span>, <span class="mono">grep</span>,
-        <span class="mono">find</span> and <span class="mono">diff</span> ready to go. Exiting the
-        shell unmounts and removes the container.
+        Nothing on your machine but Docker. The
+        <a href="https://hub.docker.com/r/filipecabaco/supablock" rel="noopener">filipecabaco/supablock</a>
+        image (Alpine, amd64/arm64) logs you in, mounts your account, and drops you into a shell
+        at <span class="mono">/supabase</span>. Exiting unmounts and removes the container.
       </p>
 
       <div class="code">
@@ -815,41 +811,16 @@
       <div class="facts">
         <div class="fact">
           <span class="k"><svg class="icon" aria-hidden="true"><use href="#i-key"/></svg>login once, in the volume</span>
-          <p><strong>Credentials live on your machine.</strong> An empty
-             <code>supablock-config</code> volume triggers the login flow — open the printed URL
-             on your host, type the verification code — and every later run goes straight to the
-             mounted shell. <code>docker volume rm supablock-config</code> logs you out.</p>
+          <p>An empty <code>supablock-config</code> volume triggers login; later runs go straight to the shell.</p>
         </div>
         <div class="fact">
           <span class="k"><svg class="icon" aria-hidden="true"><use href="#i-lock-closed"/></svg>--device /dev/fuse</span>
-          <p><strong>The flags are FUSE plumbing.</strong> Mounting inside a container needs the
-             host's FUSE device, <code>CAP_SYS_ADMIN</code>, and — on Debian/Ubuntu hosts — an
-             AppArmor exemption for <code>mount</code>. The tree stays inside the container's
-             namespace, read-only as always.</p>
+          <p>The flags are FUSE plumbing: host device, <code>CAP_SYS_ADMIN</code>, an AppArmor exemption on Debian/Ubuntu.</p>
         </div>
         <div class="fact">
           <span class="k"><svg class="icon" aria-hidden="true"><use href="#i-command-line"/></svg>scriptable</span>
-          <p><strong>One-off commands and CI.</strong> Anything after the image name runs at the
-             mountpoint — <code>… filipecabaco/supablock grep -r '"site_url"' organizations</code> —
-             and <code>-e SUPABLOCK_TOKEN=sbp_…</code> skips the login flow entirely for headless
-             use.</p>
+          <p>Args after the image run at the mountpoint; <code>-e SUPABLOCK_TOKEN=sbp_…</code> skips login for CI.</p>
         </div>
-      </div>
-
-      <p class="body">
-        No binary yet? That single command expands to a plain <span class="mono">docker run</span>
-        you can copy anywhere — nothing but Docker required. The image is Alpine-based,
-        multi-arch (amd64/arm64), and CI keeps <span class="mono">:latest</span> on
-        <span class="mono">main</span>:
-      </p>
-
-      <div class="code">
-        <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
-        <pre><span class="p">$</span> docker run -it --rm \
-    --device /dev/fuse --cap-add SYS_ADMIN \
-    --security-opt apparmor=unconfined \
-    -v supablock-config:/root/.config/supablock \
-    filipecabaco/supablock</pre>
       </div>
     </div>
   </section>
@@ -859,12 +830,9 @@
       <p class="sec-label"><svg class="icon" aria-hidden="true"><use href="#i-cpu-chip"/></svg>AI agents</p>
       <h2>Built for agents: nothing to break, nothing to learn</h2>
       <p class="body">
-        A read-only tree with deterministic output is the safest thing you can hand an AI agent —
-        exploring it cannot damage anything, and the filesystem shape means an agent's existing
-        file tools <em>are</em> the integration. Verifying Supabase state ("are signups off in
-        prod?", "any public buckets?", "did the config drift?") becomes an
-        <span class="mono">ls</span>/<span class="mono">cat</span>/<span class="mono">diff</span>
-        exercise.
+        A read-only tree with deterministic output is the safest thing to hand an agent: exploring
+        it can't break anything, and its file tools <em>are</em> the integration. "Are signups off
+        in prod?" becomes an <span class="mono">ls</span>/<span class="mono">cat</span>/<span class="mono">diff</span>.
       </p>
 
       <div class="code">
@@ -882,27 +850,17 @@
 
       <div class="facts">
         <div class="fact">
-          <span class="k"><svg class="icon" aria-hidden="true"><use href="#i-command-line"/></svg>ls · cat · find · grep, no mount</span>
-          <p><strong>Reads without FUSE.</strong> <code>ls</code>, <code>cat</code>,
-             <code>head</code>, <code>tail</code>, <code>find</code> and <code>grep</code> resolve
-             tree paths straight off the API — same guarantees as the mount, zero privileges,
-             coreutils semantics and exit codes. They connect with ordinary pipes
-             (<code>find … | cat -</code>), and <code>supablock serve</code> gives them one
-             shared warm cache for batch reads — still no FUSE.</p>
+          <span class="k"><svg class="icon" aria-hidden="true"><use href="#i-cube"/></svg>supablock mcp</span>
+          <p>An MCP server on stdio: <code>ls</code>, <code>cat</code>, <code>find</code>, <code>grep</code> as tools, same Router and redaction.</p>
         </div>
         <div class="fact">
-          <span class="k"><svg class="icon" aria-hidden="true"><use href="#i-arrow-down-tray"/></svg>npx skills add</span>
-          <p><strong>An installable skill.</strong>
-             <code>npx skills add filipecabaco/supablock</code> teaches a skills-aware agent
-             (Claude Code and friends) how to authenticate and verify account state, with recipes
-             for health, signup policy, bucket visibility and config-drift checks.</p>
+          <span class="k"><svg class="icon" aria-hidden="true"><use href="#i-command-line"/></svg>reads without FUSE</span>
+          <p>The same commands resolve straight off the API — coreutils semantics, no privileges, pipe-friendly.</p>
         </div>
         <div class="fact">
-          <span class="k"><svg class="icon" aria-hidden="true"><use href="#i-magnifying-glass"/></svg>llms.txt</span>
-          <p><strong>A machine-readable summary.</strong>
-             <a href="llms.txt">llms.txt</a> gives an agent the tree shape, auth story and ground
-             rules in one fetch. Hand agents a scoped, revocable access token and leave
-             <code>expose_secrets</code> off.</p>
+          <span class="k"><svg class="icon" aria-hidden="true"><use href="#i-arrow-down-tray"/></svg>skills add · llms.txt</span>
+          <p><code>npx skills add filipecabaco/supablock</code> teaches Claude Code the tool;
+             <a href="llms.txt">llms.txt</a> hands any agent the tree shape in one fetch.</p>
         </div>
       </div>
     </div>
@@ -918,9 +876,8 @@
           <span class="n">1</span>
           <div>
             <h3>Authenticate</h3>
-            <p><span class="mono">login</span> just works: an OAuth2 + PKCE browser flow storing
-               short-lived, scoped tokens that refresh automatically. No browser or headless
-               environment? <span class="mono">--token sbp_…</span> always works.</p>
+            <p><span class="mono">login</span> runs an OAuth2 + PKCE browser flow with scoped,
+               auto-refreshing tokens. Headless? <span class="mono">--token sbp_…</span> always works.</p>
             <div class="code">
               <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
               <pre><span class="p">$</span> supablock login
@@ -940,11 +897,9 @@ Waiting for the callback on http://localhost:53682/callback …
           <span class="n">2</span>
           <div>
             <h3>Mount and browse</h3>
-            <p><span class="mono">mount</span> <strong>returns immediately</strong> — the
-               filesystem runs in the background and you browse from the same shell. The
-               mountpoint defaults to <span class="mono">~/Supabase</span>; override it with
-               <span class="mono">--path</span> or <span class="mono">config set mountpoint</span>.
-               <span class="mono">--foreground</span> blocks instead.</p>
+            <p><span class="mono">mount</span> <strong>returns immediately</strong> — it runs in the
+               background and you browse from the same shell. Defaults to
+               <span class="mono">~/Supabase</span>; <span class="mono">--foreground</span> blocks instead.</p>
             <div class="code">
               <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
               <pre><span class="p">$</span> supablock mount
@@ -960,9 +915,8 @@ Check status: supablock status
           <span class="n">＋</span>
           <div>
             <h3>Onboarding a whole team?</h3>
-            <p>One command applies a shared profile — a flat JSON of config keys (OAuth app,
-               mountpoint convention, TTLs) — logs in, and offers the auto-start service.
-               Secrets and tokens never belong in a profile.</p>
+            <p>One command applies a shared profile (a flat JSON of config keys), logs in, and
+               offers the auto-start service. Secrets never belong in a profile.</p>
             <div class="code">
               <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
               <pre><span class="p">$</span> supablock setup https://team.example.com/supablock.json</pre>
@@ -978,11 +932,9 @@ Check status: supablock status
       <p class="sec-label"><svg class="icon" aria-hidden="true"><use href="#i-arrow-path"/></svg>Auto-start</p>
       <h2>Keep it mounted — as a background service</h2>
       <p class="body">
-        One command turns the mount into a per-user service that comes up at login and restarts
-        on failure — a <strong>systemd user unit</strong> on Linux, a <strong>launchd agent</strong>
-        on macOS. No root, same config and credentials as the CLI, and stopping the service
-        unmounts cleanly. Set a mountpoint first
-        (<span class="mono">supablock config set mountpoint /mnt/supabase</span>).
+        Turn the mount into a per-user service that comes up at login and restarts on failure — a
+        <strong>systemd user unit</strong> on Linux, a <strong>launchd agent</strong> on macOS. No
+        root, same config as the CLI.
       </p>
 
       <div class="code">
@@ -998,10 +950,6 @@ Check status: supablock status
     <div class="wrap">
       <p class="sec-label"><svg class="icon" aria-hidden="true"><use href="#i-magnifying-glass"/></svg>One-liners</p>
       <h2>Your account, greppable</h2>
-      <p class="body">
-        Output is deterministic — JSON is pretty-printed with sorted keys — so byte sizes are
-        exact and <span class="mono">diff</span> between projects is clean.
-      </p>
 
       <div class="oneliner">
         <p class="what"><strong>Which projects disable signups?</strong></p>
@@ -1020,23 +968,24 @@ Check status: supablock status
       </div>
 
       <div class="oneliner">
-        <p class="what"><strong>Health of every service, everywhere.</strong></p>
+        <p class="what"><strong>Any security advisor findings?</strong> (RLS off, exposed views).</p>
         <div class="code">
           <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
-          <pre><span class="p">$</span> cat /mnt/supabase/organizations/*/projects/*/health</pre>
+          <pre><span class="p">$</span> grep -l '"level": "ERROR"' /mnt/supabase/organizations/*/projects/*/advisors/security.json</pre>
         </div>
       </div>
 
       <div class="oneliner">
-        <p class="what"><strong>Which storage buckets are public?</strong></p>
+        <p class="what"><strong>Snapshot the config, then track drift.</strong> Exit <span class="mono">1</span> means it changed.</p>
         <div class="code">
           <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
-          <pre><span class="p">$</span> grep -l '"public": true' /mnt/supabase/organizations/*/projects/*/storage/buckets/*/info.json</pre>
+          <pre><span class="p">$</span> supablock snapshot ~/snapshot
+<span class="p">$</span> supablock diff ~/snapshot</pre>
         </div>
       </div>
 
       <div class="oneliner">
-        <p class="what"><strong>Unpack a deployed edge function's source</strong> (the body is an eszip bundle).</p>
+        <p class="what"><strong>Unpack an edge function's source</strong> (an eszip bundle).</p>
         <div class="code">
           <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
           <pre><span class="p">$</span> npx eszip extract .../projects/&lt;ref&gt;/functions/hello/body ./hello-src</pre>
@@ -1050,12 +999,10 @@ Check status: supablock status
       <p class="sec-label"><svg class="icon" aria-hidden="true"><use href="#i-folder"/></svg>Table data</p>
       <h2>Rows as files, too</h2>
       <p class="body">
-        The Management API has no row endpoint, so table browsing reads through each project's
-        Data API (PostgREST) with GET requests only. There's nothing to set up and no database
-        password: every project already has a <span class="mono">database/</span> folder — one
-        directory per exposed schema, one per table, rows paged into
-        <span class="mono">.csv</span> (default) or <span class="mono">.json</span> files —
-        populated on first read with a key supablock fetches for you.
+        Table browsing reads through each project's Data API (PostgREST) with GET only. No setup,
+        no database password: every table gets a <span class="mono">schema.json</span> (columns,
+        types, primary key) and rows paged into <span class="mono">.csv</span> or
+        <span class="mono">.json</span> files, using a key supablock fetches for you.
       </p>
 
       <div class="oneliner">
@@ -1063,7 +1010,8 @@ Check status: supablock status
         <div class="code">
           <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
           <pre><span class="p">$</span> ls  /mnt/supabase/organizations/*/projects/&lt;ref&gt;/database/public/users
-rows-000000.csv  rows-000500.csv  rows-001000.csv
+schema.json  rows-000000.csv  rows-000500.csv  rows-001000.csv
+<span class="p">$</span> cat .../database/public/users/schema.json   <span class="c"># columns, types, primary key</span>
 <span class="p">$</span> cat .../database/public/users/rows-000000.csv</pre>
         </div>
       </div>
@@ -1079,10 +1027,9 @@ rows-000000.csv  rows-000500.csv  rows-001000.csv
       </div>
 
       <p class="body" style="font-size: 13.5px;">
-        By default rows are read with the project's <code>service_role</code> key, which bypasses
-        RLS so you see every row; <code>db_key publishable</code> switches to the <code>anon</code>
-        key and shows only what RLS allows. Pages are ordered by primary key so paging is stable,
-        and every request is a GET — no direct database connection, no extra credential.
+        Rows read with <code>service_role</code> (bypasses RLS) by default; <code>db_key
+        publishable</code> switches to <code>anon</code> and shows only what RLS allows. Pages are
+        ordered by primary key, so paging is stable.
       </p>
     </div>
   </section>
@@ -1140,29 +1087,22 @@ rows-000000.csv  rows-000500.csv  rows-001000.csv
       <div class="guarantee">
         <h3><svg class="icon icon-lg" aria-hidden="true"><use href="#i-lock-closed"/></svg> The write path does not exist</h3>
         <p>
-          Every Management API request is a <code>GET</code> — there is no code path for anything
-          else. The <code>database/</code> tree reads through the project's Data API (PostgREST)
-          with GET requests only, all generated by supablock. The FUSE layer exposes
-          no mutating callbacks, and the mount is created with <code>-o ro</code>, so
-          <code>touch</code>, <code>rm</code>, <code>mkdir</code> and every other write fails in the
-          kernel with <code>EROFS</code> before it reaches userspace.
+          Every request is a <code>GET</code> — there is no code path for anything else. The FUSE
+          layer exposes no mutating callbacks, and the mount is created <code>-o ro</code>, so
+          <code>touch</code>, <code>rm</code> and every other write fails in the kernel with
+          <code>EROFS</code>.
         </p>
       </div>
 
       <ul class="notes">
-        <li>Row browsing needs no database password or extra credential: the <code>database/</code>
-            tree reuses a key supablock fetches from the Management API — <code>service_role</code>
-            by default (bypasses RLS), or <code>anon</code> with <code>db_key publishable</code>. The
-            key is used only for GETs to the Data API and is never written into the tree.</li>
-        <li>The token lives in <code>~/.config/supablock/credentials</code> (mode 0600, dir 0700),
-            is never logged, and shows up masked (<code>sbp_…f23a</code>) in <code>status</code>.</li>
-        <li><code>api-keys/secret</code> renders as
-            <code>REDACTED — run: supablock config set expose_secrets true</code> until you
-            explicitly opt in. The publishable key is always visible.</li>
-        <li><code>SUPABLOCK_TOKEN</code> overrides the stored credential — the only environment
-            variable in play, intended for CI.</li>
-        <li>Request deadlines (<code>http_timeout_ms</code>, default 8000) turn slow calls into
-            <code>EIO</code>; a rate-limit turns into <code>EAGAIN</code>. The filesystem never hangs.</li>
+        <li>Row browsing needs no database password: it reuses a key supablock fetches, used only
+            for GETs and never written into the tree.</li>
+        <li>The token lives in <code>~/.config/supablock/credentials</code> (mode 0600), is never
+            logged, and shows up masked in <code>status</code>.</li>
+        <li><code>api-keys/secret</code> stays <code>REDACTED</code> until you set
+            <code>expose_secrets true</code>. The publishable key is always visible.</li>
+        <li>Slow calls become <code>EIO</code>, a rate-limit becomes <code>EAGAIN</code>. The
+            filesystem never hangs.</li>
       </ul>
     </div>
   </section>

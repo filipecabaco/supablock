@@ -1656,7 +1656,10 @@ defmodule Supablock.CLI do
   end
 
   defp path_error(path, :eacces) do
-    err("Access denied for #{path} - run: supablock login")
+    err(
+      "Access denied for #{path} - your account may lack access to it, or the credential expired (supablock login)."
+    )
+
     2
   end
 
