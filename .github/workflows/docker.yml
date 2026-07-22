@@ -6,6 +6,8 @@
 #     -v supablock-config:/root/.config/supablock filipecabaco/supablock
 #
 # Pushes to main refresh :latest; tag pushes (v*) add :X.Y.Z and :X.Y.
+# Pull requests run the same build and e2e suites but never touch Docker
+# Hub (PUSH gates every push step; the merge job is ref-gated).
 # Each architecture builds natively (no QEMU — emulating the Erlang compile
 # would be painfully slow), is smoke-tested, pushed by digest, and a final
 # job stitches the digests into one multi-arch manifest.
@@ -19,6 +21,7 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
+  pull_request:
   workflow_dispatch:
 
 env:
@@ -197,7 +200,7 @@ jobs:
           # across page boundaries, page sizes exact.
           run ls "$base/database/public/events" | tee pages.out
           test "$(cat pages.out)" = \
-            "$(printf 'rows-000000.csv\nrows-000500.csv\nrows-001000.csv')"
+            "$(printf 'schema.json\nrows-000000.csv\nrows-000500.csv\nrows-001000.csv')"
           run cat "$base/database/public/events/rows-000500.csv" | tee page5.out >/dev/null
           test "$(wc -l < page5.out)" = 501
           test "$(sed -n 2p page5.out | cut -d, -f1)" = 501
@@ -230,8 +233,8 @@ jobs:
           test "$(sed -n 2p items.out)" = "1,1,SKU-A,2"
           run cat "$base/database/public/audit_log/rows-000000.csv" | grep -q "seeded"
 
-          # An empty table lists no page files.
-          test -z "$(run ls "$base/database/public/empty_table")"
+          # An empty table lists its schema but no page files.
+          test "$(run ls "$base/database/public/empty_table")" = "schema.json"
 
           # The second schema reads like the first.
           run cat "$base/database/app/settings/rows-000000.csv" | tee settings.out
