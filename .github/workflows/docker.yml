@@ -6,6 +6,8 @@
 #     -v supablock-config:/root/.config/supablock filipecabaco/supablock
 #
 # Pushes to main refresh :latest; tag pushes (v*) add :X.Y.Z and :X.Y.
+# Pull requests run the same build and e2e suites but never touch Docker
+# Hub (PUSH gates every push step; the merge job is ref-gated).
 # Each architecture builds natively (no QEMU — emulating the Erlang compile
 # would be painfully slow), is smoke-tested, pushed by digest, and a final
 # job stitches the digests into one multi-arch manifest.
@@ -19,6 +21,7 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
+  pull_request:
   workflow_dispatch:
 
 env:
@@ -88,7 +91,7 @@ jobs:
       # The e2e project is real: `supabase start` runs the same local stack
       # (Postgres, PostgREST, working keys) any developer gets, seeded with a
       # table. Only the platform Management API (org/project metadata) has no
-      # local emulator — docker/e2e/mgmt_api_shim.py serves that thin layer
+      # local emulator — docker/e2e/mgmt_api_stub.exs serves that thin layer
       # and hands supablock the stack's real service_role key, so the
       # database/ tree reads real rows through real PostgREST.
       - uses: supabase/setup-cli@v1
@@ -109,7 +112,7 @@ jobs:
           cp ../docker/e2e/migration.sql supabase/migrations/20260101000000_e2e.sql
           cp ../docker/e2e/seed.sql supabase/seed.sql
           # The local PostgREST must actually serve the `app` schema the
-          # shim's postgrest config advertises.
+          # stub's postgrest config advertises.
           sed -i 's/^schemas = .*/schemas = ["public", "graphql_public", "app"]/' supabase/config.toml
           grep -q '"app"' supabase/config.toml
           supabase start -x studio,mailpit,imgproxy,edge-runtime,logflare,vector
@@ -121,9 +124,18 @@ jobs:
       - name: E2E — agent mode (ls/cat, no FUSE flags)
         run: |
           set -a && . ./supabase.env && set +a
-          python3 docker/e2e/mgmt_api_shim.py 54340 2>shim.log &
-          shim=$!
-          trap 'kill $shim' EXIT
+          # The stub is Elixir like the app (Mix.install + francis), run via
+          # the official image so the runner host needs no toolchain. The
+          # cache mounts share the deps fetch/compile with the mounted-mode
+          # step, which boots in seconds as a result.
+          docker run --rm --name mgmt-stub --network host \
+            -e ANON_KEY -e SERVICE_ROLE_KEY \
+            -v "$PWD/docker/e2e/mgmt_api_stub.exs:/mgmt_api_stub.exs:ro" \
+            -v "$PWD/.stub-mix-cache:/root/.cache" -v "$PWD/.stub-mix-home:/root/.mix" \
+            elixir:1.18.4-otp-27-alpine \
+            sh -c 'mix local.hex --force >/dev/null && elixir /mgmt_api_stub.exs 54340' \
+            >stub.log 2>&1 &
+          trap 'docker rm -f mgmt-stub >/dev/null 2>&1 || true' EXIT
           # On any failed assert, publish the failing command and every
           # intermediate output as ::error annotations — those render on
           # the run page even without log access.
@@ -142,9 +154,11 @@ jobs:
             for f in *.out *.log; do [ -f "$f" ] && annotate_file "$f"; done
             exit 1
           }
-          for _i in $(seq 1 50); do
+          # Generous window: the first boot pulls the image and Mix.install
+          # fetches and compiles the stub's deps.
+          for _i in $(seq 1 600); do
             curl -fsS http://127.0.0.1:54340/v1/organizations >/dev/null && break
-            sleep 0.1
+            sleep 0.5
           done
 
           # Probe the Data API exactly like supablock does, so any failure
@@ -197,7 +211,7 @@ jobs:
           # across page boundaries, page sizes exact.
           run ls "$base/database/public/events" | tee pages.out
           test "$(cat pages.out)" = \
-            "$(printf 'rows-000000.csv\nrows-000500.csv\nrows-001000.csv')"
+            "$(printf 'schema.json\nrows-000000.csv\nrows-000500.csv\nrows-001000.csv')"
           run cat "$base/database/public/events/rows-000500.csv" | tee page5.out >/dev/null
           test "$(wc -l < page5.out)" = 501
           test "$(sed -n 2p page5.out | cut -d, -f1)" = 501
@@ -230,8 +244,8 @@ jobs:
           test "$(sed -n 2p items.out)" = "1,1,SKU-A,2"
           run cat "$base/database/public/audit_log/rows-000000.csv" | grep -q "seeded"
 
-          # An empty table lists no page files.
-          test -z "$(run ls "$base/database/public/empty_table")"
+          # An empty table lists its schema but no page files.
+          test "$(run ls "$base/database/public/empty_table")" = "schema.json"
 
           # The second schema reads like the first.
           run cat "$base/database/app/settings/rows-000000.csv" | tee settings.out
@@ -265,16 +279,23 @@ jobs:
       - name: E2E — mounted mode (FUSE inside the container)
         run: |
           set -a && . ./supabase.env && set +a
-          python3 docker/e2e/mgmt_api_shim.py 54341 2>shim.log &
-          shim=$!
-          trap 'kill $shim' EXIT
+          # Deps are already fetched and compiled into the cache mounts by
+          # the agent-mode step, so this boot takes seconds.
+          docker run --rm --name mgmt-stub-mount --network host \
+            -e ANON_KEY -e SERVICE_ROLE_KEY \
+            -v "$PWD/docker/e2e/mgmt_api_stub.exs:/mgmt_api_stub.exs:ro" \
+            -v "$PWD/.stub-mix-cache:/root/.cache" -v "$PWD/.stub-mix-home:/root/.mix" \
+            elixir:1.18.4-otp-27-alpine \
+            sh -c 'mix local.hex --force >/dev/null && elixir /mgmt_api_stub.exs 54341' \
+            >stub.log 2>&1 &
+          trap 'docker rm -f mgmt-stub-mount >/dev/null 2>&1 || true' EXIT
           annotate_file() {
             echo "::error title=e2e diag $1::$(head -c 1200 "$1" | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"}{print}')"
           }
-          trap 'echo "::error title=mounted-mode e2e failed::line $LINENO: $BASH_COMMAND"; for f in mount.out shim.log; do [ -f "$f" ] && annotate_file "$f"; done' ERR
-          for _i in $(seq 1 50); do
+          trap 'echo "::error title=mounted-mode e2e failed::line $LINENO: $BASH_COMMAND"; for f in mount.out stub.log; do [ -f "$f" ] && annotate_file "$f"; done' ERR
+          for _i in $(seq 1 600); do
             curl -fsS http://127.0.0.1:54341/v1/organizations >/dev/null && break
-            sleep 0.1
+            sleep 0.5
           done
 
           # Real coreutils over a real kernel mount against the seeded rows:
