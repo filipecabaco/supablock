@@ -183,9 +183,11 @@ jobs:
 
           base=organizations/org-local/projects/supablocklocal123456
 
-          # Both exposed schemas, every table shape, and the view.
+          # The Management API files, both exposed schemas, every table
+          # shape, and the view.
           run ls "$base/database" | tee schemas.out
-          test "$(cat schemas.out)" = "$(printf 'app\npublic')"
+          test "$(cat schemas.out)" = \
+            "$(printf 'backups.json\nmigrations.json\nreadonly.json\napp\npublic')"
           run ls "$base/database/public" | tee tables.out
           for t in audit_log customers empty_table events open_todos order_items todos; do
             grep -qx "$t" tables.out
