@@ -91,7 +91,7 @@ jobs:
       # The e2e project is real: `supabase start` runs the same local stack
       # (Postgres, PostgREST, working keys) any developer gets, seeded with a
       # table. Only the platform Management API (org/project metadata) has no
-      # local emulator — docker/e2e/mgmt_api_stub.py serves that thin layer
+      # local emulator — docker/e2e/mgmt_api_stub.exs serves that thin layer
       # and hands supablock the stack's real service_role key, so the
       # database/ tree reads real rows through real PostgREST.
       - uses: supabase/setup-cli@v1
@@ -124,9 +124,18 @@ jobs:
       - name: E2E — agent mode (ls/cat, no FUSE flags)
         run: |
           set -a && . ./supabase.env && set +a
-          python3 docker/e2e/mgmt_api_stub.py 54340 2>stub.log &
-          stub=$!
-          trap 'kill $stub' EXIT
+          # The stub is Elixir like the app (Mix.install + francis), run via
+          # the official image so the runner host needs no toolchain. The
+          # cache mounts share the deps fetch/compile with the mounted-mode
+          # step, which boots in seconds as a result.
+          docker run --rm --name mgmt-stub --network host \
+            -e ANON_KEY -e SERVICE_ROLE_KEY \
+            -v "$PWD/docker/e2e/mgmt_api_stub.exs:/mgmt_api_stub.exs:ro" \
+            -v "$PWD/.stub-mix-cache:/root/.cache" -v "$PWD/.stub-mix-home:/root/.mix" \
+            elixir:1.18.4-otp-27-alpine \
+            sh -c 'mix local.hex --force >/dev/null && elixir /mgmt_api_stub.exs 54340' \
+            >stub.log 2>&1 &
+          trap 'docker rm -f mgmt-stub >/dev/null 2>&1 || true' EXIT
           # On any failed assert, publish the failing command and every
           # intermediate output as ::error annotations — those render on
           # the run page even without log access.
@@ -145,9 +154,11 @@ jobs:
             for f in *.out *.log; do [ -f "$f" ] && annotate_file "$f"; done
             exit 1
           }
-          for _i in $(seq 1 50); do
+          # Generous window: the first boot pulls the image and Mix.install
+          # fetches and compiles the stub's deps.
+          for _i in $(seq 1 600); do
             curl -fsS http://127.0.0.1:54340/v1/organizations >/dev/null && break
-            sleep 0.1
+            sleep 0.5
           done
 
           # Probe the Data API exactly like supablock does, so any failure
@@ -268,16 +279,23 @@ jobs:
       - name: E2E — mounted mode (FUSE inside the container)
         run: |
           set -a && . ./supabase.env && set +a
-          python3 docker/e2e/mgmt_api_stub.py 54341 2>stub.log &
-          stub=$!
-          trap 'kill $stub' EXIT
+          # Deps are already fetched and compiled into the cache mounts by
+          # the agent-mode step, so this boot takes seconds.
+          docker run --rm --name mgmt-stub-mount --network host \
+            -e ANON_KEY -e SERVICE_ROLE_KEY \
+            -v "$PWD/docker/e2e/mgmt_api_stub.exs:/mgmt_api_stub.exs:ro" \
+            -v "$PWD/.stub-mix-cache:/root/.cache" -v "$PWD/.stub-mix-home:/root/.mix" \
+            elixir:1.18.4-otp-27-alpine \
+            sh -c 'mix local.hex --force >/dev/null && elixir /mgmt_api_stub.exs 54341' \
+            >stub.log 2>&1 &
+          trap 'docker rm -f mgmt-stub-mount >/dev/null 2>&1 || true' EXIT
           annotate_file() {
             echo "::error title=e2e diag $1::$(head -c 1200 "$1" | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"}{print}')"
           }
           trap 'echo "::error title=mounted-mode e2e failed::line $LINENO: $BASH_COMMAND"; for f in mount.out stub.log; do [ -f "$f" ] && annotate_file "$f"; done' ERR
-          for _i in $(seq 1 50); do
+          for _i in $(seq 1 600); do
             curl -fsS http://127.0.0.1:54341/v1/organizations >/dev/null && break
-            sleep 0.1
+            sleep 0.5
           done
 
           # Real coreutils over a real kernel mount against the seeded rows:
