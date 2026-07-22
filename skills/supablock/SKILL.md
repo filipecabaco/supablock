@@ -24,7 +24,10 @@ Pick the first option that works in your environment:
 1. **Already installed?** `supablock help` — if it prints usage, skip ahead.
 2. **Native install** (Linux/macOS):
    `curl -fsSL https://filipecabaco.github.io/supablock/install.sh | sh`
-3. **Docker** (no install, needs a token):
+3. **npm** (best in restricted sandboxes — registry.npmjs.org is usually
+   allowlisted even where the installer host is blocked):
+   `npm install -g supablock`, or one-shot via `npx supablock <command>`
+4. **Docker** (no install, needs a token):
    `docker run --rm -e SUPABLOCK_TOKEN=$SUPABLOCK_TOKEN filipecabaco/supablock <command>`
 
 ## Authentication

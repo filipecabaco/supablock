@@ -60,6 +60,18 @@ curl -fsSL https://filipecabaco.github.io/supablock/install.sh | sh
 `SUPABLOCK_VERSION` picks a release tag; `SUPABLOCK_INSTALL_DIR` overrides
 the default `~/.local/bin`.
 
+### npm
+
+The same binaries, delivered through the npm registry — the channel that
+works in restricted sandboxes (CI, AI agents) whose egress blocks the
+installer host and GitHub's release CDN but allows `registry.npmjs.org`.
+The binary ships inside a per-platform package; no install script downloads
+anything:
+
+```bash
+npm install -g supablock     # or one-shot: npx supablock ls organizations
+```
+
 ### Docker
 
 Nothing to install — one `docker run` logs you in, mounts your account
@@ -321,6 +333,10 @@ output, and the filesystem shape means existing file tools (or plain
 
 * **Agent skill** — `npx skills add filipecabaco/supablock` teaches an agent
   to get the tool, authenticate, and run the common checks.
+* **Sandbox-safe install** — `npm install -g supablock` (or `npx supablock`)
+  delivers the prebuilt binary through the npm registry, which sandbox
+  egress policies typically allowlist even when the curl installer and
+  Docker Hub are blocked.
 * **MCP server** — `supablock mcp` speaks the Model Context Protocol over
   stdio with four read-only tools (`ls`, `cat`, `find`, `grep`), resolved by
   the same Router as the mount, so GET-only, redaction and deterministic

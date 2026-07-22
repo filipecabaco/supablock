@@ -773,6 +773,16 @@
       </div>
 
       <p class="body">
+        The same binaries are on npm — the channel for restricted sandboxes (CI, AI agents)
+        whose egress blocks this site and GitHub's release CDN but allows the npm registry:
+      </p>
+
+      <div class="code">
+        <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
+        <pre><span class="p">$</span> npm install -g supablock   <span class="c"># or one-shot: npx supablock ls organizations</span></pre>
+      </div>
+
+      <p class="body">
         Then let the tool check its own environment — every failed check comes with a fix hint:
       </p>
 
@@ -838,6 +848,7 @@
       <div class="code">
         <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
         <pre><span class="c"># no mount, no FUSE, no privileges — works in any sandbox</span>
+<span class="p">$</span> npm i -g supablock   <span class="c"># npm registry: allowlisted where curl installers are blocked</span>
 <span class="p">$</span> export SUPABLOCK_TOKEN=sbp_...
 <span class="p">$</span> supablock serve &amp;   <span class="c"># optional: one warm cache for every read below</span>
 <span class="p">$</span> supablock grep -l '"disable_signup": false' organizations/my-org

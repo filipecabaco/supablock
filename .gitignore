@@ -12,3 +12,4 @@ vendor/efuse/c_src/*.d
 vendor/efuse/priv/efuse
 /burrito_out/
 __pycache__/
+/npm/out/

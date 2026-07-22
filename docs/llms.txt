@@ -38,6 +38,9 @@ use: `supablock login`.
 Quick start for an agent with shell access:
 
     curl -fsSL https://filipecabaco.github.io/supablock/install.sh | sh
+    # or, if that host is blocked (restricted sandbox egress — package
+    # registries are usually still allowlisted):
+    npm install -g supablock
     export SUPABLOCK_TOKEN=sbp_...          # ask the user for this
     supablock ls organizations
     supablock ls organizations/<org>/projects

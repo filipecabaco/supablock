@@ -5,7 +5,10 @@
 #
 # Tag pushes (v*) publish a versioned release; pushes to the default branch
 # refresh the rolling "canary" prerelease, so the installer works before any
-# stable tag exists.
+# stable tag exists. Tag pushes additionally publish the same binaries to
+# npm (npm/publish.sh) — the install channel for restricted sandboxes whose
+# egress blocks the installer host and GitHub's release-asset CDN but
+# allowlists registry.npmjs.org.
 #
 # The Linux binaries statically link libfuse3 (the Makefile's default when
 # libfuse3.a is present): they need no FUSE package on the target machine
@@ -172,6 +175,10 @@ jobs:
     if: always() && (startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     steps:
+      # Checkout before download-artifact: the npm publish step needs
+      # npm/publish.sh, and checkout would wipe an earlier dist/.
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           path: dist
@@ -186,6 +193,23 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: dist/*
+
+      # Versioned releases only: npm versions are immutable, so the rolling
+      # canary channel stays on GitHub releases. The script itself skips
+      # gracefully when the NPM_TOKEN secret is unset, and fails loudly if a
+      # platform binary is missing (a partial npm release would brick that
+      # platform for the version).
+      - uses: actions/setup-node@v4
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Publish to npm
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: ./npm/publish.sh "${GITHUB_REF_NAME#v}" dist
 
       - name: Refresh canary prerelease
         if: ${{ !startsWith(github.ref, 'refs/tags/') }}
