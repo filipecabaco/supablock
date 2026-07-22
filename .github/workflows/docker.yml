@@ -91,7 +91,7 @@ jobs:
       # The e2e project is real: `supabase start` runs the same local stack
       # (Postgres, PostgREST, working keys) any developer gets, seeded with a
       # table. Only the platform Management API (org/project metadata) has no
-      # local emulator — docker/e2e/mgmt_api_shim.py serves that thin layer
+      # local emulator — docker/e2e/mgmt_api_stub.py serves that thin layer
       # and hands supablock the stack's real service_role key, so the
       # database/ tree reads real rows through real PostgREST.
       - uses: supabase/setup-cli@v1
@@ -112,7 +112,7 @@ jobs:
           cp ../docker/e2e/migration.sql supabase/migrations/20260101000000_e2e.sql
           cp ../docker/e2e/seed.sql supabase/seed.sql
           # The local PostgREST must actually serve the `app` schema the
-          # shim's postgrest config advertises.
+          # stub's postgrest config advertises.
           sed -i 's/^schemas = .*/schemas = ["public", "graphql_public", "app"]/' supabase/config.toml
           grep -q '"app"' supabase/config.toml
           supabase start -x studio,mailpit,imgproxy,edge-runtime,logflare,vector
@@ -124,9 +124,9 @@ jobs:
       - name: E2E — agent mode (ls/cat, no FUSE flags)
         run: |
           set -a && . ./supabase.env && set +a
-          python3 docker/e2e/mgmt_api_shim.py 54340 2>shim.log &
-          shim=$!
-          trap 'kill $shim' EXIT
+          python3 docker/e2e/mgmt_api_stub.py 54340 2>stub.log &
+          stub=$!
+          trap 'kill $stub' EXIT
           # On any failed assert, publish the failing command and every
           # intermediate output as ::error annotations — those render on
           # the run page even without log access.
@@ -268,13 +268,13 @@ jobs:
       - name: E2E — mounted mode (FUSE inside the container)
         run: |
           set -a && . ./supabase.env && set +a
-          python3 docker/e2e/mgmt_api_shim.py 54341 2>shim.log &
-          shim=$!
-          trap 'kill $shim' EXIT
+          python3 docker/e2e/mgmt_api_stub.py 54341 2>stub.log &
+          stub=$!
+          trap 'kill $stub' EXIT
           annotate_file() {
             echo "::error title=e2e diag $1::$(head -c 1200 "$1" | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"}{print}')"
           }
-          trap 'echo "::error title=mounted-mode e2e failed::line $LINENO: $BASH_COMMAND"; for f in mount.out shim.log; do [ -f "$f" ] && annotate_file "$f"; done' ERR
+          trap 'echo "::error title=mounted-mode e2e failed::line $LINENO: $BASH_COMMAND"; for f in mount.out stub.log; do [ -f "$f" ] && annotate_file "$f"; done' ERR
           for _i in $(seq 1 50); do
             curl -fsS http://127.0.0.1:54341/v1/organizations >/dev/null && break
             sleep 0.1

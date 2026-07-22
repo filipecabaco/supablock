@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Thin Management API shim for the Docker image e2e.
+"""Thin Management API stub for the Docker image e2e.
 
 The supabase CLI's local stack (`supabase start`) emulates a real *project*
 — Postgres, PostgREST, working API keys — but the platform Management API
 (organization/project metadata) exists only at api.supabase.com and has no
-local emulator. This shim serves just that thin metadata layer and points
+local emulator. This stub serves just that thin metadata layer and points
 supablock at the real local stack: its api-keys endpoint returns the
 stack's actual anon/service_role JWTs (passed in via the ANON_KEY and
 SERVICE_ROLE_KEY environment variables, from `supabase status -o env`), so
@@ -13,7 +13,7 @@ the `database/` tree reads real seeded rows through the real PostgREST.
 The health endpoint is synthesized — the local stack exposes no
 Management-API-shaped health resource.
 
-Usage: ANON_KEY=... SERVICE_ROLE_KEY=... mgmt_api_shim.py [port]
+Usage: ANON_KEY=... SERVICE_ROLE_KEY=... mgmt_api_stub.py [port]
        (default port 54340, binds 127.0.0.1)
 """
 
@@ -104,14 +104,14 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(payload)
 
     def log_message(self, fmt, *args):
-        sys.stderr.write("mgmt_api_shim: %s\n" % (fmt % args))
+        sys.stderr.write("mgmt_api_stub: %s\n" % (fmt % args))
 
 
 if __name__ == "__main__":
     for var in ("ANON_KEY", "SERVICE_ROLE_KEY"):
         if not os.environ.get(var):
-            sys.exit(f"mgmt_api_shim: {var} must be set (see: supabase status -o env)")
+            sys.exit(f"mgmt_api_stub: {var} must be set (see: supabase status -o env)")
 
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 54340
-    print(f"mgmt_api_shim: serving ref {REF} on 127.0.0.1:{port}", flush=True)
+    print(f"mgmt_api_stub: serving ref {REF} on 127.0.0.1:{port}", flush=True)
     ThreadingHTTPServer(("127.0.0.1", port), Handler).serve_forever()
