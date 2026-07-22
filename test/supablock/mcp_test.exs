@@ -165,7 +165,12 @@ defmodule Supablock.MCPTest do
   end
 
   test "malformed JSON gets a parse error and the loop continues" do
-    {:ok, input} = StringIO.open("this is not json\n" <> Jason.encode!(%{"jsonrpc" => "2.0", "id" => 7, "method" => "ping"}) <> "\n")
+    {:ok, input} =
+      StringIO.open(
+        "this is not json\n" <>
+          Jason.encode!(%{"jsonrpc" => "2.0", "id" => 7, "method" => "ping"}) <> "\n"
+      )
+
     {:ok, output} = StringIO.open("")
     assert :ok = MCP.serve(input, output)
     {"", out} = StringIO.contents(output)
