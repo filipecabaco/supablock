@@ -51,6 +51,15 @@ POSTGREST = {
     "db_extra_search_path": "public, extensions",
 }
 
+# database/{backups,migrations,readonly}.json render these endpoints as
+# files. A FUSE mount stats every entry a readdir returns, so they must
+# answer 200 — a 404 turns into ENOENT and breaks plain `ls` of database/.
+BACKUPS = {"region": "local", "pitr_enabled": False, "walg_enabled": False, "backups": []}
+
+MIGRATIONS = [{"version": "20260101000000", "name": "e2e"}]
+
+READONLY = {"enabled": False, "override_enabled": False}
+
 
 def api_keys():
     return [
@@ -73,6 +82,12 @@ class Handler(BaseHTTPRequestHandler):
             body = api_keys()
         elif path == f"/v1/projects/{REF}/postgrest":
             body = POSTGREST
+        elif path == f"/v1/projects/{REF}/database/backups":
+            body = BACKUPS
+        elif path == f"/v1/projects/{REF}/database/migrations":
+            body = MIGRATIONS
+        elif path == f"/v1/projects/{REF}/readonly":
+            body = READONLY
         else:
             body = None
 
