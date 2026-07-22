@@ -2,11 +2,12 @@
 
 > Browse and verify a Supabase account as a read-only filesystem. supablock
 > mirrors the Supabase Management API (organizations, projects, config, API
-> keys, edge functions, storage buckets, auth providers, branches) and each
-> project's table rows as a directory tree. Every request is a GET — the
-> tool physically cannot create, change or delete anything.
+> keys, secrets, advisors, edge functions, storage buckets, auth providers,
+> branches, backups, migrations, network settings, generated TypeScript
+> types) and each project's table rows as a directory tree. Every request
+> is a GET — the tool physically cannot create, change or delete anything.
 
-Three ways to read the tree:
+Four ways to read the tree:
 
 - `supablock ls|cat|head|tail|find|grep` — resolve tree paths straight off
   the API. Works anywhere: no FUSE, no privileges, no mount, no daemon.
@@ -18,6 +19,9 @@ Three ways to read the tree:
   big row files, and `tail -f [-s <secs>]` follows a `logs/<source>` file
   for new entries; `cat -` reads paths from stdin (`-0` = NUL-delimited), so
   `find … -type f | supablock cat -` pipelines discovery into reading.
+- `supablock mcp` — a Model Context Protocol server on stdio with four
+  read-only tools (ls, cat, find, grep). Register in any MCP client as
+  command `supablock`, args `["mcp"]`; honours `SUPABLOCK_TOKEN`.
 - `supablock serve` — a mountless cache daemon (still no FUSE, no
   privileges): while it runs, every ls/cat/find/grep on the machine
   automatically reads through its shared warm cache instead of starting
@@ -34,6 +38,9 @@ use: `supablock login`.
 Quick start for an agent with shell access:
 
     curl -fsSL https://filipecabaco.github.io/supablock/install.sh | sh
+    # or, if that host is blocked (restricted sandbox egress — package
+    # registries are usually still allowlisted):
+    npm install -g supablock
     export SUPABLOCK_TOKEN=sbp_...          # ask the user for this
     supablock ls organizations
     supablock ls organizations/<org>/projects
@@ -54,16 +61,30 @@ Tree shape (all paths under the root):
     organizations/<org>/{info.json,members.json,regions.json}
     organizations/<org>/projects/<ref>/info.json
     organizations/<org>/projects/<ref>/health
-    organizations/<org>/projects/<ref>/config/{auth,database,realtime,storage}.json
+    organizations/<org>/projects/<ref>/advisors/{security,performance}.json  # lints: RLS off, slow queries, …
+    organizations/<org>/projects/<ref>/config/{auth,database,disk,pgbouncer,pooler,postgrest,realtime,storage}.json
     organizations/<org>/projects/<ref>/config/auth/sso/<id>/info.json
     organizations/<org>/projects/<ref>/config/auth/third-party/<id>/info.json
     organizations/<org>/projects/<ref>/api-keys/{publishable,secret}
+    organizations/<org>/projects/<ref>/secrets.json    # edge-function secret names, values REDACTED
     organizations/<org>/projects/<ref>/functions/<slug>/{info.json,body}
     organizations/<org>/projects/<ref>/storage/buckets/<name>/info.json
     organizations/<org>/projects/<ref>/branches/<branch>/info.json
+    organizations/<org>/projects/<ref>/database/{backups,migrations,readonly}.json
+    organizations/<org>/projects/<ref>/database/<schema>/<table>/schema.json   # columns, types, pk
     organizations/<org>/projects/<ref>/database/<schema>/<table>/rows-000000.csv
+    organizations/<org>/projects/<ref>/network/{restrictions,ssl-enforcement,custom-hostname,vanity-subdomain}.json  # custom-hostname/vanity read {} unless the feature is enabled
     organizations/<org>/projects/<ref>/logs/<source>   # NDJSON; source ∈ postgres,auth,edge,storage,…
     organizations/<org>/projects/<ref>/metrics         # Prometheus text, project-wide
+    organizations/<org>/projects/<ref>/types.ts        # generated TypeScript types
+    organizations/<org>/projects/<ref>/upgrade-eligibility.json
+
+Drift tracking: `supablock snapshot <dir>` writes the tree to a real
+directory (config surface by default — logs, metrics, rows and function
+bodies skipped; `--all` includes them; `--prune` drops deleted files) and
+`supablock diff <dir>` compares the live tree against it with unified
+diffs (`--brief` for names; exits 0 identical / 1 differences / 2 errors).
+Snapshot a directory under git for a config audit trail.
 
 Facts agents should know: JSON output is deterministic (sorted keys,
 pretty-printed, trailing newline) so diffs are clean; exit codes are 0 ok,
@@ -72,7 +93,11 @@ pretty-printed, trailing newline) so diffs are clean; exit codes are 0 ok,
 output is pipe-safe (`supablock cat … | jq`, `… | head` all behave like
 coreutils); the Management API allows 120 requests/minute — for batch
 reads start `supablock serve &` (shared warm cache) and keep walks scoped
-with `-maxdepth`; `api-keys/secret` stays REDACTED unless the user opts in.
+with `-maxdepth`; `api-keys/secret` and `secrets.json` values stay
+REDACTED unless the user opts in; `supablock status --json` reports auth,
+mount and rate-limit state machine-readably; advisors files answer audit
+questions in one grep (e.g. `supablock grep -l '"level": "ERROR"'
+organizations/<org>/projects/<ref>/advisors`).
 
 ## Links
 

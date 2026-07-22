@@ -38,6 +38,7 @@ defmodule Supablock.CLI do
     Profile,
     Service,
     Signals,
+    Snapshot,
     Tree,
     Walk
   }
@@ -53,7 +54,7 @@ defmodule Supablock.CLI do
     supablock login --token sbp_...     Authenticate with a personal access token
     supablock login --no-browser        Print the login URL instead of opening it
     supablock logout                    Delete (and revoke) the stored credential
-    supablock status                    Auth, mount and rate-limit overview
+    supablock status [--json]           Auth, mount and rate-limit overview
     supablock whoami                    Alias of status
     supablock doctor                    Check the environment for FUSE readiness
     supablock config set <key> <value>  Set a config key
@@ -77,10 +78,22 @@ defmodule Supablock.CLI do
                                         recurse. -i ignore case, -l paths only,
                                         -n line numbers, --maxdepth <n>.
                                         Exits 1 when nothing matches, like grep(1)
+    supablock snapshot <dir> [path]     Write the tree to a real directory. Skips logs,
+                                        metrics, database rows and function bodies
+                                        unless --all; --prune deletes snapshot files
+                                        that no longer exist in the tree
+    supablock diff <dir> [path]         Compare the live tree against a snapshot dir:
+                                        unified diffs for changed files (--brief for
+                                        names only), --all as in snapshot. Exits 0 when
+                                        identical, 1 on differences, 2 on errors
+    supablock mcp                       Serve the tree as an MCP server on stdio
+                                        (tools: ls, cat, find, grep) for AI clients
     supablock serve                     Serve a shared warm cache for ls/cat/find/grep
                                         (no FUSE needed; stop with: supablock serve stop)
     supablock refresh                   Flush the cache of a mounted supablock
     supablock refresh --check           Report cache staleness without flushing
+    supablock completions <shell>       Completion script for bash, zsh or fish
+                                        (bash/zsh: eval "$(supablock completions bash)")
     supablock service install           Auto-start the mount at login (systemd/launchd)
     supablock service uninstall         Remove the auto-start service
     supablock service status            Show the auto-start service state
@@ -156,8 +169,8 @@ defmodule Supablock.CLI do
       ["setup" | rest] -> setup(rest)
       ["login" | rest] -> login(rest)
       ["logout" | _rest] -> logout()
-      ["status" | _rest] -> status()
-      ["whoami" | _rest] -> status()
+      ["status" | rest] -> status(rest)
+      ["whoami" | rest] -> status(rest)
       ["doctor" | _rest] -> doctor()
       ["config" | rest] -> config(rest)
       ["mount" | rest] -> mount(rest)
@@ -168,6 +181,10 @@ defmodule Supablock.CLI do
       ["tail" | rest] -> head_tail(:tail, rest)
       ["find" | rest] -> find(rest)
       ["grep" | rest] -> grep(rest)
+      ["snapshot" | rest] -> snapshot(rest)
+      ["diff" | rest] -> diff_cmd(rest)
+      ["mcp" | _rest] -> mcp()
+      ["completions" | rest] -> completions(rest)
       ["serve" | rest] -> serve(rest)
       ["refresh" | rest] -> refresh(rest)
       ["service" | rest] -> service(rest)
@@ -485,7 +502,11 @@ defmodule Supablock.CLI do
 
   ## status
 
-  defp status do
+  defp status(args) do
+    if "--json" in args, do: status_json(), else: status_text()
+  end
+
+  defp status_text do
     case Credentials.load() do
       :missing ->
         IO.puts("Not authenticated. Run: supablock login")
@@ -515,23 +536,75 @@ defmodule Supablock.CLI do
     end
   end
 
-  defp print_mount_status do
+  # The same facts as the text form, machine-readable (sorted keys, stable
+  # rendering via Render.json). Exit codes match the text form.
+  defp status_json do
+    {code, fields} =
+      case Credentials.load() do
+        :missing ->
+          {2, %{"authenticated" => false}}
+
+        {:ok, _token} ->
+          {code, auth_fields} =
+            case Auth.validate() do
+              {:ok, org_count} ->
+                {0, %{"authenticated" => true, "organizations" => org_count}}
+
+              {:error, :unauthorized} ->
+                {2, %{"authenticated" => false, "error" => "token no longer valid"}}
+
+              {:error, reason} ->
+                {3, %{"authenticated" => false, "error" => describe_error(reason)}}
+            end
+
+          {code, Map.put(auth_fields, "token", Credentials.masked())}
+      end
+
+    {mounted?, mountpoint, daemon} = mount_state()
+
+    rate_limits =
+      for {scope, remaining, _reset} <- Supablock.Client.ratelimits() do
+        %{"scope" => scope, "remaining" => remaining}
+      end
+
+    fields
+    |> Map.merge(%{
+      "mounted" => mounted?,
+      "mountpoint" => mountpoint,
+      "daemon" => daemon,
+      "rate_limits" => rate_limits
+    })
+    |> Supablock.Render.json()
+    |> IO.write()
+
+    code
+  end
+
+  defp mount_state do
     cond do
       not File.exists?(Paths.control_socket()) ->
-        IO.puts("Mounted: no")
+        {false, nil, "none"}
 
       File.exists?(Paths.mount_info_file()) ->
         mountpoint =
           case File.read(Paths.mount_info_file()) do
             {:ok, body} -> String.trim(body)
-            {:error, _reason} -> "(unknown)"
+            {:error, _reason} -> nil
           end
 
-        IO.puts("Mounted: yes, at #{mountpoint}")
+        {true, mountpoint, "mount"}
 
       true ->
         # A control socket without a mountpoint on record: supablock serve.
-        IO.puts("Mounted: no (cache daemon running — supablock serve)")
+        {false, nil, "serve"}
+    end
+  end
+
+  defp print_mount_status do
+    case mount_state() do
+      {true, mountpoint, _daemon} -> IO.puts("Mounted: yes, at #{mountpoint || "(unknown)"}")
+      {false, _mp, "serve"} -> IO.puts("Mounted: no (cache daemon running — supablock serve)")
+      {false, _mp, _daemon} -> IO.puts("Mounted: no")
     end
   end
 
@@ -1355,6 +1428,159 @@ defmodule Supablock.CLI do
     end)
   end
 
+  ## snapshot / diff — materialize the tree, then track drift against it
+
+  defp snapshot(args) do
+    {opts, rest, invalid} = OptionParser.parse(args, strict: [all: :boolean, prune: :boolean])
+
+    case {rest, invalid} do
+      {[dir | scope], []} when length(scope) <= 1 ->
+        with :authed <- require_auth() do
+          raw_stdout!()
+          start = List.first(scope) || "."
+          stats = :counters.new(3, [])
+
+          Snapshot.write(start, dir, [all: opts[:all] || false, prune: opts[:prune] || false], fn
+            {:wrote, _rel, bytes} ->
+              :counters.add(stats, 1, 1)
+              :counters.add(stats, 2, bytes)
+
+            {:pruned, rel} ->
+              out("pruned: #{rel}")
+
+            {:error, path, reason} ->
+              :counters.put(stats, 3, max(:counters.get(stats, 3), path_error(path, reason)))
+          end)
+
+          files = :counters.get(stats, 1)
+          bytes = :counters.get(stats, 2)
+          out("Snapshot: #{files} files (#{bytes} bytes) -> #{dir}")
+          :counters.get(stats, 3)
+        else
+          {:exit, code} -> code
+        end
+
+      _bad ->
+        usage_error("Usage: supablock snapshot <dir> [path] [--all] [--prune]")
+    end
+  end
+
+  defp diff_cmd(args) do
+    {opts, rest, invalid} = OptionParser.parse(args, strict: [all: :boolean, brief: :boolean])
+
+    case {rest, invalid} do
+      {[dir | scope], []} when length(scope) <= 1 ->
+        cond do
+          not File.dir?(dir) ->
+            IO.puts(:stderr, "Not a snapshot directory: #{dir}")
+            2
+
+          true ->
+            with :authed <- require_auth() do
+              raw_stdout!()
+              start = List.first(scope) || "."
+              brief? = opts[:brief] || false
+
+              result =
+                Snapshot.diff(start, dir, [all: opts[:all] || false], fn
+                  {:changed, rel, snap_file, body} ->
+                    if brief?,
+                      do: out("changed: #{rel}"),
+                      else: print_unified_diff(rel, snap_file, body)
+
+                  {:added, rel, body} ->
+                    if brief?, do: out("added: #{rel}"), else: print_added(rel, body)
+
+                  {:removed, rel} ->
+                    if brief?, do: out("removed: #{rel}"), else: out("Only in snapshot: #{rel}")
+
+                  {:error, path, reason} ->
+                    _ = path_error(path, reason)
+                    :ok
+                end)
+
+              cond do
+                result.errors > 0 -> 2
+                result.different? -> 1
+                true -> 0
+              end
+            else
+              {:exit, code} -> code
+            end
+        end
+
+      _bad ->
+        usage_error("Usage: supablock diff <dir> [path] [--all] [--brief]")
+    end
+  end
+
+  # A unified diff via diff(1) when available (snapshot/… vs tree/… labels,
+  # so the output reads old -> new); a plain marker line otherwise.
+  defp print_unified_diff(rel, snap_file, live_body) do
+    case System.find_executable("diff") do
+      nil ->
+        out("Files differ: #{rel}")
+
+      diff_bin ->
+        tmp =
+          Path.join(
+            System.tmp_dir!(),
+            "supablock-diff-#{:erlang.unique_integer([:positive])}"
+          )
+
+        try do
+          File.write!(tmp, live_body)
+
+          {output, _code} =
+            System.cmd(
+              diff_bin,
+              ["-u", "--label", "snapshot/#{rel}", "--label", "tree/#{rel}", snap_file, tmp],
+              stderr_to_stdout: true
+            )
+
+          out_bytes(output)
+        after
+          File.rm(tmp)
+        end
+    end
+  end
+
+  defp print_added(rel, body) do
+    out("Only in tree: #{rel} (#{byte_size(body)} bytes)")
+  end
+
+  ## completions
+
+  defp completions([shell]) do
+    case Supablock.Completions.script(shell) do
+      {:ok, script} ->
+        IO.write(script)
+        0
+
+      :unknown ->
+        usage_error("Unknown shell: #{shell}. Supported: bash, zsh, fish")
+    end
+  end
+
+  defp completions(_other),
+    do: usage_error("Usage: supablock completions bash|zsh|fish")
+
+  ## mcp — the tree as an MCP stdio server
+
+  defp mcp do
+    with :authed <- require_auth() do
+      # stdout is the protocol channel: nothing but JSON-RPC may reach it,
+      # so the default (stdout) log handler is replaced by the file logger.
+      _ = :logger.remove_handler(:default)
+      attach_file_logger()
+      raw_stdout!()
+      Supablock.MCP.serve()
+      0
+    else
+      {:exit, code} -> code
+    end
+  end
+
   ## serve — a mountless cache daemon
   #
   # Same warm shared cache a mount gives ls/cat/find/grep (they resolve
@@ -1430,7 +1656,10 @@ defmodule Supablock.CLI do
   end
 
   defp path_error(path, :eacces) do
-    err("Access denied for #{path} - run: supablock login")
+    err(
+      "Access denied for #{path} - your account may lack access to it, or the credential expired (supablock login)."
+    )
+
     2
   end
 

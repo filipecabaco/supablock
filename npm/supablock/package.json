@@ -1,0 +1,31 @@
+{
+  "name": "supablock",
+  "version": "0.0.0-dev",
+  "description": "Browse and verify a Supabase account as a read-only filesystem",
+  "keywords": [
+    "supabase",
+    "cli",
+    "read-only",
+    "filesystem",
+    "fuse"
+  ],
+  "homepage": "https://filipecabaco.github.io/supablock",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/filipecabaco/supablock.git"
+  },
+  "bin": {
+    "supablock": "bin/supablock.js"
+  },
+  "files": [
+    "bin"
+  ],
+  "engines": {
+    "node": ">=16"
+  },
+  "optionalDependencies": {
+    "supablock-linux-x64": "0.0.0-dev",
+    "supablock-linux-arm64": "0.0.0-dev",
+    "supablock-darwin-arm64": "0.0.0-dev"
+  }
+}

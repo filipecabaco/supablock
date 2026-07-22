@@ -98,8 +98,15 @@ defmodule Supablock.FuseTest do
     #   per project (x3): metrics -> api-keys(reveal) + metrics scrape (6)
     #     (Metrics.fetch calls the API directly, so its api-keys read is
     #      a separate hit from api-keys/secret above.)
-    # (Data API row/table reads go through the injected stub, not the API.)
-    budget = 90
+    #   per project (x3): advisors security+performance (6)
+    #   per project (x3): secrets, types.ts, upgrade-eligibility (9)
+    #   per project (x3): config disk pgbouncer pooler postgrest (12)
+    #   per project (x3): database backups migrations readonly (9)
+    #   per project (x3): network restrictions ssl-enforcement
+    #     custom-hostname vanity-subdomain (12)
+    # (Data API row/table/schema reads go through the injected stub, not
+    #  the API.)
+    budget = 138
     assert TestEnv.total_hits() <= budget
 
     # walking again is free (everything within TTL)

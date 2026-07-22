@@ -26,7 +26,14 @@ defmodule Supablock.Database do
 
   @type errno :: :enoent | :eio | :eagain | :eacces
   @type result :: %{columns: [String.t()], rows: [[term]]}
-  @type schema_desc :: %{optional(String.t()) => %{columns: [String.t()], pk: [String.t()]}}
+  @type schema_desc :: %{
+          optional(String.t()) => %{
+            columns: [String.t()],
+            pk: [String.t()],
+            details: [map],
+            required: [String.t()]
+          }
+        }
 
   ## Public API used by the Router
 
@@ -85,6 +92,29 @@ defmodule Supablock.Database do
         end
       end
     end)
+  end
+
+  @doc """
+  Render `schema.table`'s shape — column names, types and formats in ordinal
+  order, primary key, NOT NULL columns — as a `schema.json` body, from the
+  same (cached) PostgREST OpenAPI spec that powers listings and row paging.
+  """
+  @spec table_schema(String.t(), String.t(), String.t()) :: {:ok, binary} | {:error, errno}
+  def table_schema(ref, schema, table) do
+    with {:ok, desc} <- describe_schema(ref, schema) do
+      case Map.get(desc, table) do
+        %{details: details, pk: pk, required: required} ->
+          {:ok,
+           Supablock.Render.json(%{
+             "columns" => details,
+             "primary_key" => pk,
+             "required" => required
+           })}
+
+        nil ->
+          {:error, :enoent}
+      end
+    end
   end
 
   @doc "Render a page of `schema.table` at `offset` as `:csv` or `:json`."
@@ -211,12 +241,43 @@ defmodule Supablock.Database do
 
   defp build_tables(%Jason.OrderedObject{values: values}) do
     Map.new(values, fn {table, tdef} ->
-      {columns, pk} = columns_and_pk(ordered_get(tdef, "properties"))
-      {table, %{columns: columns, pk: pk}}
+      properties = ordered_get(tdef, "properties")
+      {columns, pk} = columns_and_pk(properties)
+
+      {table,
+       %{
+         columns: columns,
+         pk: pk,
+         details: column_details(properties),
+         required: required_list(tdef)
+       }}
     end)
   end
 
   defp build_tables(_other), do: %{}
+
+  # Per-column details for schema.json, keeping the table's ordinal column
+  # order and PostgREST's type/format vocabulary as-is.
+  defp column_details(%Jason.OrderedObject{values: values}) do
+    Enum.map(values, fn {name, def} ->
+      %{"name" => name}
+      |> put_detail("type", ordered_get(def, "type"))
+      |> put_detail("format", ordered_get(def, "format"))
+      |> put_detail("default", ordered_get(def, "default"))
+    end)
+  end
+
+  defp column_details(_other), do: []
+
+  defp put_detail(map, _key, nil), do: map
+  defp put_detail(map, key, value), do: Map.put(map, key, value)
+
+  defp required_list(tdef) do
+    case ordered_get(tdef, "required") do
+      list when is_list(list) -> Enum.filter(list, &is_binary/1)
+      _none -> []
+    end
+  end
 
   defp columns_and_pk(%Jason.OrderedObject{values: values}) do
     columns = Enum.map(values, fn {name, _def} -> name end)

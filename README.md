@@ -20,17 +20,25 @@ config, keys, functions and table data with ordinary Unix tools — `ls`,
             └── abcdefghijklmnopqrst/
                 ├── info.json
                 ├── health                  # "db: healthy" etc.
-                ├── config/                 # auth.json, database.json, realtime.json, …
+                ├── advisors/               # security.json · performance.json (lints)
+                ├── config/                 # auth, database, disk, pgbouncer, pooler,
+                │                           #   postgrest, realtime, storage .json
                 ├── api-keys/               # publishable · secret (REDACTED unless you opt in)
+                ├── secrets.json            # edge-function secret names (values REDACTED)
                 ├── functions/hello/        # info.json · body (raw eszip bundle)
                 ├── storage/buckets/
                 ├── branches/
                 ├── database/               # rows via the project's Data API
+                │   ├── backups.json        # + migrations.json, readonly.json
                 │   └── public/users/
+                │       ├── schema.json     # columns, types, primary key
                 │       ├── rows-000000.csv # rows 0–499
                 │       └── rows-000500.csv # rows 500–999, …
+                ├── network/                # restrictions, ssl-enforcement,
+                │                           #   custom-hostname, vanity-subdomain .json
                 ├── logs/<source>           # NDJSON: postgres, auth, edge, storage, …
-                └── metrics                 # Prometheus text, project-wide
+                ├── metrics                 # Prometheus text, project-wide
+                └── types.ts                # generated TypeScript types
 ```
 
 **It cannot change anything.** Every request is a `GET`, and every mount is
@@ -51,6 +59,18 @@ curl -fsSL https://filipecabaco.github.io/supablock/install.sh | sh
 
 `SUPABLOCK_VERSION` picks a release tag; `SUPABLOCK_INSTALL_DIR` overrides
 the default `~/.local/bin`.
+
+### npm
+
+The same binaries, delivered through the npm registry — the channel that
+works in restricted sandboxes (CI, AI agents) whose egress blocks the
+installer host and GitHub's release CDN but allows `registry.npmjs.org`.
+The binary ships inside a per-platform package; no install script downloads
+anything:
+
+```bash
+npm install -g supablock     # or one-shot: npx supablock ls organizations
+```
 
 ### Docker
 
@@ -203,12 +223,43 @@ grep -r '"site_url"' /mnt/supabase/organizations/*/projects/*/config/auth.json
 # Which projects have a public storage bucket?
 grep -l '"public": true' /mnt/supabase/organizations/*/projects/*/storage/buckets/*/info.json
 
+# Which projects have security advisor findings (e.g. RLS disabled)?
+grep -l '"level": "ERROR"' /mnt/supabase/organizations/*/projects/*/advisors/security.json
+
+# Pull a project's generated TypeScript types straight into your app
+supablock cat organizations/my-org/projects/<ref>/types.ts > src/db-types.ts
+
 # Unpack an edge function's source (the body is an eszip bundle)
 npx eszip extract /mnt/supabase/.../functions/hello/body ./hello-src
 ```
 
 Output is deterministic — JSON is pretty-printed with sorted keys — so
 `diff` between projects is clean and `stat` sizes are exact.
+
+## Snapshots and drift
+
+The tree's determinism makes drift tracking a one-liner. `snapshot` writes
+the tree to a real directory; `diff` compares the live tree against it:
+
+```bash
+supablock snapshot ~/supabase-snapshot            # the config surface, on disk
+supablock diff ~/supabase-snapshot                # what changed since? (exit 1 = drift)
+supablock diff ~/supabase-snapshot --brief        # names only
+supablock snapshot ~/supabase-snapshot --prune    # refresh, dropping deleted files
+```
+
+By default snapshots cover the *configuration surface* — logs, metrics,
+database rows and function bodies are skipped (`--all` includes them, and
+skipped subtrees cost no API requests). Snapshots store full tree paths, so
+`diff -r` between two snapshots works, and committing a snapshot directory
+to git turns your Supabase account history into an audit trail:
+
+```bash
+cd ~/supabase-audit && supablock snapshot . --prune && git add -A \
+  && git commit -m "supabase config $(date -I)"
+```
+
+`diff` exits like diff(1): `0` identical, `1` differences, `2` errors.
 
 ## Browsing table data
 
@@ -218,13 +269,17 @@ project's **Data API** (PostgREST). Nothing to set up: every project has a
 itself — no database password.
 
 ```bash
-ls  .../database                 # exposed schemas
+ls  .../database                 # exposed schemas (+ backups/migrations/readonly.json)
 ls  .../database/public          # tables/views
+cat .../database/public/users/schema.json        # columns, types, primary key
 cat .../database/public/users/rows-000000.csv
 ```
 
-Rows are paged into files of `db_page_size` rows (default 500), named by
-offset and ordered by primary key. CSV by default (RFC-4180 quoted, `NULL`
+Every table also carries a `schema.json` — column names, types and formats
+in ordinal order, the primary key and NOT NULL columns — rendered from the
+same cached PostgREST spec that powers listings, so it costs no extra
+requests. Rows are paged into files of `db_page_size` rows (default 500),
+named by offset and ordered by primary key. CSV by default (RFC-4180 quoted, `NULL`
 = empty field); switch with config:
 
 ```bash
@@ -244,7 +299,7 @@ key. A custom-domain or self-hosted project can be pointed at with
 supablock setup [profile]           one-command onboarding: profile + login + service
 supablock login [--token|--no-browser]  browser login, pasted token, or SSH-friendly URL
 supablock logout                    delete the credential (and revoke the OAuth grant)
-supablock status | whoami           auth, org count, mount state, rate limits
+supablock status [--json] | whoami  auth, org count, mount state, rate limits
 supablock doctor                    environment checks with fix hints
 supablock config set|get|list       mountpoint, TTLs, timeouts, expose_secrets, db_*, oauth.*
 supablock mount [mountpoint]        mount in the foreground (default ~/Supabase)
@@ -256,8 +311,12 @@ supablock head|tail [-n N] <path>   first/last lines of tree files (no mount)
 supablock find [path] [filters]     walk the tree; -type f|d, -name <glob>, -maxdepth N,
                                     -print0
 supablock grep [-iln] <pat> [path]  search file contents; dirs recurse, exit 1 = no match
+supablock snapshot <dir> [path]     write the tree to a real directory (--all, --prune)
+supablock diff <dir> [path]         live tree vs snapshot: unified diffs; --brief
+supablock mcp                       MCP server on stdio (tools: ls, cat, find, grep)
 supablock serve [stop]              mountless cache daemon: ls/cat/find/grep reuse it
-supablock refresh [--check]         drop the cache (or report staleness) 
+supablock refresh [--check]         drop the cache (or report staleness)
+supablock completions bash|zsh|fish shell completion (subcommands, keys, tree paths)
 supablock service install|status|uninstall   auto-start at login (systemd/launchd)
 ```
 
@@ -274,6 +333,19 @@ output, and the filesystem shape means existing file tools (or plain
 
 * **Agent skill** — `npx skills add filipecabaco/supablock` teaches an agent
   to get the tool, authenticate, and run the common checks.
+* **Sandbox-safe install** — `npm install -g supablock` (or `npx supablock`)
+  delivers the prebuilt binary through the npm registry, which sandbox
+  egress policies typically allowlist even when the curl installer and
+  Docker Hub are blocked.
+* **MCP server** — `supablock mcp` speaks the Model Context Protocol over
+  stdio with four read-only tools (`ls`, `cat`, `find`, `grep`), resolved by
+  the same Router as the mount, so GET-only, redaction and deterministic
+  rendering carry over. Register it in any MCP client as command
+  `supablock`, args `["mcp"]`:
+
+  ```json
+  {"mcpServers": {"supabase-tree": {"command": "supablock", "args": ["mcp"]}}}
+  ```
 * **No-mount reads** — `supablock ls|cat|head|tail|find|grep` work in any
   sandbox (no FUSE device, no privileges) and honour `SUPABLOCK_TOKEN`;
   `supablock serve &` first gives every subsequent read one shared warm
@@ -300,6 +372,10 @@ credential, and leave `expose_secrets` off.
   scopes, read-only is enforced server-side.
 * `api-keys/secret` is `REDACTED` until you `config set expose_secrets true`.
   Row browsing still uses a key internally (never written to the tree).
+* `secrets.json` shows edge-function secret *names* with every value
+  `REDACTED` under the same `expose_secrets` gate. (The API endpoint has no
+  names-only mode, so values are redacted at render time and never written
+  anywhere — including snapshots.)
 * The mounted tree is `0444`/`0555` and read-only; mutating operations are
   rejected by the kernel.
 

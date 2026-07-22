@@ -205,6 +205,101 @@ defmodule Supablock.Fixtures do
      end}
   end
 
+  @doc "Advisor lints as the advisors endpoints return them."
+  def advisors_security do
+    %{
+      "lints" => [
+        %{
+          "name" => "rls_disabled_in_public",
+          "level" => "ERROR",
+          "facing" => "EXTERNAL",
+          "categories" => ["SECURITY"],
+          "description" => "Detects tables in the public schema without RLS.",
+          "detail" => "Table `public.users` is public, but RLS has not been enabled.",
+          "remediation" => "https://supabase.com/docs/guides/database/database-linter",
+          "metadata" => %{"name" => "users", "schema" => "public", "type" => "table"}
+        }
+      ]
+    }
+  end
+
+  def advisors_performance do
+    %{"lints" => []}
+  end
+
+  def secrets do
+    [
+      %{"name" => "STRIPE_KEY", "value" => "sk_live_SUPERSECRET"},
+      %{"name" => "WEBHOOK_URL", "value" => "https://hooks.example.com/x"}
+    ]
+  end
+
+  def typescript_types do
+    %{"types" => "export type Json = string | number\nexport interface Database {}\n"}
+  end
+
+  def migrations do
+    [
+      %{"version" => "20260101000000", "name" => "init"},
+      %{"version" => "20260201000000", "name" => "add_users"}
+    ]
+  end
+
+  def backups do
+    %{
+      "region" => "eu-west-1",
+      "pitr_enabled" => false,
+      "walg_enabled" => true,
+      "backups" => [
+        %{"status" => "COMPLETED", "is_physical_backup" => true, "inserted_at" => "2026-07-01"}
+      ]
+    }
+  end
+
+  def readonly do
+    %{"enabled" => false, "override_enabled" => false, "override_active_until" => nil}
+  end
+
+  def network_restrictions do
+    %{
+      "entitlement" => "allowed",
+      "config" => %{"dbAllowedCidrs" => ["0.0.0.0/0"]},
+      "status" => "applied"
+    }
+  end
+
+  def ssl_enforcement do
+    %{"currentConfig" => %{"database" => false}, "appliedSuccessfully" => true}
+  end
+
+  def custom_hostname do
+    %{"status" => "5_services_reconfigured", "custom_hostname" => "db.example.com"}
+  end
+
+  def vanity_subdomain do
+    %{"custom_domain" => "alpha-one"}
+  end
+
+  def upgrade_eligibility do
+    %{
+      "eligible" => true,
+      "current_app_version" => "supabase-postgres-15.1.0",
+      "latest_app_version" => "supabase-postgres-17.4.1"
+    }
+  end
+
+  def pgbouncer_config do
+    %{"pool_mode" => "transaction", "default_pool_size" => 15, "max_client_conn" => 200}
+  end
+
+  def pooler_config do
+    [%{"database_type" => "PRIMARY", "pool_mode" => "transaction", "default_pool_size" => 15}]
+  end
+
+  def disk_config do
+    %{"type" => "gp3", "size_gb" => 8, "iops" => 3000}
+  end
+
   def logs do
     # The real API returns rows DESC (newest first) with `timestamp` as an
     # integer count of microseconds since the epoch; fixtures mirror that.
@@ -304,6 +399,57 @@ defmodule Supablock.Fixtures do
       "/v1/projects/projatwo1234567890ab/branches" => [],
       "/v1/projects/projbone1234567890ab/branches" => [],
       "/v1/projects/available-regions" => regions_route(),
+      "/v1/projects/projaone1234567890ab/advisors/security" => advisors_security(),
+      "/v1/projects/projatwo1234567890ab/advisors/security" => advisors_security(),
+      "/v1/projects/projbone1234567890ab/advisors/security" => advisors_security(),
+      "/v1/projects/projaone1234567890ab/advisors/performance" => advisors_performance(),
+      "/v1/projects/projatwo1234567890ab/advisors/performance" => advisors_performance(),
+      "/v1/projects/projbone1234567890ab/advisors/performance" => advisors_performance(),
+      "/v1/projects/projaone1234567890ab/secrets" => secrets(),
+      "/v1/projects/projatwo1234567890ab/secrets" => [],
+      "/v1/projects/projbone1234567890ab/secrets" => [],
+      "/v1/projects/projaone1234567890ab/types/typescript" => typescript_types(),
+      "/v1/projects/projatwo1234567890ab/types/typescript" => typescript_types(),
+      "/v1/projects/projbone1234567890ab/types/typescript" => typescript_types(),
+      "/v1/projects/projaone1234567890ab/database/migrations" => migrations(),
+      "/v1/projects/projatwo1234567890ab/database/migrations" => [],
+      "/v1/projects/projbone1234567890ab/database/migrations" => [],
+      "/v1/projects/projaone1234567890ab/database/backups" => backups(),
+      "/v1/projects/projatwo1234567890ab/database/backups" => backups(),
+      "/v1/projects/projbone1234567890ab/database/backups" => backups(),
+      "/v1/projects/projaone1234567890ab/readonly" => readonly(),
+      "/v1/projects/projatwo1234567890ab/readonly" => readonly(),
+      "/v1/projects/projbone1234567890ab/readonly" => readonly(),
+      "/v1/projects/projaone1234567890ab/network-restrictions" => network_restrictions(),
+      "/v1/projects/projatwo1234567890ab/network-restrictions" => network_restrictions(),
+      "/v1/projects/projbone1234567890ab/network-restrictions" => network_restrictions(),
+      "/v1/projects/projaone1234567890ab/ssl-enforcement" => ssl_enforcement(),
+      "/v1/projects/projatwo1234567890ab/ssl-enforcement" => ssl_enforcement(),
+      "/v1/projects/projbone1234567890ab/ssl-enforcement" => ssl_enforcement(),
+      # Custom hostname / vanity subdomain are configured on the first project
+      # only; the others 404, which the tree renders as `{}`.
+      "/v1/projects/projaone1234567890ab/custom-hostname" => custom_hostname(),
+      "/v1/projects/projatwo1234567890ab/custom-hostname" =>
+        {:status, 404, %{"message" => "Custom hostname configuration not found"}},
+      "/v1/projects/projbone1234567890ab/custom-hostname" =>
+        {:status, 404, %{"message" => "Custom hostname configuration not found"}},
+      "/v1/projects/projaone1234567890ab/vanity-subdomain" => vanity_subdomain(),
+      "/v1/projects/projatwo1234567890ab/vanity-subdomain" =>
+        {:status, 404, %{"message" => "Vanity subdomain not found"}},
+      "/v1/projects/projbone1234567890ab/vanity-subdomain" =>
+        {:status, 404, %{"message" => "Vanity subdomain not found"}},
+      "/v1/projects/projaone1234567890ab/upgrade/eligibility" => upgrade_eligibility(),
+      "/v1/projects/projatwo1234567890ab/upgrade/eligibility" => upgrade_eligibility(),
+      "/v1/projects/projbone1234567890ab/upgrade/eligibility" => upgrade_eligibility(),
+      "/v1/projects/projaone1234567890ab/config/database/pgbouncer" => pgbouncer_config(),
+      "/v1/projects/projatwo1234567890ab/config/database/pgbouncer" => pgbouncer_config(),
+      "/v1/projects/projbone1234567890ab/config/database/pgbouncer" => pgbouncer_config(),
+      "/v1/projects/projaone1234567890ab/config/database/pooler" => pooler_config(),
+      "/v1/projects/projatwo1234567890ab/config/database/pooler" => pooler_config(),
+      "/v1/projects/projbone1234567890ab/config/database/pooler" => pooler_config(),
+      "/v1/projects/projaone1234567890ab/config/disk" => disk_config(),
+      "/v1/projects/projatwo1234567890ab/config/disk" => disk_config(),
+      "/v1/projects/projbone1234567890ab/config/disk" => disk_config(),
       "/v1/projects/projaone1234567890ab/analytics/endpoints/logs.all" =>
         {:params, fn _params -> {200, logs()} end},
       "/v1/projects/projatwo1234567890ab/analytics/endpoints/logs.all" =>

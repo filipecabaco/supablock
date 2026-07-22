@@ -19,6 +19,10 @@ defmodule Supablock.Walk do
   events — like find(1), the walk reports them and continues. `max_depth`
   bounds descent relative to the start: `0` visits only `path` itself.
 
+  Returning `{:prune, acc}` from a `{:dir, _}` event keeps `acc` and skips
+  that directory's children entirely — the directory is never listed, so
+  pruned subtrees cost no requests.
+
   Paths in events keep the caller's spelling (relative stays relative,
   `.` becomes `./…`), so output can be fed straight back to
   `supablock cat`.
@@ -34,21 +38,25 @@ defmodule Supablock.Walk do
   end
 
   defp walk_dir(path, depth, max_depth, acc, fun) do
-    acc = fun.({:dir, path}, acc)
+    case fun.({:dir, path}, acc) do
+      {:prune, acc} ->
+        acc
 
-    # `depth < :infinity` holds for any integer (Erlang term order).
-    if depth < max_depth do
-      case Tree.list(router_path(path)) do
-        {:ok, entries} ->
-          Enum.reduce(entries, acc, fn name, acc ->
-            walk_child(join(path, name), depth + 1, max_depth, acc, fun)
-          end)
+      acc ->
+        # `depth < :infinity` holds for any integer (Erlang term order).
+        if depth < max_depth do
+          case Tree.list(router_path(path)) do
+            {:ok, entries} ->
+              Enum.reduce(entries, acc, fn name, acc ->
+                walk_child(join(path, name), depth + 1, max_depth, acc, fun)
+              end)
 
-        {:error, reason} ->
-          fun.({:error, path, reason}, acc)
-      end
-    else
-      acc
+            {:error, reason} ->
+              fun.({:error, path, reason}, acc)
+          end
+        else
+          acc
+        end
     end
   end
 

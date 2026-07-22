@@ -24,7 +24,10 @@ Pick the first option that works in your environment:
 1. **Already installed?** `supablock help` — if it prints usage, skip ahead.
 2. **Native install** (Linux/macOS):
    `curl -fsSL https://filipecabaco.github.io/supablock/install.sh | sh`
-3. **Docker** (no install, needs a token):
+3. **npm** (best in restricted sandboxes — registry.npmjs.org is usually
+   allowlisted even where the installer host is blocked):
+   `npm install -g supablock`, or one-shot via `npx supablock <command>`
+4. **Docker** (no install, needs a token):
    `docker run --rm -e SUPABLOCK_TOKEN=$SUPABLOCK_TOKEN filipecabaco/supablock <command>`
 
 ## Authentication
@@ -110,14 +113,21 @@ organizations/<org>/
   projects/<ref>/
     info.json                 # name, region, status
     health                    # "auth: healthy" … one line per service
-    config/{auth,database,realtime,storage}.json
+    advisors/{security,performance}.json   # lints: RLS off, slow queries, …
+    config/{auth,database,disk,pgbouncer,pooler,postgrest,realtime,storage}.json
     config/auth/sso/<id>/info.json
     config/auth/third-party/<id>/info.json
     api-keys/{publishable,secret}    # secret is REDACTED unless opted in
+    secrets.json              # edge-function secret names, values REDACTED
     functions/<slug>/{info.json,body}  # body = deployed eszip bundle
     storage/buckets/<name>/info.json
     branches/<branch>/info.json
+    database/{backups,migrations,readonly}.json
+    database/<schema>/<table>/schema.json       # columns, types, primary key
     database/<schema>/<table>/rows-000000.csv   # paged rows, 500/page
+    network/{restrictions,ssl-enforcement,custom-hostname,vanity-subdomain}.json
+    types.ts                  # generated TypeScript types
+    upgrade-eligibility.json
 ```
 
 ## Verification recipes
@@ -135,6 +145,18 @@ diff <(supablock cat .../projects/<staging>/config/auth.json) \
 
 # Any public storage buckets?
 supablock grep -l '"public": true' organizations/<org>/projects/<ref>/storage
+
+# Any security advisor findings (RLS disabled, exposed views, …)?
+supablock cat organizations/<org>/projects/<ref>/advisors/security.json | jq '.lints[].name'
+
+# What shape is a table, without reading rows?
+supablock cat organizations/<org>/projects/<ref>/database/public/users/schema.json
+
+# Which migrations are applied?
+supablock cat organizations/<org>/projects/<ref>/database/migrations.json
+
+# What changed since the last audit? (snapshot once, diff later)
+supablock snapshot /tmp/snap && supablock diff /tmp/snap --brief
 
 # What functions are deployed, and at which version?
 supablock ls organizations/<org>/projects/<ref>/functions
@@ -159,9 +181,13 @@ supablock cat organizations/<org>/projects/<ref>/database/public/users/rows-0000
   "Rate limited" message means back off and retry. For bursts, start
   `supablock serve &` first (shared warm cache — see above) and keep
   walks scoped with `-maxdepth`; don't loop tightly.
-- **Secrets:** `api-keys/secret` renders `REDACTED …` unless the user opted
-  in (`supablock config set expose_secrets true`). Do not enable that
+- **Secrets:** `api-keys/secret` renders `REDACTED …` and `secrets.json`
+  values render `"REDACTED"` unless the user opted in
+  (`supablock config set expose_secrets true`). Do not enable that
   yourself unless the user asks.
+- **MCP:** if your host speaks the Model Context Protocol, `supablock mcp`
+  serves the same tree as stdio tools (ls, cat, find, grep) — register it
+  as command `supablock`, args `["mcp"]` instead of shelling out.
 - **Rows:** `database/` reads honour the project's exposed schemas. By
   default they use the service-role key internally (bypassing RLS); the
   key is never printed.

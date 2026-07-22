@@ -25,6 +25,7 @@ defmodule Supablock.Client do
           :unauthorized
           | :forbidden
           | :not_found
+          | :unavailable
           | :rate_limited
           | :timeout
           | {:http, non_neg_integer}
@@ -246,8 +247,29 @@ defmodule Supablock.Client do
   defp interpret(%Req.Response{status: 401}), do: {:error, :unauthorized}
   defp interpret(%Req.Response{status: 403}), do: {:error, :forbidden}
   defp interpret(%Req.Response{status: 404}), do: {:error, :not_found}
+
+  # A 400 that only signals a plan/add-on entitlement gate is unavailability,
+  # not a bad request — surface it like a 404 so optional surfaces read `{}`.
+  defp interpret(%Req.Response{status: 400, body: body}) do
+    if entitlement_gated?(body), do: {:error, :unavailable}, else: {:error, {:http, 400}}
+  end
+
   defp interpret(%Req.Response{status: 429}), do: {:error, :rate_limited}
   defp interpret(%Req.Response{status: status}), do: {:error, {:http, status}}
+
+  defp entitlement_gated?(body) do
+    case decode_body(body) do
+      %{"error" => %{"code" => "entitlement_required"}} ->
+        true
+
+      %{"message" => message} when is_binary(message) ->
+        String.contains?(message, "entitlement") or
+          Regex.match?(~r/requires? the .*\b(plan|add-on)\b/i, message)
+
+      _other ->
+        false
+    end
+  end
 
   defp decode_body(body) when is_binary(body) do
     case Jason.decode(body) do
