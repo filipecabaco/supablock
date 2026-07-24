@@ -18,7 +18,7 @@ jobs:
   test:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # libfuse3 is needed even for unit tests: the efuse C port is compiled
       # as part of `mix compile`. The rest are kerl's Erlang-source-build deps.
@@ -54,7 +54,7 @@ jobs:
   e2e:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install build dependencies
         run: |
@@ -71,7 +71,7 @@ jobs:
       # The official CLI, so the e2e cross-check runs against the same tool
       # users have (Management API tree: orgs/projects listings).
       - name: Install the supabase CLI
-        uses: supabase/setup-cli@v1
+        uses: supabase/setup-cli@v2
         with:
           version: latest
 

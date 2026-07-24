@@ -649,6 +649,7 @@
       <a href="#service">Auto-start</a>
       <a href="#tables">Table data</a>
       <a href="#commands">Commands</a>
+      <a href="#changing">Changing things</a>
       <a href="#security">Security</a>
     </nav>
   </div>
@@ -872,8 +873,8 @@
         <div class="fact">
           <span class="k"><svg class="icon" aria-hidden="true"><use href="#i-wrench-screwdriver"/></svg>how-to-change.md</span>
           <p>supablock only reads — so each project carries a <code>how-to-change.md</code> with the exact
-             API/CLI request to change each resource. An agent knows the write path without guessing, and
-             runs it itself.</p>
+             API/CLI request to change each resource. An agent knows <a href="#changing">the write
+             path</a> without guessing, and runs it itself.</p>
         </div>
         <div class="fact">
           <span class="k"><svg class="icon" aria-hidden="true"><use href="#i-arrow-down-tray"/></svg>skills add · llms.txt</span>
@@ -1094,6 +1095,57 @@ schema.json  rows-000000.csv  rows-000500.csv  rows-001000.csv
         <span class="mono">supablock cat … | head</span> ends quietly, and bodies pass
         through byte-exact.
       </p>
+    </div>
+  </section>
+
+  <section id="changing">
+    <div class="wrap">
+      <p class="sec-label"><svg class="icon" aria-hidden="true"><use href="#i-wrench-screwdriver"/></svg>The write path</p>
+      <h2>Read-only — but it tells you how to change things</h2>
+      <p class="body">
+        supablock never writes to Supabase. But an agent that just read a config still needs to know
+        <em>how</em> to change it — so every project carries a <code>how-to-change.md</code> listing,
+        per resource, the exact request to run yourself. It's pure static text (no API call), the
+        project ref is filled in, and every body is a placeholder — no live secret is ever inlined.
+      </p>
+
+      <div class="code">
+        <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
+        <pre><span class="p">$</span> supablock cat organizations/&lt;org&gt;/projects/&lt;ref&gt;/how-to-change.md
+
+<span class="c">## `config/auth.json`</span>
+
+<span class="c">```bash</span>
+curl -X PATCH \
+  "https://api.supabase.com/v1/projects/&lt;ref&gt;/config/auth" \
+  -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{ ...only the fields you change... }'
+<span class="c">```</span>
+
+<span class="c">&gt; Partial update — send only the keys you change.</span></pre>
+      </div>
+
+      <div class="facts">
+        <div class="fact">
+          <span class="k"><svg class="icon" aria-hidden="true"><use href="#i-command-line"/></svg>CLI where it's real</span>
+          <p>Migrations, functions, secrets and branches also carry the matching
+             <code>supabase</code> verb. Buckets route to the project's Storage API, not the
+             Management API — the actual write surface.</p>
+        </div>
+        <div class="fact">
+          <span class="k"><svg class="icon" aria-hidden="true"><use href="#i-lock-closed"/></svg>nothing false-writable</span>
+          <p>Derived and read-only files (<code>health</code>, <code>advisors/</code>,
+             <code>metrics</code>, <code>types.ts</code>, <code>api-keys/</code>) get no entry, so
+             nothing reads as changeable that isn't.</p>
+        </div>
+        <div class="fact">
+          <span class="k"><svg class="icon" aria-hidden="true"><use href="#i-wrench-screwdriver"/></svg>inline_docs</span>
+          <p><code>config set inline_docs true</code> prepends the same guidance as a <code>//</code>
+             JSONC header inside each mutable file. Off by default, since comments break
+             <code>jq</code>.</p>
+        </div>
+      </div>
     </div>
   </section>
 
