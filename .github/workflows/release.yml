@@ -217,8 +217,18 @@ jobs:
       - name: List built binaries
         run: ls -la dist/
 
-      # A manual run creates the tag here (at the built commit) instead of
-      # reacting to one; tag pushes keep publishing under the pushed tag.
+      # A manual run has no tag yet, and the release API refuses to create one
+      # for the Actions token ("Resource not accessible by integration"), so
+      # push the tag over git first — at the commit that was just built. Tag
+      # pushes skip this and publish under the tag that triggered them.
+      - name: Create the release tag
+        if: ${{ !startsWith(github.ref, 'refs/tags/') && inputs.version != '' }}
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          git tag "v${RELEASE_VERSION#v}"
+          git push origin "v${RELEASE_VERSION#v}"
+
       - name: Publish versioned release
         if: startsWith(github.ref, 'refs/tags/') || inputs.version != ''
         uses: softprops/action-gh-release@v3
