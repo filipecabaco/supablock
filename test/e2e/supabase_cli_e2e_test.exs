@@ -60,8 +60,6 @@ defmodule Supablock.SupabaseCliE2eTest do
       else
         {:ok, api_port} = Supablock.StubServer.start(stub_routes())
 
-        # Constructed at runtime (never a literal): must satisfy the CLI's
-        # ^sbp_[a-f0-9]{40}$ token pattern.
         token = "sbp_" <> String.duplicate("f", 40)
 
         profile = Path.join(base, "profile.yaml")
@@ -111,7 +109,6 @@ defmodule Supablock.SupabaseCliE2eTest do
      workdir: Path.join(base, "workdir")}
   end
 
-  # The canned fixtures plus the OAuth endpoints the login flow needs.
   defp stub_routes do
     Map.merge(Supablock.Fixtures.routes(), %{
       {:post, "/v1/oauth/token"} =>
@@ -138,7 +135,6 @@ defmodule Supablock.SupabaseCliE2eTest do
 
   test "OAuth login through the loopback callback (hermetic)", ctx do
     if ctx.live? do
-      # needs a registered OAuth app; the flow is covered hermetically
       :ok
     else
       {_out, 0} = supablock(ctx, ["config", "set", "oauth.client_id", "e2e-client-id"])
@@ -154,8 +150,6 @@ defmodule Supablock.SupabaseCliE2eTest do
           env: env
         ])
 
-      # play the browser: grab the printed authorize URL, "consent", and
-      # follow the redirect to the loopback callback
       {url, _output} = collect_until(login, ~r{http\S*/v1/oauth/authorize\?\S+})
       query = URI.decode_query(URI.parse(url).query)
       assert query["code_challenge_method"] == "S256"
@@ -205,25 +199,21 @@ defmodule Supablock.SupabaseCliE2eTest do
   end
 
   test "the mounted tree agrees with the supabase CLI", ctx do
-    # -- login stores the credential through the release binary
     {out, 0} = supablock(ctx, ["login", "--token", ctx.token])
     assert out =~ "Token valid"
 
-    # -- mount in a background OS process, wait for the kernel mount
     mount_port = start_mount(ctx)
     assert wait_until(fn -> mounted?(ctx.mountpoint) end, 15_000), "mount did not appear"
 
     {status_out, 0} = supablock(ctx, ["status"])
     assert status_out =~ "Mounted: yes"
 
-    # -- organizations/ must equal the CLI's org listing
     cli_org_ids = cli_orgs(ctx)
     assert cli_org_ids != [], "supabase orgs list returned nothing"
 
     fs_orgs = ls!(Path.join(ctx.mountpoint, "organizations"))
     assert Enum.sort(fs_orgs) == Enum.sort(Enum.map(cli_org_ids, &Router.sanitize/1))
 
-    # -- each org's projects/ must equal the CLI's project listing for it
     cli_projects = cli_projects(ctx)
 
     for org <- fs_orgs do
@@ -236,7 +226,6 @@ defmodule Supablock.SupabaseCliE2eTest do
       assert Enum.sort(fs_projects) == Enum.sort(expected), "project mismatch for org #{org}"
     end
 
-    # -- a project's info.json carries the same facts as the CLI
     case cli_projects do
       [] ->
         :ok
@@ -257,34 +246,22 @@ defmodule Supablock.SupabaseCliE2eTest do
         assert info["name"] == project["name"]
         assert info["region"] == project["region"]
 
-        # stat size is exact
         %File.Stat{size: size} = File.stat!(info_path)
         assert size == byte_size(File.read!(info_path))
     end
 
-    # -- read-only, even for root
     assert {:error, :erofs} = File.touch(Path.join(ctx.mountpoint, "nope"))
     assert {:error, :erofs} = File.mkdir(Path.join(ctx.mountpoint, "nope"))
 
-    # -- refresh flushes the live mount's cache
     {refresh_out, 0} = supablock(ctx, ["refresh"])
     assert refresh_out =~ "Cache flushed."
 
-    # -- unmount from "another terminal"
     {unmount_out, 0} = supablock(ctx, ["unmount"])
     assert unmount_out =~ "Unmounted"
     assert wait_until(fn -> not mounted?(ctx.mountpoint) end, 10_000), "unmount left the mount"
 
     close_mount(mount_port)
   end
-
-  # The `database/` tree now reads through a project's Data API (PostgREST)
-  # rather than a direct Postgres connection, so it can no longer be exercised
-  # hermetically against a local Postgres from the released binary — it needs a
-  # live project's Data API. The tree is covered end-to-end against a stubbed
-  # Data API in the router, database and FUSE suites instead.
-
-  ## supablock release driver
 
   defp supablock(ctx, args) do
     System.cmd(ctx.launcher, args, env: ctx.sb_env, stderr_to_stdout: true)
@@ -307,8 +284,6 @@ defmodule Supablock.SupabaseCliE2eTest do
     _kind, _reason -> :ok
   end
 
-  ## supabase CLI drivers
-
   defp cli(ctx, args) do
     System.cmd(ctx.supabase, args ++ ["--workdir", ctx.workdir],
       env: ctx.cli_env,
@@ -326,8 +301,6 @@ defmodule Supablock.SupabaseCliE2eTest do
     out |> String.trim() |> Jason.decode!()
   end
 
-  # `supabase orgs list` only renders an ASCII table (no --output json); pull
-  # the first column out of its data rows.
   defp parse_org_table(out) do
     out
     |> String.split("\n")
@@ -345,8 +318,6 @@ defmodule Supablock.SupabaseCliE2eTest do
     end)
     |> Enum.reject(&(&1 == ""))
   end
-
-  ## helpers
 
   defp ls!(dir), do: dir |> File.ls!() |> Enum.sort()
 

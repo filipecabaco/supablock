@@ -159,10 +159,6 @@ defmodule Supablock.Snapshot do
   end
 
   @doc false
-  # The volatile/heavy subtrees skipped unless `--all`: logs, metrics,
-  # database row data (the database/*.json files stay), function bodies.
-  # `kind` disambiguates database/<x>: a file there is one of the
-  # Management API JSONs (kept), a directory is a Data API schema (skipped).
   def skip?(path, kind, all?)
   def skip?(_path, _kind, true), do: false
 
@@ -181,7 +177,6 @@ defmodule Supablock.Snapshot do
   defp skip_rest?(_other, _kind), do: false
 
   @doc false
-  # Caller spelling -> the full tree-relative path stored in snapshots.
   def rel_path(path) do
     path |> Walk.router_path() |> String.split("/", trim: true) |> Enum.join("/")
   end
@@ -219,7 +214,6 @@ defmodule Supablock.Snapshot do
 
           if File.dir?(child) do
             remove_empty_dirs(child)
-            # rmdir fails on non-empty directories, which is exactly the point
             _ = File.rmdir(child)
           end
         end)

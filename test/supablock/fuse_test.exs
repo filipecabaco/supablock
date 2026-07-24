@@ -22,9 +22,13 @@ defmodule Supablock.FuseTest do
     TestEnv.isolate_xdg!()
     TestEnv.fake_login!()
     TestEnv.stub_api!()
-    # Every project now has a database/ tree; stub its Data API so any mount
-    # traversal (including walk!/1) stays hermetic and never touches the network.
-    Application.put_env(:supablock, :data_api_fun, Supablock.DataApiStub.fun(db_model()))
+
+    Application.put_env(
+      :supablock,
+      :data_api_fun,
+      Supablock.DataApiStub.fun(Supablock.DataApiStub.sample_model(3))
+    )
+
     Supablock.Cache.flush()
 
     mountpoint =
@@ -87,29 +91,9 @@ defmodule Supablock.FuseTest do
   test "a full recursive walk stays within the request budget", %{mountpoint: mp} do
     walk!(mp)
 
-    # Distinct endpoints behind the fixture tree; every one may be fetched
-    # exactly once thanks to the cache:
-    #   orgs(1) projects(1) org info+members+regions(6)
-    #   per project (x3): info health auth db api-keys functions branches
-    #     realtime-config storage-config buckets sso third-party (12 -> 36)
-    #   per project (x3): postgrest config for database/ schemas (3)
-    #   per function (x2): info + body (4)
-    #   per project (x3): logs/<source> for 11 sources (33)
-    #   per project (x3): metrics -> api-keys(reveal) + metrics scrape (6)
-    #     (Metrics.fetch calls the API directly, so its api-keys read is
-    #      a separate hit from api-keys/secret above.)
-    #   per project (x3): advisors security+performance (6)
-    #   per project (x3): secrets, types.ts, upgrade-eligibility (9)
-    #   per project (x3): config disk pgbouncer pooler postgrest (12)
-    #   per project (x3): database backups migrations readonly (9)
-    #   per project (x3): network restrictions ssl-enforcement
-    #     custom-hostname vanity-subdomain (12)
-    # (Data API row/table/schema reads go through the injected stub, not
-    #  the API.)
     budget = 138
     assert TestEnv.total_hits() <= budget
 
-    # walking again is free (everything within TTL)
     before = TestEnv.total_hits()
     walk!(mp)
     assert TestEnv.total_hits() == before
@@ -160,10 +144,6 @@ defmodule Supablock.FuseTest do
     assert TestEnv.hits("/v1/organizations/org-alpha") == 2
   end
 
-  # End-to-end for the database/ tree over a real mount: the rows come from the
-  # stubbed Data API set up in `setup` (Supablock.DataApiStub), so this is
-  # hermetic — no network, no database. Exposed schemas still come from the
-  # stubbed Management API.
   test "database tree serves rows over the mount", %{mountpoint: mp} do
     project = Path.join(mp, "organizations/org-alpha/projects/#{@proj_a1}")
     db = Path.join(project, "database")
@@ -178,25 +158,10 @@ defmodule Supablock.FuseTest do
     page = Path.join(widgets, "rows-000000.csv")
     body = File.read!(page)
     assert String.starts_with?(body, "id,name\n0,w0\n")
-    # stat size matches the rendered bytes
     assert File.stat!(page).size == byte_size(body)
   end
 
-  defp db_model do
-    %{
-      "app" => %{
-        "widgets" => %{
-          columns: ["id", "name"],
-          pk: ["id"],
-          rows: for(i <- 0..2, do: %{"id" => i, "name" => "w#{i}"})
-        }
-      },
-      "public" => %{}
-    }
-  end
-
   test "kill -9 of the port leaves a recoverable state", %{mountpoint: mp} do
-    # Servers from earlier tests may still be winding down; pick ours.
     {_pid, {^mp, Supablock.Fs, _fs_state, os_pid}} =
       Enum.find(Userfs.list(), fn {_pid, {mountpoint, _mod, _state, _os}} ->
         mountpoint == mp
@@ -207,7 +172,6 @@ defmodule Supablock.FuseTest do
 
     :ok = Fs.recover_stale_mount(mp)
 
-    # a fresh mount over the same mountpoint works
     :ok = Fs.mount(mp)
     wait_mounted!(mp)
     assert Enum.sort(File.ls!(mp)) == ["organizations"]

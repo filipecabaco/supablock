@@ -32,7 +32,6 @@ defmodule Supablock.OAuth do
   @redirect_path "/callback"
   @timeout_ms 8_000
 
-  # Captured at compile time from the build environment (CI secrets).
   @baked_client_id System.get_env("SUPABLOCK_OAUTH_CLIENT_ID")
   @baked_client_secret System.get_env("SUPABLOCK_OAUTH_CLIENT_SECRET")
 
@@ -100,8 +99,6 @@ defmodule Supablock.OAuth do
       {:ok, tokens} ->
         {:ok, tokens}
 
-      # a rejected refresh token means the grant is gone (revoked/expired):
-      # the user must log in again
       {:error, status} when status in [:unauthorized, {:http, 400}, {:http, 403}] ->
         {:error, :reauth_required}
 
@@ -131,8 +128,6 @@ defmodule Supablock.OAuth do
       {:error, _exception} -> {:error, :transport}
     end
   end
-
-  ## Token endpoint
 
   defp post_token(form) do
     request =
@@ -196,8 +191,6 @@ defmodule Supablock.OAuth do
 
   defp transport_reason(%{reason: reason}), do: reason
   defp transport_reason(error), do: error.__struct__
-
-  ## App credentials
 
   @doc false
   def client_id do

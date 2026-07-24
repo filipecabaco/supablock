@@ -26,7 +26,6 @@ defmodule Supablock.ControlTest do
 
     assert {:ok, reply} = Control.send_cmd("check")
     assert reply =~ ~r/^ok entries=\d+ stale=\d+$/
-    # the entry we just inserted is still cached (check does not flush)
     assert {:hit, {:ok, 1}} = Supablock.Cache.lookup(:probe_key)
   end
 

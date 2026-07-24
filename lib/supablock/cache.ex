@@ -80,8 +80,6 @@ defmodule Supablock.Cache do
     %{entries: entries, stale: stale}
   end
 
-  ## GenServer
-
   @impl true
   def init(_opts) do
     :ets.new(@table, [:named_table, :public, :set, read_concurrency: true])
@@ -91,8 +89,6 @@ defmodule Supablock.Cache do
 
   @impl true
   def handle_call({:fetch, key, ttl_ms, fun}, from, state) do
-    # Re-check under serialization: another caller may have completed the
-    # fetch between the caller's lookup and this call.
     case lookup(key) do
       {:hit, value} ->
         {:reply, value, state}
@@ -139,7 +135,6 @@ defmodule Supablock.Cache do
   end
 
   def handle_info({:DOWN, ref, :process, _pid, reason}, state) do
-    # A fetch process died before sending its result.
     case Enum.find(state.inflight, fn {_k, {r, _ttl, _w}} -> r == ref end) do
       nil ->
         {:noreply, state}

@@ -43,7 +43,6 @@ defmodule Supablock.Walk do
         acc
 
       acc ->
-        # `depth < :infinity` holds for any integer (Erlang term order).
         if depth < max_depth do
           case Tree.list(router_path(path)) do
             {:ok, entries} ->

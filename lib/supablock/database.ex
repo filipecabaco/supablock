@@ -35,8 +35,6 @@ defmodule Supablock.Database do
           }
         }
 
-  ## Public API used by the Router
-
   @doc "Exposed (PostgREST) schema names for `ref`."
   @spec schemas(String.t()) :: {:ok, [String.t()]} | {:error, errno}
   def schemas(ref) do
@@ -146,8 +144,6 @@ defmodule Supablock.Database do
     end
   end
 
-  ## Key selection (shared with the Data API transport)
-
   @doc "Which API key the Data API path uses: `:secret` (default) or `:publishable`."
   @spec key_kind() :: :secret | :publishable
   def key_kind do
@@ -181,11 +177,6 @@ defmodule Supablock.Database do
     end
   end
 
-  ## Schema discovery + introspection
-
-  # Exposed schemas come from the Management API's PostgREST config
-  # (`db_schema`, a comma-separated list). Anything unexpected degrades to the
-  # default single `public` schema so the tree still works.
   defp exposed_schemas(ref) do
     case Client.get(Endpoints.path(:postgrest_config, %{ref: ref})) do
       {:ok, %{"db_schema" => db_schema}} when is_binary(db_schema) ->
@@ -211,8 +202,6 @@ defmodule Supablock.Database do
     |> Enum.sort()
   end
 
-  # Table names, ordered column lists, and primary keys for a schema, read from
-  # the PostgREST OpenAPI spec (root `/rest/v1/`, one profile per request).
   @spec describe_schema(String.t(), String.t()) :: {:ok, schema_desc} | {:error, errno}
   defp describe_schema(ref, schema) do
     cached({:db, ref, :describe, schema}, fn ->
@@ -224,9 +213,6 @@ defmodule Supablock.Database do
     end)
   end
 
-  # PostgREST's Swagger doc: `definitions.<table>.properties` lists columns in
-  # ordinal order (decoded as ordered objects to keep it), and a primary-key
-  # column's description carries the `<pk/>` marker.
   defp parse_openapi(body) do
     case Jason.decode(body, objects: :ordered_objects) do
       {:ok, %Jason.OrderedObject{} = doc} ->
@@ -256,8 +242,6 @@ defmodule Supablock.Database do
 
   defp build_tables(_other), do: %{}
 
-  # Per-column details for schema.json, keeping the table's ordinal column
-  # order and PostgREST's type/format vocabulary as-is.
   defp column_details(%Jason.OrderedObject{values: values}) do
     Enum.map(values, fn {name, def} ->
       %{"name" => name}
@@ -315,8 +299,6 @@ defmodule Supablock.Database do
     end
   end
 
-  # Order by primary key for stable offset paging; without one, PostgREST's
-  # order is unspecified (documented caveat) and we send no `order`.
   defp order_clause(desc, table) do
     case Map.get(desc, table) do
       %{pk: [_ | _] = pk} -> "&order=" <> Enum.map_join(pk, ",", &encode/1)
@@ -324,8 +306,6 @@ defmodule Supablock.Database do
     end
   end
 
-  # PostgREST returns rows as JSON objects; align them to the (ordered) column
-  # list so rendering keeps the table's column order. Missing keys become nil.
   defp decode_rows(body, columns) do
     case Jason.decode(body) do
       {:ok, objects} when is_list(objects) ->
@@ -338,9 +318,6 @@ defmodule Supablock.Database do
     end
   end
 
-  # PostgREST reports the total in `Content-Range: <start>-<end>/<total>`
-  # (or `*/0` for an empty table). `*` as the total means the count was not
-  # returned.
   defp parse_count(headers) do
     with range when is_binary(range) <- Map.get(headers, "content-range"),
          [_range, total] <- String.split(range, "/", parts: 2),
@@ -352,8 +329,6 @@ defmodule Supablock.Database do
   end
 
   defp encode(name), do: URI.encode(to_string(name), &URI.char_unreserved?/1)
-
-  ## Rendering (pure)
 
   @doc "Render `columns`/`rows` as a CSV or JSON body with a trailing newline."
   @spec render([String.t()], [[term]], :csv | :json) :: binary
@@ -398,7 +373,6 @@ defmodule Supablock.Database do
     end
   end
 
-  # A scalar string for CSV, or nil for a JSON/SQL null.
   defp scalar(nil), do: nil
   defp scalar(value) when is_binary(value), do: printable(value)
   defp scalar(value) when is_boolean(value), do: to_string(value)
@@ -411,7 +385,6 @@ defmodule Supablock.Database do
   defp scalar(value) when is_struct(value), do: struct_string(value)
   defp scalar(value), do: inspect(value)
 
-  # A JSON-encodable term for a decoded value.
   defp json_value(nil), do: nil
   defp json_value(value) when is_binary(value), do: printable(value)
   defp json_value(value) when is_number(value) or is_boolean(value), do: value
@@ -432,12 +405,9 @@ defmodule Supablock.Database do
     Protocol.UndefinedError -> inspect(value)
   end
 
-  # Keep valid UTF-8 as-is; render raw binaries as \xHEX.
   defp printable(value) do
     if String.valid?(value), do: value, else: "\\x" <> Base.encode16(value, case: :lower)
   end
-
-  ## Cache + error mapping
 
   defp cached(key, fun) do
     Cache.fetch(key, Config.ttl_ms("db"), fun)

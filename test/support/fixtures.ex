@@ -4,9 +4,6 @@ defmodule Supablock.Fixtures do
   org B), 2 functions, 1 branch.
   """
 
-  # `slug` mirrors `id` here: supablock names org folders by slug || id, so
-  # keeping them equal leaves the tree unchanged, while satisfying the supabase
-  # CLI's schema (its `orgs list` requires a slug on every organization).
   def orgs do
     [
       %{"id" => "org-alpha", "slug" => "org-alpha", "name" => "Alpha Org"},
@@ -107,8 +104,6 @@ defmodule Supablock.Fixtures do
     ]
   end
 
-  # The SSO list endpoint wraps providers in an `items` envelope; supablock
-  # unwraps it. Providers have no human-friendly slug, so folders are keyed by id.
   def sso_providers do
     %{
       "items" => [
@@ -122,7 +117,6 @@ defmodule Supablock.Fixtures do
     }
   end
 
-  # Third-party auth integrations come back as a bare array.
   def third_party_auth do
     [
       %{
@@ -133,7 +127,6 @@ defmodule Supablock.Fixtures do
     ]
   end
 
-  # The function body endpoint returns an opaque eszip bundle (binary), not JSON.
   def function_body, do: "ESZIP2" <> <<0>> <> "fake-eszip-bundle-for-hello"
 
   @doc "Route handler serving the raw (non-JSON) function body bytes verbatim."
@@ -301,8 +294,6 @@ defmodule Supablock.Fixtures do
   end
 
   def logs do
-    # The real API returns rows DESC (newest first) with `timestamp` as an
-    # integer count of microseconds since the epoch; fixtures mirror that.
     %{
       "result" => [
         %{
@@ -373,8 +364,6 @@ defmodule Supablock.Fixtures do
       "/v1/projects/projaone1234567890ab/storage/buckets" => buckets(),
       "/v1/projects/projatwo1234567890ab/storage/buckets" => [],
       "/v1/projects/projbone1234567890ab/storage/buckets" => [],
-      # org-alpha's first project has SAML on; the second 404s (SAML not
-      # enabled), which supablock surfaces as an empty provider list.
       "/v1/projects/projaone1234567890ab/config/auth/sso/providers" => sso_providers(),
       "/v1/projects/projatwo1234567890ab/config/auth/sso/providers" =>
         {:status, 404, %{"message" => "SAML 2.0 support is not enabled for this project"}},
@@ -426,8 +415,6 @@ defmodule Supablock.Fixtures do
       "/v1/projects/projaone1234567890ab/ssl-enforcement" => ssl_enforcement(),
       "/v1/projects/projatwo1234567890ab/ssl-enforcement" => ssl_enforcement(),
       "/v1/projects/projbone1234567890ab/ssl-enforcement" => ssl_enforcement(),
-      # Custom hostname / vanity subdomain are configured on the first project
-      # only; the others 404, which the tree renders as `{}`.
       "/v1/projects/projaone1234567890ab/custom-hostname" => custom_hostname(),
       "/v1/projects/projatwo1234567890ab/custom-hostname" =>
         {:status, 404, %{"message" => "Custom hostname configuration not found"}},

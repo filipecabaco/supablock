@@ -64,8 +64,6 @@ defmodule Supablock.Service do
     if File.exists?(path), do: {:installed, path, state}, else: :not_installed
   end
 
-  ## Linux (systemd user unit)
-
   defp install_systemd(bin, mountpoint) do
     path = systemd_unit_path()
     File.mkdir_p!(Path.dirname(path))
@@ -107,8 +105,6 @@ defmodule Supablock.Service do
     end
   end
 
-  ## macOS (launchd agent)
-
   defp install_launchd(bin, mountpoint) do
     path = launchd_plist_path()
     File.mkdir_p!(Path.dirname(path))
@@ -148,8 +144,6 @@ defmodule Supablock.Service do
     end
   end
 
-  ## Helpers
-
   defp platform do
     case :os.type() do
       {:unix, :darwin} -> :darwin
@@ -166,8 +160,6 @@ defmodule Supablock.Service do
     Path.join([System.user_home!(), "Library", "LaunchAgents", "#{@agent_label}.plist"])
   end
 
-  # The absolute program the service should run: the Burrito wrapper when
-  # running as a wrapped binary, the launcher script otherwise.
   defp executable_path do
     candidates = [
       System.get_env("__BURRITO_BIN_PATH"),

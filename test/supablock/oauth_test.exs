@@ -10,7 +10,6 @@ defmodule Supablock.OAuthTest do
     :ok
   end
 
-  # Parses the form body of a token-endpoint request inside a plug stub.
   defp read_form(conn) do
     {:ok, body, conn} = Plug.Conn.read_body(conn)
     {URI.decode_query(body), conn}
@@ -47,13 +46,11 @@ defmodule Supablock.OAuthTest do
       assert query["state"] == request.state
       assert query["code_challenge_method"] == "S256"
 
-      # challenge really is BASE64URL(SHA256(verifier)), unpadded
       expected =
         Base.url_encode64(:crypto.hash(:sha256, request.verifier), padding: false)
 
       assert query["code_challenge"] == expected
 
-      # RFC 7636: verifier length within [43, 128]
       assert byte_size(request.verifier) in 43..128
     end
 

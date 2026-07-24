@@ -110,7 +110,6 @@ defmodule Supablock.ClientTest do
     log =
       capture_log([level: :debug], fn ->
         assert {:error, :timeout} = Client.get("/v1/organizations")
-        # also exercise the explicit redaction helper
         Logger.debug(Client.redact("Authorization: Bearer #{@token}", @token))
         Logger.flush()
       end)

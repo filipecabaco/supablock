@@ -96,7 +96,6 @@ defmodule Supablock.BrowserLogin do
       _invalid -> {:error, :decrypt_failed}
     end
   rescue
-    # :crypto raises on malformed points/keys
     _any -> {:error, :decrypt_failed}
   end
 
@@ -119,7 +118,6 @@ defmodule Supablock.BrowserLogin do
     end
   end
 
-  # Mirrors the official CLI: cli_<user>@<host>_<unix_ts>.
   defp token_name do
     user = System.get_env("USER") || System.get_env("LOGNAME") || "user"
 

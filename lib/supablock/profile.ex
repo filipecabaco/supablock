@@ -62,8 +62,6 @@ defmodule Supablock.Profile do
     end)
   end
 
-  # Only scalars coerce to a config string; an object/array value for a valid
-  # key is skipped rather than crashing `to_string/1` on it.
   defp scalar?(value), do: is_binary(value) or is_number(value) or is_boolean(value)
 
   defp skipped_keys(pairs), do: Enum.map(pairs, fn {key, _value} -> key end)
@@ -94,7 +92,6 @@ defmodule Supablock.Profile do
         {:ok, body}
 
       {:ok, %Req.Response{status: 200, body: body}} ->
-        # Req may already have JSON-decoded it
         {:ok, Jason.encode!(body)}
 
       {:ok, %Req.Response{status: status}} ->

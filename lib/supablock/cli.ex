@@ -110,8 +110,6 @@ defmodule Supablock.CLI do
     |> System.halt()
   end
 
-  # `release eval` does not always deliver argv; the launcher also passes the
-  # args via SUPABLOCK_ARGV (unit-separator joined) as a fallback.
   defp resolve_argv(argv) when is_list(argv) and argv != [], do: argv
 
   defp resolve_argv(_empty) do
@@ -130,21 +128,14 @@ defmodule Supablock.CLI do
   @doc "Run a command; returns the exit code (no halt — testable)."
   @spec run([String.t()]) :: non_neg_integer
   def run(argv) do
-    # `release eval` boots a clean node: the :supablock application (cache
-    # tables and all) is not started until we ask.
     {:ok, _apps} = Application.ensure_all_started(:supablock)
     stdio_opts = :io.getopts(:standard_io)
 
     try do
       dispatch(argv)
     catch
-      # The downstream reader closed the pipe (supablock cat … | head -1).
-      # Coreutils die of SIGPIPE here; mirror that as a quiet 128+SIGPIPE.
       :epipe -> 141
     after
-      # Undo raw_stdout!/0: on OTP 26+ the io server behind stdout can be
-      # shared with other standard devices, so a leaked latin1 flip would
-      # outlive the command (in tests, it bled into ExUnit's captures).
       restore_stdio(stdio_opts)
     end
   end
@@ -203,8 +194,6 @@ defmodule Supablock.CLI do
     1
   end
 
-  ## login / logout
-
   defp login(args) do
     {opts, _rest, _invalid} =
       OptionParser.parse(args, strict: [token: :string, no_browser: :boolean])
@@ -228,10 +217,6 @@ defmodule Supablock.CLI do
     end
   end
 
-  ## setup (one-command onboarding)
-
-  # Apply a shared team profile, make sure the user is logged in, offer the
-  # auto-start service. Everything is idempotent — rerunning is safe.
   defp setup(args) do
     {opts, rest, _invalid} =
       OptionParser.parse(args,
@@ -270,7 +255,6 @@ defmodule Supablock.CLI do
     end
   end
 
-  # never echo the app secret back
   defp display_config_value("oauth.client_secret"), do: "(set)"
   defp display_config_value(key), do: format_value(Config.get(key))
 
@@ -290,7 +274,6 @@ defmodule Supablock.CLI do
             run_login(opts)
 
           {:error, reason} ->
-            # a network hiccup is not a reason to redo the login
             IO.puts(:stderr, "Could not verify authentication: #{describe_error(reason)}")
             3
         end
@@ -314,7 +297,6 @@ defmodule Supablock.CLI do
     end
   end
 
-  # setup should not fail as a whole when only the service step does
   defp install_service_quietly do
     case Service.install() do
       {:ok, messages} -> Enum.each(messages, &IO.puts("  " <> &1))
@@ -324,9 +306,6 @@ defmodule Supablock.CLI do
     :ok
   end
 
-  # The documented OAuth2 flow (PKCE S256 + state, loopback callback):
-  # tokens come back short-lived, scoped to what the app registration
-  # allows, and refresh automatically. See Supablock.OAuth.
   defp oauth_login(no_browser?) do
     request = OAuth.new_request()
 
@@ -410,8 +389,6 @@ defmodule Supablock.CLI do
     end
   end
 
-  # Replicates the official supabase CLI: dashboard session + verification
-  # code + end-to-end-encrypted token delivery (see Supablock.BrowserLogin).
   defp browser_login(no_browser?) do
     session = BrowserLogin.new_session()
 
@@ -481,8 +458,6 @@ defmodule Supablock.CLI do
   end
 
   defp logout do
-    # For an OAuth credential, also revoke the grant server-side (best
-    # effort — the local delete is what logs this machine out either way).
     case Credentials.load_credential() do
       {:ok, %Credentials.Credential{type: :oauth, refresh_token: refresh}}
       when is_binary(refresh) ->
@@ -499,8 +474,6 @@ defmodule Supablock.CLI do
     IO.puts("Logged out.")
     0
   end
-
-  ## status
 
   defp status(args) do
     if "--json" in args, do: status_json(), else: status_text()
@@ -536,8 +509,6 @@ defmodule Supablock.CLI do
     end
   end
 
-  # The same facts as the text form, machine-readable (sorted keys, stable
-  # rendering via Render.json). Exit codes match the text form.
   defp status_json do
     {code, fields} =
       case Credentials.load() do
@@ -595,7 +566,6 @@ defmodule Supablock.CLI do
         {true, mountpoint, "mount"}
 
       true ->
-        # A control socket without a mountpoint on record: supablock serve.
         {false, nil, "serve"}
     end
   end
@@ -622,8 +592,6 @@ defmodule Supablock.CLI do
     end
   end
 
-  ## doctor
-
   defp doctor do
     results = Doctor.run()
 
@@ -634,8 +602,6 @@ defmodule Supablock.CLI do
 
     if Enum.any?(results, &match?({_name, {:error, _fix}}, &1)), do: 4, else: 0
   end
-
-  ## config
 
   defp config(["set", key, value]) do
     case Config.set(key, value) do
@@ -672,8 +638,6 @@ defmodule Supablock.CLI do
 
   defp format_value(nil), do: "(unset)"
   defp format_value(value), do: to_string(value)
-
-  ## mount / unmount / refresh
 
   defp mount(args) do
     {opts, rest, _invalid} =
@@ -713,8 +677,6 @@ defmodule Supablock.CLI do
     end
   end
 
-  # Spawn a background process running `mount --foreground` and return
-  # immediately. The orphaned child is reparented to init by the OS.
   defp mount_daemon(mountpoint, opts) do
     case find_self() do
       {:ok, bin} ->
@@ -736,18 +698,12 @@ defmodule Supablock.CLI do
     end
   end
 
-  # Resolution order: --path flag > positional arg > config value > ~/Supabase.
   defp resolve_mountpoint(opts, args) do
     mountpoint = opts[:path] || List.first(args) || Config.mountpoint()
-    # Best effort: a stale mount makes mkdir_p fail, and Fs.mount both
-    # recovers stale mounts and reports real errors with a doctor hint.
     _ = File.mkdir_p(mountpoint)
     {:ok, mountpoint}
   end
 
-  # Mirror the mount's log output into <state_dir>/supablock.log using the
-  # built-in OTP handler. Everything logged is already token-scrubbed (see
-  # Supablock.Client.redact/2).
   defp attach_file_logger do
     Paths.ensure!()
 
@@ -829,36 +785,17 @@ defmodule Supablock.CLI do
     end
   end
 
-  ## ls / cat — the tree without a mount
-  #
-  # The same paths the FUSE tree serves, resolved by the same Router, read
-  # straight off the API. This is the path for environments that cannot
-  # mount at all — containers without /dev/fuse, CI, AI-agent sandboxes —
-  # and it keeps every guarantee of the mount (GET-only, redaction,
-  # deterministic rendering) because it *is* the same code.
-  #
-  # All tree output goes through out/out_bytes so pipelines behave like
-  # coreutils: raw bytes (IO.puts raises on non-UTF-8 bodies), and a
-  # vanished downstream reader ends the command quietly instead of
-  # crashing (see the :epipe catch in run/1).
-
   defp out(line), do: out_bytes([line, ?\n])
 
   defp out_bytes(bytes) do
     case IO.binwrite(bytes) do
       :ok -> :ok
-      # :terminated — stdout is gone because the reader closed the pipe.
       {:error, _reason} -> throw(:epipe)
     end
   rescue
-    # Some OTP releases raise instead of returning the error tuple.
     ErlangError -> throw(:epipe)
   end
 
-  # Tree output is bytes, not chardata. A unicode-mode stdout device (the
-  # default under noshell since OTP 26, and whenever the launcher sets it)
-  # re-encodes binwrite's latin1-typed bytes, double-encoding every UTF-8
-  # body. Byte-oriented mode makes writes pass through verbatim.
   defp raw_stdout! do
     _ = :io.setopts(:standard_io, encoding: :latin1)
     :ok
@@ -918,10 +855,6 @@ defmodule Supablock.CLI do
     end
   end
 
-  # "-" pulls paths from stdin, so discovery pipes into reading with one
-  # warm process on the reading side: supablock find … -type f | supablock
-  # cat -. Line-delimited stdin is consumed lazily (each path is read as it
-  # arrives); -0 pairs with find -print0 for names with spaces or newlines.
   defp expand_stdin_paths(paths, null?) do
     Stream.flat_map(paths, fn
       "-" -> stdin_paths(null?)
@@ -942,15 +875,12 @@ defmodule Supablock.CLI do
     end
   end
 
-  defp cat_one(path) do
+  defp read_body(path) do
     case Tree.read(path) do
       {:ok, body} ->
-        out_bytes(body)
-        :ok
+        {:ok, body}
 
       {:error, :eio} ->
-        # Router says :eio both for "that's a directory" and for real API
-        # trouble; kind (resolution only, no render) tells them apart.
         case Tree.kind(path) do
           {:ok, :dir} ->
             err("Is a directory: #{path}")
@@ -965,7 +895,12 @@ defmodule Supablock.CLI do
     end
   end
 
-  ## head / tail — partial reads (know a rows file before catting all of it)
+  defp cat_one(path) do
+    with {:ok, body} <- read_body(path) do
+      out_bytes(body)
+      :ok
+    end
+  end
 
   defp head_tail(mode, args) do
     with :authed <- require_auth(),
@@ -1011,66 +946,34 @@ defmodule Supablock.CLI do
   end
 
   defp head_tail_one(mode, count, path) do
-    case Tree.read(path) do
-      {:ok, body} ->
-        lines = split_lines(body)
+    with {:ok, body} <- read_body(path) do
+      lines = split_lines(body)
 
-        shown =
-          case mode do
-            :head -> Enum.take(lines, count)
-            :tail -> Enum.take(lines, -count)
-          end
-
-        Enum.each(shown, &out/1)
-        :ok
-
-      {:error, :eio} ->
-        case Tree.kind(path) do
-          {:ok, :dir} ->
-            err("Is a directory: #{path}")
-            {:error, 1}
-
-          _not_a_dir ->
-            {:error, path_error(path, :eio)}
+      shown =
+        case mode do
+          :head -> Enum.take(lines, count)
+          :tail -> Enum.take(lines, -count)
         end
 
-      {:error, reason} ->
-        {:error, path_error(path, reason)}
+      Enum.each(shown, &out/1)
+      :ok
     end
   end
 
-  ## tail -f — follow a log file, polling for new entries
-
   defp tail_follow(path, count, follow_opts) do
-    case Tree.read(path) do
-      {:ok, body} ->
-        lines = split_lines(body)
-        Enum.each(Enum.take(lines, -count), &out/1)
+    with {:ok, body} <- read_body(path) do
+      lines = split_lines(body)
+      Enum.each(Enum.take(lines, -count), &out/1)
 
-        case parse_log_path(path) do
-          {:ok, ref, source} ->
-            # Fall back to now (microseconds) so the first poll only fetches
-            # entries that arrive after we started watching.
-            last_us = last_log_timestamp(body) || DateTime.to_unix(DateTime.utc_now(), :microsecond)
-            tail_log_follow_loop(ref, source, follow_opts.interval, last_us)
+      case parse_log_path(path) do
+        {:ok, ref, source} ->
+          last_us = last_log_timestamp(body) || DateTime.to_unix(DateTime.utc_now(), :microsecond)
+          tail_log_follow_loop(ref, source, follow_opts.interval, last_us)
 
-          :error ->
-            IO.puts(:stderr, "tail: -f is only supported for log file paths (.../logs/<source>)")
-            {:error, 1}
-        end
-
-      {:error, :eio} ->
-        case Tree.kind(path) do
-          {:ok, :dir} ->
-            err("Is a directory: #{path}")
-            {:error, 1}
-
-          _not_a_dir ->
-            {:error, path_error(path, :eio)}
-        end
-
-      {:error, reason} ->
-        {:error, path_error(path, reason)}
+        :error ->
+          IO.puts(:stderr, "tail: -f is only supported for log file paths (.../logs/<source>)")
+          {:error, 1}
+      end
     end
   end
 
@@ -1096,17 +999,14 @@ defmodule Supablock.CLI do
         Process.sleep(60_000)
         tail_log_follow_loop(ref, source, interval, last_us)
 
-      # Unrecoverable: the token or project won't fix itself by retrying.
       {:error, reason} when reason in [:unauthorized, :forbidden, :not_found] ->
         err("tail: #{reason} — stopping")
         {:error, 1}
 
-      # Transient (timeout, transport, 5xx): warn and keep polling.
       {:error, reason} ->
         err("tail: #{inspect(reason)} — retrying")
         tail_log_follow_loop(ref, source, interval, last_us)
 
-      # Unexpected success shape (no "result" list): skip this poll, keep going.
       {:ok, _other} ->
         tail_log_follow_loop(ref, source, interval, last_us)
     end
@@ -1190,8 +1090,6 @@ defmodule Supablock.CLI do
   defp parse_head_tail([path | rest], count, paths, follow?, interval, mode),
     do: parse_head_tail(rest, count, [path | paths], follow?, interval, mode)
 
-  ## find — walk the tree, print matching paths (find(1)-style flags)
-
   defp find(args) do
     with :authed <- require_auth(),
          {:ok, start, opts} <- parse_find(args) do
@@ -1260,16 +1158,12 @@ defmodule Supablock.CLI do
   defp parse_find([arg | _rest], _path, _opts),
     do: {:error, "find: one start path only (extra argument: #{arg})"}
 
-  ## grep — search file contents; directories recurse (like grep -r)
-
   defp grep(args) do
     with :authed <- require_auth(),
          {:ok, pattern, paths, opts} <- parse_grep(args),
          {:ok, regex} <- compile_grep_pattern(pattern, opts) do
       raw_stdout!()
 
-      # grep(1) prefixes matches with the file name unless the operand is
-      # one explicit file.
       prefix? =
         case paths do
           [single] -> Tree.kind(tree_path(single)) != {:ok, :file}
@@ -1318,8 +1212,6 @@ defmodule Supablock.CLI do
 
   defp grep_body(regex, path, body, opts, prefix?) do
     if String.contains?(body, <<0>>) do
-      # An opaque binary (a function's eszip body): report like grep(1)
-      # instead of dumping bytes into the terminal.
       if Regex.match?(regex, body) do
         out(if opts.files_only, do: path, else: "Binary file #{path} matches")
         true
@@ -1403,8 +1295,6 @@ defmodule Supablock.CLI do
   defp parse_grep([arg | rest], positional, opts, raw?),
     do: parse_grep(rest, [arg | positional], opts, raw?)
 
-  # Combined short flags (-rin). -r/-R are accepted for muscle memory but
-  # change nothing: directories always recurse.
   defp grep_flags(flags, opts) do
     flags
     |> String.graphemes()
@@ -1416,8 +1306,6 @@ defmodule Supablock.CLI do
       _other, _acc -> {:halt, :error}
     end)
   end
-
-  ## snapshot / diff — materialize the tree, then track drift against it
 
   defp snapshot(args) do
     {opts, rest, invalid} = OptionParser.parse(args, strict: [all: :boolean, prune: :boolean])
@@ -1503,8 +1391,6 @@ defmodule Supablock.CLI do
     end
   end
 
-  # A unified diff via diff(1) when available (snapshot/… vs tree/… labels,
-  # so the output reads old -> new); a plain marker line otherwise.
   defp print_unified_diff(rel, snap_file, live_body) do
     case System.find_executable("diff") do
       nil ->
@@ -1538,8 +1424,6 @@ defmodule Supablock.CLI do
     out("Only in tree: #{rel} (#{byte_size(body)} bytes)")
   end
 
-  ## completions
-
   defp completions([shell]) do
     case Supablock.Completions.script(shell) do
       {:ok, script} ->
@@ -1554,12 +1438,8 @@ defmodule Supablock.CLI do
   defp completions(_other),
     do: usage_error("Usage: supablock completions bash|zsh|fish")
 
-  ## mcp — the tree as an MCP stdio server
-
   defp mcp do
     with :authed <- require_auth() do
-      # stdout is the protocol channel: nothing but JSON-RPC may reach it,
-      # so the default (stdout) log handler is replaced by the file logger.
       _ = :logger.remove_handler(:default)
       attach_file_logger()
       raw_stdout!()
@@ -1569,13 +1449,6 @@ defmodule Supablock.CLI do
       {:exit, code} -> code
     end
   end
-
-  ## serve — a mountless cache daemon
-  #
-  # Same warm shared cache a mount gives ls/cat/find/grep (they resolve
-  # through it via the control socket, see Supablock.Tree) — but with no
-  # FUSE, no privileges, no mountpoint. This is the batch-read mode for
-  # sandboxes that can run the CLI but cannot mount.
 
   defp serve(["stop" | _rest]) do
     case Control.send_cmd("unmount") do
@@ -1624,19 +1497,13 @@ defmodule Supablock.CLI do
     end
   end
 
-  # Body → lines, without a phantom empty line from the trailing newline.
   defp split_lines(body) do
     lines = String.split(body, "\n")
     if List.last(lines) == "", do: Enum.drop(lines, -1), else: lines
   end
 
-  # Accept mount-style ("/organizations/acme"), relative ("organizations/acme")
-  # and shell-ish (".", "./x") spellings; the Router ignores duplicate slashes.
   defp tree_path(path), do: Walk.router_path(path)
 
-  # These can fire while raw_stdout!/0 has the io server in byte mode, so
-  # they write bytes (never chardata needing transcoding) and stick to
-  # ASCII text; only `path` can carry non-ASCII, and bytes pass through.
   defp err(line), do: IO.binwrite(:standard_error, [line, ?\n])
 
   defp path_error(path, :enoent) do
@@ -1674,8 +1541,6 @@ defmodule Supablock.CLI do
 
     :ok
   end
-
-  ## service (auto-start)
 
   defp service(["install"]) do
     case Service.install() do

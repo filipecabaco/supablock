@@ -14,9 +14,7 @@ defmodule Supablock.Metrics do
   application env (same as every other HTTP call in this codebase).
   """
 
-  require Logger
-
-  alias Supablock.{Cache, Client, Config, Endpoints}
+  alias Supablock.{Cache, Client, Config, Database, Endpoints}
 
   @doc """
   Fetch the current Prometheus metrics for `ref`. Returns `{:ok, binary}` with
@@ -29,61 +27,30 @@ defmodule Supablock.Metrics do
   end
 
   defp real_fetch(ref) do
-    with {:ok, key} <- secret_key(ref) do
-      budget_ms = Config.get("http_timeout_ms") || 8_000
-      url = base_url(ref) <> "/customer/v1/privileged/metrics"
-
-      req =
-        Req.new(
-          url: url,
-          auth: {:basic, "service_role:#{key}"},
-          receive_timeout: budget_ms,
-          connect_options: Client.connect_options(budget_ms),
-          decode_body: false,
-          retry: false
-        )
-        |> Client.apply_test_plug()
-
-      case Req.request(req) do
-        {:ok, %Req.Response{status: 200, body: body}} ->
-          {:ok, to_string(body)}
-
-        {:ok, %Req.Response{status: 401}} ->
-          {:error, :unauthorized}
-
-        {:ok, %Req.Response{status: 403}} ->
-          {:error, :forbidden}
-
-        {:ok, %Req.Response{status: status}} ->
-          {:error, {:http, status}}
-
-        {:error, %{__exception__: true} = error} ->
-          Logger.debug(
-            "supablock: metrics #{ref} failed: #{Client.redact(Exception.message(error), key)}"
-          )
-
-          {:error, {:transport, error.__struct__}}
+    with true <- Client.valid_ref?(ref),
+         {:ok, key} <- secret_key(ref),
+         url = base_url(ref) <> "/customer/v1/privileged/metrics",
+         {:ok, resp} <- Client.raw_get(url, auth: {:basic, "service_role:#{key}"}) do
+      case resp do
+        %Req.Response{status: 200, body: body} -> {:ok, to_string(body)}
+        %Req.Response{status: 401} -> {:error, :unauthorized}
+        %Req.Response{status: 403} -> {:error, :forbidden}
+        %Req.Response{status: status} -> {:error, {:http, status}}
       end
+    else
+      false -> {:error, :invalid_ref}
+      {:error, _reason} = error -> error
     end
   end
 
   defp secret_key(ref) do
     with {:ok, keys} <- Client.get(Endpoints.path(:api_keys, %{ref: ref, reveal: true})) do
-      case find_secret(keys) do
+      case Database.select_key(keys, :secret) do
         key when is_binary(key) and key != "" -> {:ok, key}
         _none -> {:error, :no_key}
       end
     end
   end
-
-  defp find_secret(keys) when is_list(keys) do
-    Enum.find_value(keys, fn key ->
-      name = to_string(key["name"] || "")
-      if name in ["service_role", "secret"], do: to_string(key["api_key"] || "")
-    end)
-  end
-
-  defp find_secret(_), do: nil
 
   defp base_url(ref) do
     case System.get_env("SUPABLOCK_METRICS_URL_" <> Client.env_key(ref)) do

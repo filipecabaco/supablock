@@ -1,23 +1,3 @@
-# Thin Management API stub for the Docker image e2e.
-#
-# The supabase CLI's local stack (`supabase start`) emulates a real
-# *project* — Postgres, PostgREST, working API keys — but the platform
-# Management API (organization/project metadata) exists only at
-# api.supabase.com and has no local emulator. This stub serves just that
-# thin metadata layer and points supablock at the real local stack: its
-# api-keys endpoint returns the stack's actual anon/service_role JWTs
-# (passed in via the ANON_KEY and SERVICE_ROLE_KEY environment variables,
-# from `supabase status -o env`), so the `database/` tree reads real
-# seeded rows through the real PostgREST.
-#
-# The health endpoint is synthesized — the local stack exposes no
-# Management-API-shaped health resource.
-#
-# A standalone Mix.install script (francis, like the app itself) so the
-# workflow can run it with nothing but the official elixir image.
-#
-# Usage: ANON_KEY=... SERVICE_ROLE_KEY=... elixir mgmt_api_stub.exs [port]
-#        (default port 54340, binds 127.0.0.1)
 
 Mix.install([{:francis, "~> 0.3.3"}])
 
@@ -27,8 +7,6 @@ for var <- ~w(ANON_KEY SERVICE_ROLE_KEY) do
        System.halt(1))
 end
 
-# The module body cannot reach script locals, so the port travels via the
-# environment (a .exs compiles at run time, so argv is already available).
 port =
   case System.argv() do
     [port | _rest] -> String.to_integer(port)
@@ -74,9 +52,6 @@ defmodule MgmtApiStub do
     ]
   end)
 
-  # Exposed schemas drive the database/ tree: naming `app` next to `public`
-  # here is what makes supablock list both (config.toml adds `app` to the
-  # local PostgREST's schemas so the reads actually work).
   get("/v1/projects/#{@ref}/postgrest", fn _ ->
     %{
       db_schema: "public, app",
@@ -85,9 +60,6 @@ defmodule MgmtApiStub do
     }
   end)
 
-  # database/{backups,migrations,readonly}.json render these endpoints as
-  # files. A FUSE mount stats every entry a readdir returns, so they must
-  # answer 200 — a 404 turns into ENOENT and breaks plain `ls` of database/.
   get("/v1/projects/#{@ref}/database/backups", fn _ ->
     %{region: "local", pitr_enabled: false, walg_enabled: false, backups: []}
   end)

@@ -32,8 +32,6 @@ defmodule Supablock.WriteDocsTest do
           ] do
         assert %{method: method, path: path} = Endpoints.mutation(key)
         assert method in ~w(POST PUT PATCH DELETE)
-        # Management API paths are relative; a project-gateway API (Storage)
-        # is a full URL and must name its own credential.
         assert String.starts_with?(path, "/v1/") or String.starts_with?(path, "https://")
       end
     end
@@ -46,9 +44,6 @@ defmodule Supablock.WriteDocsTest do
     end
 
     test "read-only and derived resources have no write path" do
-      # These have no write endpoint at all in the Management API spec
-      # (pgbouncer config is GET-only; health/advisors/metrics/logs/types are
-      # derived; orgs/regions are not project-writable here).
       for key <- [
             :health,
             :advisors_security,
@@ -77,25 +72,18 @@ defmodule Supablock.WriteDocsTest do
 
       assert String.starts_with?(doc, "# How to change this project")
       assert doc =~ "read-only"
-      # Endpoint paths are rendered with the ref filled in.
       assert doc =~ "/v1/projects/#{ref}/config/auth"
       assert doc =~ "/v1/projects/#{ref}/secrets"
       assert doc =~ "/v1/projects/#{ref}/config/disk"
       assert doc =~ "/v1/projects/#{ref}/config/realtime"
-      # Buckets are written through the project's Storage API, not the
-      # Management API, with the project's secret key.
       assert doc =~ "https://#{ref}.supabase.co/storage/v1/bucket"
       assert doc =~ "$SUPABASE_SERVICE_ROLE_KEY"
-      # Project metadata, api-key rotation and the Postgres upgrade are
-      # documented too.
       assert doc =~ "PATCH"
       assert doc =~ "/v1/projects/#{ref}/api-keys"
       assert doc =~ "/v1/projects/#{ref}/upgrade"
-      # CLI equivalents appear only where one genuinely exists.
       assert doc =~ "supabase secrets set"
       assert doc =~ "supabase functions deploy"
       assert doc =~ "supabase db push"
-      # Same ref appears everywhere; no leftover template placeholder.
       refute doc =~ "{ref}"
     end
 
@@ -105,7 +93,6 @@ defmodule Supablock.WriteDocsTest do
       assert doc =~ "config/auth.json"
       assert doc =~ "network/ssl-enforcement.json"
       assert doc =~ "api-keys/"
-      # Derived resources have no section.
       refute doc =~ "health"
       refute doc =~ "advisors"
       refute doc =~ "types.ts"

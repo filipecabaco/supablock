@@ -25,8 +25,6 @@ defmodule Supablock.WriteDocs do
   @api_base "https://api.supabase.com"
   @reference "https://supabase.com/docs/reference/api/introduction"
 
-  # Ordered resource catalogue for the per-project doc: {relative path, endpoint key}.
-  # Only entries whose key has a non-nil mutation are rendered.
   @catalogue [
     {"info.json", :project},
     {"config/auth.json", :auth_config},
@@ -70,9 +68,6 @@ defmodule Supablock.WriteDocs do
     end
   end
 
-  # The inline header is JSONC, so only prepend it to JSON bodies. This keeps
-  # it off raw-text renders that happen to be mutable — notably the api-keys
-  # files, which are bare key material a `//` line would corrupt.
   defp json_body?(body), do: match?("{" <> _rest, body) or match?("[" <> _rest, body)
 
   @doc """
@@ -110,10 +105,6 @@ defmodule Supablock.WriteDocs do
     """
   end
 
-  ## Rendering
-
-  # A `//`-commented header block for the inline (JSONC) surface: the curl is
-  # indented two spaces so it nests visually under the endpoint line.
   defp comment_block(mutation, args) do
     ([
        "supablock is read-only and will not make this change. To update this",
@@ -133,7 +124,6 @@ defmodule Supablock.WriteDocs do
     |> Kernel.<>("\n\n")
   end
 
-  # A Markdown section for the per-project doc surface.
   defp doc_section(label, mutation, args) do
     (["## `#{label}`", "", "```bash"] ++
        curl(mutation, args) ++
@@ -144,9 +134,6 @@ defmodule Supablock.WriteDocs do
     |> Kernel.<>("\n")
   end
 
-  # An absolute path means a non-Management API (e.g. the project's Storage
-  # API): the URL stands alone and `auth` names the credential. Those
-  # gateways also want the key repeated in an `apikey` header.
   defp curl(mutation, args) do
     filled = fill(mutation.path, args)
     url = if String.starts_with?(filled, "https://"), do: filled, else: @api_base <> filled

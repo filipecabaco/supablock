@@ -56,7 +56,6 @@ defmodule Supablock.TokenStore do
               {:ok, token} ->
                 {:ok, token}
 
-              # refresh failed but the old token may still be valid
               {:error, _reason} when not is_nil(credential.expires_at) ->
                 if expired?(credential), do: :missing, else: {:ok, credential.access_token}
 
@@ -78,7 +77,6 @@ defmodule Supablock.TokenStore do
           rotate(credential)
 
         {:ok, %Credential{type: :oauth, access_token: current}} ->
-          # someone already rotated while this caller was getting its 401
           {:ok, current}
 
         {:ok, %Credential{type: :pat}} ->
@@ -94,8 +92,6 @@ defmodule Supablock.TokenStore do
   defp rotate(%Credential{refresh_token: refresh}) when is_binary(refresh) do
     case OAuth.refresh(refresh) do
       {:ok, tokens} ->
-        # persist the new pair BEFORE returning: the old refresh token is
-        # already dead, so losing these tokens means a forced re-login
         case Credentials.store_oauth(
                tokens.access_token,
                tokens.refresh_token,

@@ -3,7 +3,7 @@ defmodule Supablock.CLITest do
 
   import ExUnit.CaptureIO
 
-  alias Supablock.{CLI, Credentials, Paths, TestEnv}
+  alias Supablock.{CLI, Credentials, DashboardStub, Paths, TestEnv}
 
   setup do
     TestEnv.isolate_xdg!()
@@ -59,28 +59,6 @@ defmodule Supablock.CLITest do
     end)
   end
 
-  # Plays the dashboard: ECDH + AES-256-GCM with the tag appended,
-  # exactly as api.supabase.com encrypts the minted token.
-  defp encrypt_for(public_key_hex, plaintext) do
-    {:ok, public_key} = Base.decode16(public_key_hex, case: :mixed)
-    {server_pub, server_priv} = :crypto.generate_key(:ecdh, :prime256v1)
-    secret = :crypto.compute_key(:ecdh, public_key, server_priv, :prime256v1)
-    nonce = :crypto.strong_rand_bytes(12)
-
-    {ciphertext, tag} =
-      :crypto.crypto_one_time_aead(:aes_256_gcm, secret, nonce, plaintext, <<>>, 16, true)
-
-    %{
-      "id" => "00000000-0000-4000-8000-000000000000",
-      "created_at" => "2026-01-01T00:00:00Z",
-      "access_token" => Base.encode16(ciphertext <> tag, case: :lower),
-      "public_key" => Base.encode16(server_pub, case: :lower),
-      "nonce" => Base.encode16(nonce, case: :lower)
-    }
-  end
-
-  # The dashboard learns our public key from the login URL the browser
-  # opens. Stand in for the browser: a fake xdg-open that records the URL.
   defp fake_browser! do
     dir = Path.join(System.tmp_dir!(), "supablock-browser-#{System.unique_integer([:positive])}")
     File.mkdir_p!(dir)
@@ -127,7 +105,10 @@ defmodule Supablock.CLITest do
 
             conn
             |> Plug.Conn.put_resp_content_type("application/json")
-            |> Plug.Conn.send_resp(200, Jason.encode!(encrypt_for(query["public_key"], fake_token)))
+            |> Plug.Conn.send_resp(
+              200,
+              Jason.encode!(DashboardStub.encrypt_hex(query["public_key"], fake_token))
+            )
           end
         })
 
@@ -143,7 +124,6 @@ defmodule Supablock.CLITest do
       assert output =~ "✓ Token valid — authenticated, 2 organizations found."
       assert {:ok, ^fake_token} = Credentials.load()
 
-      # the printed URL and the browser URL are the same session
       url = await_file(url_file)
       assert output =~ url
     end
@@ -211,7 +191,6 @@ defmodule Supablock.CLITest do
     })
   end
 
-  # GET the loopback callback, retrying while the listener is still coming up.
   defp get_callback!(params, retries \\ 100) do
     Req.get!("http://127.0.0.1:53682/callback", params: params, retry: false)
   rescue
@@ -240,8 +219,6 @@ defmodule Supablock.CLITest do
           capture_io(fn -> assert CLI.run(["login"]) == 0 end)
         end)
 
-      # stand in for the user's browser: read the authorize URL the CLI
-      # opened, approve, and follow the redirect to the loopback callback
       authorize_url = await_file(url_file)
       query = URI.decode_query(URI.parse(authorize_url).query)
       assert URI.parse(authorize_url).path == "/v1/oauth/authorize"
@@ -767,10 +744,6 @@ defmodule Supablock.CLITest do
     end
 
     test "a downstream reader closing the pipe exits 141 quietly" do
-      # Model `supablock ls | head -0`: stdout's device is gone mid-write.
-      # The group leader is swapped for a StringIO that is closed before
-      # the command writes, which fails exactly like a broken pipe
-      # (`{:error, :terminated}`).
       {:ok, dead} = StringIO.open("")
       previous = Process.group_leader()
       Process.group_leader(self(), dead)
@@ -848,8 +821,6 @@ defmodule Supablock.CLITest do
              end) == "#{@proj_base}/config/auth.json\n"
     end
 
-    # `serve stop` against a live daemon is not exercised here: the daemon
-    # answers by stopping the VM, which would take the test node with it.
     test "serve refuses to double-start" do
       {:ok, _pid} = Supablock.Control.start(nil)
       on_exit(fn -> Supablock.Control.stop() end)
@@ -897,9 +868,6 @@ defmodule Supablock.CLITest do
     assert stderr =~ "Not authenticated. Run: supablock login"
   end
 
-  # `supablock docker` was removed — the containerized workflow is a plain
-  # `docker run` the user invokes directly (see the README / image docs), so
-  # the CLI no longer has a docker subcommand.
   test "docker is not a subcommand" do
     stderr = capture_io(:stderr, fn -> assert CLI.run(["docker"]) == 1 end)
     assert stderr =~ "Unknown command: docker"
@@ -973,12 +941,10 @@ defmodule Supablock.CLITest do
       assert File.exists?(Path.join(dir, "#{@snap_base}/database/migrations.json"))
       assert File.exists?(Path.join(dir, "#{@snap_base}/types.ts"))
 
-      # volatile/heavy subtrees are skipped by default
       refute File.exists?(Path.join(dir, "#{@snap_base}/metrics"))
       refute File.exists?(Path.join(dir, "#{@snap_base}/logs"))
       refute File.exists?(Path.join(dir, "#{@snap_base}/functions/hello/body"))
 
-      # redaction carries into snapshots
       assert File.read!(Path.join(dir, "#{@snap_base}/api-keys/secret")) =~ "REDACTED"
       assert File.read!(Path.join(dir, "#{@snap_base}/secrets.json")) =~ ~s("REDACTED")
     end
@@ -996,7 +962,6 @@ defmodule Supablock.CLITest do
       capture_io(fn -> assert CLI.run(["snapshot", dir]) == 0 end)
       assert capture_io(fn -> assert CLI.run(["diff", dir]) == 0 end) == ""
 
-      # rewrite one snapshot file to simulate config drift since the snapshot
       target = Path.join(dir, "#{@snap_base}/config/auth.json")
       File.write!(target, String.replace(File.read!(target), "3600", "60"))
 
@@ -1024,7 +989,6 @@ defmodule Supablock.CLITest do
       capture_io(fn -> assert CLI.run(["snapshot", dir]) == 0 end)
       File.write!(Path.join(dir, "organizations/org-alpha/stale.json"), "{}\n")
 
-      # outside the scope: the beta subtree still matches its snapshot
       assert capture_io(fn ->
                assert CLI.run(["diff", dir, "organizations/org-beta"]) == 0
              end) == ""

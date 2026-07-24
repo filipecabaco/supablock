@@ -1,20 +1,10 @@
 defmodule Supablock.MCPTest do
-  use ExUnit.Case, async: false
+  use Supablock.AuthedCase, async: false
 
-  alias Supablock.{Cache, MCP, TestEnv}
+  alias Supablock.MCP
 
-  @proj_a1 "projaone1234567890ab"
   @base "organizations/org-alpha/projects/projaone1234567890ab"
 
-  setup do
-    TestEnv.isolate_xdg!()
-    TestEnv.fake_login!()
-    TestEnv.stub_api!()
-    Cache.flush()
-    :ok
-  end
-
-  # Drive the server with newline-delimited JSON-RPC and decode its replies.
   defp roundtrip(requests) do
     input_data = Enum.map_join(requests, "", &(Jason.encode!(&1) <> "\n"))
     {:ok, input} = StringIO.open(input_data)
@@ -109,7 +99,6 @@ defmodule Supablock.MCPTest do
       ])
 
     assert text(health) =~ "db: healthy"
-    # redaction applies over MCP exactly as everywhere else
     assert text(secret) =~ "REDACTED"
   end
 

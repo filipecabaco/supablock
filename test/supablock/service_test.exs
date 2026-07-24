@@ -7,7 +7,6 @@ defmodule Supablock.ServiceTest do
 
   setup do
     base = TestEnv.isolate_xdg!()
-    # Point executable resolution at a real file.
     System.put_env("SUPABLOCK_BIN", "/bin/sh")
     on_exit(fn -> System.delete_env("SUPABLOCK_BIN") end)
     {:ok, base: base}
