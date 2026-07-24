@@ -101,6 +101,11 @@ defmodule Supablock.WriteDocs do
     spec; confirm request bodies against the reference:
     #{@reference}
 
+    Prefer this next to the data? `supablock config set inline_docs true`
+    prepends the same request into every mutable `*.json` body as a leading
+    `//` (JSONC) header. Off by default, because `//` breaks strict JSON
+    parsers (`jq`); this file stays available either way.
+
     #{Enum.join(sections, "\n")}\
     """
   end

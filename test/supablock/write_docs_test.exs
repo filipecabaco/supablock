@@ -87,6 +87,13 @@ defmodule Supablock.WriteDocsTest do
       refute doc =~ "{ref}"
     end
 
+    test "points at the opt-in JSONC header as the inline alternative" do
+      doc = WriteDocs.project_doc("ref00000000000000000")
+
+      assert doc =~ "supablock config set inline_docs true"
+      assert doc =~ "JSONC"
+    end
+
     test "covers only mutable resources, never derived ones" do
       doc = WriteDocs.project_doc("ref00000000000000000")
 

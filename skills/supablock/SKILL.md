@@ -222,4 +222,6 @@ JSON parsers like `jq`, so leave it off unless asked.
   key is never printed.
 - **Read-only:** every request is a GET; there is nothing you can break.
   To *change* something, read `how-to-change.md` (above) for the exact
-  API/CLI request and run it yourself — supablock never writes.
+  API/CLI request and run it yourself — supablock never writes. The same
+  guidance can ride inside each mutable file as a `//` JSONC header with
+  `config set inline_docs true` (off by default; it breaks `jq`).

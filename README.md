@@ -360,8 +360,9 @@ output, and the filesystem shape means existing file tools (or plain
 * **llms.txt** — a machine-oriented summary at
   [filipecabaco.github.io/supablock/llms.txt](https://filipecabaco.github.io/supablock/llms.txt).
 * **The write path is documented alongside the read** — every project carries
-  a `how-to-change.md` so an agent that just read a config knows how to change
-  it without guessing the API. See [Changing things](#changing-things) below.
+  a `how-to-change.md` with the exact API/CLI request per mutable resource,
+  optionally inlined into each file as a `//` (JSONC) header. See
+  [Changing things](#changing-things) below.
 
 Give an agent a scoped, revocable token rather than your interactive
 credential, and leave `expose_secrets` off.
@@ -369,18 +370,16 @@ credential, and leave `expose_secrets` off.
 ## Changing things
 
 supablock is **read-only** — it never writes to Supabase. But an agent that
-reads a config file still needs to know *how* to change it, so every project
-directory carries a `how-to-change.md` that lists, per resource, the exact
-request to run yourself. It is pure static text — no API call is made to
-build it, so determinism and the request budget are untouched — and every
-command carries placeholders, never a live secret or value.
+just read a config still needs to know *how* to change it, so every project
+carries a `how-to-change.md`: one section per mutable resource, with the
+exact request to run yourself. Pure static text — no API call, so
+determinism and the request budget are untouched — with the project ref
+filled in, per-item ids left as `<slug>`, and bodies as placeholders, never
+a live value.
 
 ```bash
 cat organizations/<org>/projects/<ref>/how-to-change.md
 ```
-
-Each mutable resource gets a section with the project ref already filled in
-(per-item ids stay as `<slug>` placeholders):
 
 ````markdown
 ## `config/auth.json`
@@ -396,27 +395,21 @@ curl -X PATCH \
 > Partial update — send only the keys you change.
 ````
 
-Where a resource has a real CLI equivalent (`database/migrations.json`,
-`functions/`, `secrets.json`, `branches/`) the section adds the `supabase`
-verb too. Buckets are routed to the project's own Storage API — not the
-Management API — and authenticate with the service-role key, because that is
-where the real write surface lives.
+Sections carry the `supabase` CLI verb where one genuinely exists
+(migrations, functions, secrets, branches); buckets point at the project's
+own Storage API with the service-role key, since that is where the real
+write surface lives. Derived files (`health`, `advisors/`, `metrics`,
+`logs/`, `types.ts`) get no section, so nothing reads as writable that isn't.
 
-Genuinely read-only or derived files (`health`, `advisors/`, `metrics`,
-`types.ts`, `api-keys/`) get no section, so nothing reads as writable that
-isn't.
-
-To carry the same guidance **inside** each file as a leading `//` (JSONC)
-header instead, turn on:
+For the same guidance **inside** each file, as a leading `//` (JSONC) header:
 
 ```bash
 supablock config set inline_docs true
 ```
 
-It is off by default, because `//` comments break strict JSON parsers like
-`jq`; supablock only prepends it to a JSON body, so raw key files are never
-corrupted. supablock still issues none of these requests — the agent runs
-them itself, with its own token.
+Off by default — `//` breaks strict JSON parsers like `jq` — and only ever
+prepended to a JSON body, so raw key files stay intact. Either way supablock
+issues none of these requests: you run them, with your own token.
 
 ## Security notes
 
