@@ -27,8 +27,9 @@ defmodule Supablock.MCP do
   backups/migrations/readonly.json), network/, logs/<source>, metrics,
   types.ts and upgrade-eligibility.json. Each project also has a
   how-to-change.md documenting the Management API / CLI write path for every
-  mutable resource (supablock itself never writes). Start with: ls "" then
-  descend.
+  mutable resource (supablock itself never writes); `config set inline_docs
+  true` prepends that same write path inside each mutable file as a // JSONC
+  header. Start with: ls "" then descend.
   """
 
   @doc "Serve MCP over `input`/`output` until EOF. Blocks."

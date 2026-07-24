@@ -101,6 +101,13 @@ defmodule Supablock.WriteDocs do
     spec; confirm request bodies against the reference:
     #{@reference}
 
+    Want this guidance next to the data instead of in one file? Turn on
+    `supablock config set inline_docs true` and the same request is prepended
+    to every mutable `*.json` body as a leading `//` (JSONC) comment header.
+    It is off by default because `//` comments break strict JSON parsers
+    (`jq`, `python -m json.tool`) — enable it only if your reader accepts
+    comments. This file stays available either way.
+
     #{Enum.join(sections, "\n")}\
     """
   end
