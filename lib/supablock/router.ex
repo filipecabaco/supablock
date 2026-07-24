@@ -68,12 +68,39 @@ defmodule Supablock.Router do
   @api_key_children ~w(publishable secret)
   @advisor_children ~w(performance.json security.json)
   @network_children ~w(custom-hostname.json restrictions.json ssl-enforcement.json vanity-subdomain.json)
-  # Management-API files living alongside the Data-API schema directories.
   @database_files ~w(backups.json migrations.json readonly.json)
 
-  @redacted_body "REDACTED — run: supablock config set expose_secrets true\n"
+  @project_json_leaves %{
+    ["config", "auth.json"] => :auth_config,
+    ["config", "database.json"] => :db_config,
+    ["config", "disk.json"] => :disk_config,
+    ["config", "pgbouncer.json"] => :pgbouncer_config,
+    ["config", "pooler.json"] => :pooler_config,
+    ["config", "postgrest.json"] => :postgrest_config,
+    ["config", "realtime.json"] => :realtime_config,
+    ["config", "storage.json"] => :storage_config,
+    ["advisors", "security.json"] => :advisors_security,
+    ["advisors", "performance.json"] => :advisors_performance,
+    ["network", "restrictions.json"] => :network_restrictions,
+    ["network", "ssl-enforcement.json"] => :ssl_enforcement
+  }
+  @project_json_paths Map.keys(@project_json_leaves)
 
-  ## Public API
+  @project_optional_leaves %{
+    ["network", "custom-hostname.json"] => :custom_hostname,
+    ["network", "vanity-subdomain.json"] => :vanity_subdomain,
+    ["upgrade-eligibility.json"] => :upgrade_eligibility
+  }
+  @project_optional_paths Map.keys(@project_optional_leaves)
+
+  @database_json_leaves %{
+    ["backups.json"] => :backups,
+    ["migrations.json"] => :migrations,
+    ["readonly.json"] => :readonly
+  }
+  @database_json_paths Map.keys(@database_json_leaves)
+
+  @redacted_body "REDACTED — run: supablock config set expose_secrets true\n"
 
   @spec describe(String.t()) :: {:ok, node_kind} | {:error, error}
   def describe(path) do
@@ -116,8 +143,6 @@ defmodule Supablock.Router do
     end
   end
 
-  ## Path resolution — returns {:dir, lister} | {:file, render_fun} | {:error, e}
-
   defp segments(path), do: String.split(path, "/", trim: true)
 
   defp resolve([]) do
@@ -140,8 +165,6 @@ defmodule Supablock.Router do
 
   defp resolve_org(org, ["info.json"]), do: file(:org, %{slug: org_slug(org)}, &Render.json/1)
 
-  # Available regions require an organization_slug (per the OpenAPI spec),
-  # so the file lives under each organization.
   defp resolve_org(org, ["regions.json"]),
     do: file(:regions, %{slug: org_slug(org)}, &Render.json/1)
 
@@ -173,30 +196,6 @@ defmodule Supablock.Router do
   defp resolve_project(_project, ["config"]) do
     {:dir, fn -> {:ok, @config_children} end}
   end
-
-  defp resolve_project(project, ["config", "auth.json"]),
-    do: file(:auth_config, %{ref: project_ref(project)}, &Render.json/1)
-
-  defp resolve_project(project, ["config", "database.json"]),
-    do: file(:db_config, %{ref: project_ref(project)}, &Render.json/1)
-
-  defp resolve_project(project, ["config", "disk.json"]),
-    do: file(:disk_config, %{ref: project_ref(project)}, &Render.json/1)
-
-  defp resolve_project(project, ["config", "pgbouncer.json"]),
-    do: file(:pgbouncer_config, %{ref: project_ref(project)}, &Render.json/1)
-
-  defp resolve_project(project, ["config", "pooler.json"]),
-    do: file(:pooler_config, %{ref: project_ref(project)}, &Render.json/1)
-
-  defp resolve_project(project, ["config", "postgrest.json"]),
-    do: file(:postgrest_config, %{ref: project_ref(project)}, &Render.json/1)
-
-  defp resolve_project(project, ["config", "realtime.json"]),
-    do: file(:realtime_config, %{ref: project_ref(project)}, &Render.json/1)
-
-  defp resolve_project(project, ["config", "storage.json"]),
-    do: file(:storage_config, %{ref: project_ref(project)}, &Render.json/1)
 
   defp resolve_project(_project, ["config", "auth"]) do
     {:dir, fn -> {:ok, @auth_config_children} end}
@@ -232,7 +231,6 @@ defmodule Supablock.Router do
 
   defp resolve_project(project, ["api-keys", "secret"]) do
     if Config.get("expose_secrets") do
-      # reveal=true: the API returns secret key material only when asked.
       file(:api_keys, %{ref: project_ref(project), reveal: true}, &render_api_keys(&1, :secret))
     else
       {:file, fn -> {:ok, @redacted_body} end}
@@ -243,50 +241,19 @@ defmodule Supablock.Router do
     {:dir, fn -> {:ok, @advisor_children} end}
   end
 
-  defp resolve_project(project, ["advisors", "security.json"]),
-    do: file(:advisors_security, %{ref: project_ref(project)}, &Render.json/1)
-
-  defp resolve_project(project, ["advisors", "performance.json"]),
-    do: file(:advisors_performance, %{ref: project_ref(project)}, &Render.json/1)
-
   defp resolve_project(_project, ["network"]) do
     {:dir, fn -> {:ok, @network_children} end}
   end
 
-  defp resolve_project(project, ["network", "restrictions.json"]),
-    do: file(:network_restrictions, %{ref: project_ref(project)}, &Render.json/1)
-
-  defp resolve_project(project, ["network", "ssl-enforcement.json"]),
-    do: file(:ssl_enforcement, %{ref: project_ref(project)}, &Render.json/1)
-
-  # Never configured on most projects — the endpoint 404s. The file still
-  # exists and reads as `{}`, so cross-project sweeps see a consistent tree.
-  defp resolve_project(project, ["network", "custom-hostname.json"]),
-    do: optional_file(:custom_hostname, %{ref: project_ref(project)})
-
-  defp resolve_project(project, ["network", "vanity-subdomain.json"]),
-    do: optional_file(:vanity_subdomain, %{ref: project_ref(project)})
-
-  # Generated TypeScript definitions for the project's database. Generation
-  # can take a while on large schemas, so this read gets a longer timeout.
   defp resolve_project(project, ["types.ts"]),
     do:
       file(:typescript_types, %{ref: project_ref(project)}, &Render.typescript/1,
         timeout_ms: 30_000
       )
 
-  defp resolve_project(project, ["upgrade-eligibility.json"]),
-    do: optional_file(:upgrade_eligibility, %{ref: project_ref(project)})
-
-  # Static, GET-only documentation: how to *change* each resource under this
-  # project (supablock never writes — the agent runs these itself). Rendered
-  # from the endpoint map, so it costs no API request.
   defp resolve_project(project, ["how-to-change.md"]),
     do: {:file, fn -> {:ok, WriteDocs.project_doc(project_ref(project))} end}
 
-  # Edge-function secrets: the endpoint returns names *and* values, so values
-  # are redacted at render time unless expose_secrets is on — the names alone
-  # are what audits need.
   defp resolve_project(project, ["secrets.json"]),
     do: file(:secrets, %{ref: project_ref(project)}, &render_secrets/1)
 
@@ -322,13 +289,10 @@ defmodule Supablock.Router do
 
   defp resolve_project(project, ["branches", branch_name | rest]) do
     with_entry(branch_entries(project), branch_name, fn branch ->
-      resolve_branch(branch, rest)
+      resolve_listed(branch, rest)
     end)
   end
 
-  # `database` is shown for every project and populated lazily from the
-  # project's Data API on first read — no per-project setup, and no request is
-  # made until someone descends into the folder.
   defp resolve_project(project, ["database" | rest]) do
     resolve_database(project_ref(project), rest)
   end
@@ -367,9 +331,13 @@ defmodule Supablock.Router do
      end}
   end
 
-  defp resolve_project(_project, _rest), do: {:error, :enoent}
+  defp resolve_project(project, segs) when segs in @project_json_paths,
+    do: file(Map.fetch!(@project_json_leaves, segs), %{ref: project_ref(project)}, &Render.json/1)
 
-  ## database/<schema>/<table>/rows-<offset>.<ext>
+  defp resolve_project(project, segs) when segs in @project_optional_paths,
+    do: optional_file(Map.fetch!(@project_optional_leaves, segs), %{ref: project_ref(project)})
+
+  defp resolve_project(_project, _rest), do: {:error, :enoent}
 
   defp resolve_database(ref, []) do
     {:dir,
@@ -378,20 +346,14 @@ defmodule Supablock.Router do
          {:ok, schemas} ->
            {:ok, @database_files ++ string_names(schemas)}
 
-         # The static files come from the Management API, not the Data API —
-         # keep them reachable even when the Data API is unavailable.
          {:error, _reason} ->
            {:ok, @database_files}
        end
      end}
   end
 
-  defp resolve_database(ref, ["backups.json"]), do: file(:backups, %{ref: ref}, &Render.json/1)
-
-  defp resolve_database(ref, ["migrations.json"]),
-    do: file(:migrations, %{ref: ref}, &Render.json/1)
-
-  defp resolve_database(ref, ["readonly.json"]), do: file(:readonly, %{ref: ref}, &Render.json/1)
+  defp resolve_database(ref, segs) when segs in @database_json_paths,
+    do: file(Map.fetch!(@database_json_leaves, segs), %{ref: ref}, &Render.json/1)
 
   defp resolve_database(ref, [schema_seg | rest]) do
     with {:ok, schemas} <- Database.schemas(ref),
@@ -438,8 +400,6 @@ defmodule Supablock.Router do
 
   defp resolve_table(_ref, _schema, _table, _rest), do: {:error, :enoent}
 
-  # Sanitize + de-collide DB names the same way API names are handled, so a
-  # table called `a/b` shows up as `a_b` and still routes back to the original.
   defp string_entries(names), do: entries(names, & &1)
   defp string_names(names), do: names(string_entries(names))
 
@@ -450,7 +410,6 @@ defmodule Supablock.Router do
     end
   end
 
-  # rows-<offset>.<ext> — offset is a page boundary (multiple of page_size).
   defp page_filenames(count) do
     size = Database.page_size()
     pages = div(count + size - 1, size)
@@ -472,9 +431,6 @@ defmodule Supablock.Router do
     end
   end
 
-  # A page file exists iff its offset is a page boundary that a listed page
-  # covers: `0 <= offset < count`. Empty tables therefore expose no page file,
-  # matching page_filenames/1.
   defp valid_offset?(offset, count) do
     size = Database.page_size()
     rem(offset, size) == 0 and offset >= 0 and offset < count
@@ -488,8 +444,6 @@ defmodule Supablock.Router do
     file(:function, function_args(project, function), &Render.json/1)
   end
 
-  # The eszip bundle the API returns for a function is opaque binary — passed
-  # through verbatim rather than JSON-rendered.
   defp resolve_function(project, function, ["body"]) do
     file(:function_body, function_args(project, function), &raw_body/1)
   end
@@ -503,9 +457,6 @@ defmodule Supablock.Router do
   defp raw_body(body) when is_binary(body), do: body
   defp raw_body(body), do: Render.json(body)
 
-  # SSO providers, third-party integrations and storage buckets have no child
-  # resources and no per-item endpoint: each is rendered straight from its
-  # already-cached parent listing, exactly like a branch.
   defp resolve_listed(_item, []) do
     {:dir, fn -> {:ok, ["info.json"]} end}
   end
@@ -516,19 +467,6 @@ defmodule Supablock.Router do
 
   defp resolve_listed(_item, _rest), do: {:error, :enoent}
 
-  defp resolve_branch(_branch, []) do
-    {:dir, fn -> {:ok, ["info.json"]} end}
-  end
-
-  defp resolve_branch(branch, ["info.json"]) do
-    # Rendered from the already-cached branches list item; no extra endpoint.
-    {:file, fn -> {:ok, Render.json(branch)} end}
-  end
-
-  defp resolve_branch(_branch, _rest), do: {:error, :enoent}
-
-  ## Leaves
-
   defp file(endpoint, args, render_fun, opts \\ []) do
     {:file,
      fn ->
@@ -538,9 +476,6 @@ defmodule Supablock.Router do
      end}
   end
 
-  # An endpoint whose feature may be unavailable per project: unconfigured
-  # (:enoent), plan/add-on gated (:enoent), or not permitted (:eacces). These
-  # read as `{}` rather than erroring, so sweeps and `diff` see a stable tree.
   defp optional_file(endpoint, args) do
     {:file,
      fn ->
@@ -562,7 +497,7 @@ defmodule Supablock.Router do
   defp render_api_keys(keys, kind) when is_list(keys) do
     entries =
       keys
-      |> Enum.filter(fn key -> classify_key(key) == kind end)
+      |> Enum.filter(fn key -> Database.classify_key(key) == kind end)
       |> Enum.map(fn key ->
         {to_string(key["name"] || key["id"]), to_string(key["api_key"] || "")}
       end)
@@ -576,9 +511,6 @@ defmodule Supablock.Router do
 
   defp render_api_keys(other, _kind), do: Render.json(other)
 
-  # `GET /secrets` has no names-only mode — values always come over the wire,
-  # so they are redacted here at render time (never written anywhere) unless
-  # the user opted in with expose_secrets.
   defp render_secrets(secrets) when is_list(secrets) do
     if Config.get("expose_secrets") do
       Render.json(secrets)
@@ -593,19 +525,6 @@ defmodule Supablock.Router do
   end
 
   defp render_secrets(other), do: Render.json(other)
-
-  defp classify_key(key) do
-    name = to_string(key["name"] || "")
-    type = to_string(key["type"] || "")
-
-    cond do
-      type == "publishable" or name in ["anon", "publishable"] -> :publishable
-      type == "secret" or name in ["service_role", "secret"] -> :secret
-      true -> :other
-    end
-  end
-
-  ## Listings (cached parent lists, sanitized names)
 
   defp org_entries do
     with {:ok, orgs} <- fetch(:orgs, %{}) do
@@ -645,9 +564,6 @@ defmodule Supablock.Router do
     end
   end
 
-  # SSO is a SAML-only feature: the endpoint 404s on projects without SAML
-  # enabled, which we surface as an empty provider list rather than a missing
-  # directory.
   defp sso_entries(project) do
     case fetch(:sso_providers, %{ref: project_ref(project)}) do
       {:ok, providers} -> {:ok, entries(to_list(providers), &to_string(&1["id"]))}
@@ -662,8 +578,6 @@ defmodule Supablock.Router do
     end
   end
 
-  # These listings come back either as a bare array or wrapped in an `items`
-  # envelope depending on the endpoint; normalise both to a plain list.
   defp to_list(list) when is_list(list), do: list
   defp to_list(%{"items" => list}) when is_list(list), do: list
   defp to_list(_other), do: []
@@ -691,10 +605,6 @@ defmodule Supablock.Router do
   end
 
   @doc false
-  # API-supplied names become path components: no separators, no NULs, never
-  # empty, and never `.`/`..` — which `snapshot`/`diff` turn into real
-  # filesystem paths where they would mean "walk up a directory". Collisions
-  # get a deterministic ~2/~3 suffix in API list order.
   def sanitize(name) do
     name
     |> to_string()
@@ -719,8 +629,6 @@ defmodule Supablock.Router do
 
     Enum.reverse(out)
   end
-
-  ## Fetch + error mapping
 
   defp fetch(endpoint, args, opts \\ []) do
     url = Endpoints.path(endpoint, args)

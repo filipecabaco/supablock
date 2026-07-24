@@ -45,9 +45,6 @@ defmodule Supablock.Config do
     "log_limit"
   ]
 
-  # Keys whose stored value must be interpreted as a strict boolean, so a
-  # hand-edited config with `"expose_secrets": "false"` (a truthy string)
-  # can never flip a security-sensitive default on.
   @boolean_keys ~w(expose_secrets inline_docs)
 
   def defaults, do: @defaults
@@ -110,9 +107,6 @@ defmodule Supablock.Config do
     end
   end
 
-  # Both flow into files written verbatim — the mountpoint into systemd unit
-  # `Description=`/launchd plist strings, oauth values into request URLs — so
-  # a newline or NUL could inject directives/markup. Reject control chars.
   defp coerce("mountpoint", value) do
     if safe_value?(value),
       do: {:ok, value},
@@ -154,8 +148,6 @@ defmodule Supablock.Config do
 
   defp safe_value?(value), do: not String.contains?(value, ["\n", "\r", <<0>>])
 
-  # RawFile (not File) — Config.load runs on the FUSE-serving path, which
-  # must never wait on the file server; see Supablock.RawFile.
   defp load do
     with {:ok, body} <- Supablock.RawFile.read(Paths.config_file()),
          {:ok, %{} = config} <- Jason.decode(body) do
@@ -171,7 +163,7 @@ defmodule Supablock.Config do
 
     case File.write(Paths.config_file(), body) do
       :ok ->
-        File.chmod!(Paths.config_file(), 0o644)
+        File.chmod!(Paths.config_file(), 0o600)
         :ok
 
       {:error, reason} ->

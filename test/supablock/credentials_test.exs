@@ -19,7 +19,6 @@ defmodule Supablock.CredentialsTest do
 
     :ok = Credentials.delete()
     assert Credentials.load() == :missing
-    # deleting again is still fine
     assert :ok = Credentials.delete()
   end
 
@@ -48,7 +47,6 @@ defmodule Supablock.CredentialsTest do
       assert credential.refresh_token == "oauth_refresh_ZZZZ"
       assert credential.expires_at == expires_at
 
-      # load/0 keeps returning just the access token for existing callers
       assert {:ok, "sbp_oauth_ZZZZaccess"} = Credentials.load()
       assert Credentials.masked() == "sbp_…cess"
 

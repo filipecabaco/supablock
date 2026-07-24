@@ -11,17 +11,11 @@ defmodule Supablock.Application do
   def start(_type, _args) do
     children = [
       Supablock.Cache,
-      # Serializes credential reads + OAuth refresh (single-flight, and
-      # single-use-safe for Supabase's one-shot refresh tokens).
       Supablock.TokenStore
     ]
 
     result = Supervisor.start_link(children, strategy: :one_for_one, name: Supablock.Supervisor)
 
-    # Inside a Burrito-wrapped binary the application boot IS the CLI
-    # invocation: dispatch argv and halt with the exit code. (`__BURRITO` is
-    # set by Burrito's wrapper; a classic release goes through
-    # `Supablock.CLI.main/0` via bin/supablock instead.)
     if System.get_env("__BURRITO") do
       spawn(fn ->
         args = :init.get_plain_arguments() |> Enum.map(&to_string/1)

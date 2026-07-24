@@ -16,8 +16,6 @@ defmodule Supablock.MCP do
 
   alias Supablock.{Tree, Walk}
 
-  # Accepted protocol versions, newest first; an unknown client version is
-  # answered with our newest (the client may then disconnect, per spec).
   @protocol_versions ["2025-06-18", "2025-03-26", "2024-11-05"]
 
   @instructions """
@@ -62,8 +60,6 @@ defmodule Supablock.MCP do
     end
   end
 
-  ## JSON-RPC dispatch
-
   defp handle(%{"method" => "initialize", "id" => id} = request) do
     client_version = get_in(request, ["params", "protocolVersion"])
 
@@ -105,7 +101,6 @@ defmodule Supablock.MCP do
     end
   end
 
-  # Notifications (no id / notifications/*) get no response.
   defp handle(%{"method" => _method, "id" => id}),
     do: error_reply(id, -32601, "method not found")
 
@@ -115,8 +110,6 @@ defmodule Supablock.MCP do
 
   defp error_reply(id, code, message),
     do: %{"jsonrpc" => "2.0", "id" => id, "error" => %{"code" => code, "message" => message}}
-
-  ## Tools
 
   defp tools do
     path_property = %{
@@ -274,10 +267,6 @@ defmodule Supablock.MCP do
 
   defp call_tool(_name, _args), do: :unknown_tool
 
-  # The schema declares maxdepth an integer, but a client can still send a
-  # string; anything non-integer would defeat the `depth < max_depth` bound
-  # (integer < binary is always true in Erlang term order) and force an
-  # unbounded walk, so coerce to a real bound or none.
   defp max_depth(%{"maxdepth" => n}) when is_integer(n) and n >= 0, do: n
   defp max_depth(_args), do: :infinity
 

@@ -1,37 +1,16 @@
 defmodule Supablock.DatabaseTest do
-  use ExUnit.Case, async: false
+  use Supablock.AuthedCase, async: false
 
-  alias Supablock.{Cache, Config, DataApiStub, Database, TestEnv}
+  alias Supablock.{Config, DataApiStub, Database, TestEnv}
 
   @ref "projaone1234567890ab"
 
   setup do
-    TestEnv.isolate_xdg!()
-    TestEnv.fake_login!()
-    # The exposed-schema list comes from the Management API PostgREST config.
-    TestEnv.stub_api!()
-    Cache.flush()
-
     on_exit(fn -> Application.delete_env(:supablock, :data_api_fun) end)
     :ok
   end
 
-  # app.widgets: 1200 rows (id, name); app.empty: 0 rows; public: no tables.
-  defp model do
-    %{
-      "app" => %{
-        "widgets" => %{
-          columns: ["id", "name"],
-          pk: ["id"],
-          rows: for(i <- 0..1199, do: %{"id" => i, "name" => "w#{i}"})
-        },
-        "empty" => %{columns: ["id"], pk: ["id"], rows: []}
-      },
-      "public" => %{}
-    }
-  end
-
-  defp stub_data_api(model \\ model()) do
+  defp stub_data_api(model \\ DataApiStub.sample_model()) do
     Application.put_env(:supablock, :data_api_fun, DataApiStub.fun(model))
   end
 
@@ -115,7 +94,6 @@ defmodule Supablock.DatabaseTest do
       assert {:ok, ["app", "public"]} = Database.schemas(@ref)
       assert TestEnv.hits("/v1/projects/#{@ref}/postgrest") == 1
 
-      # a second call is served from cache — no extra Management API request
       assert {:ok, ["app", "public"]} = Database.schemas(@ref)
       assert TestEnv.hits("/v1/projects/#{@ref}/postgrest") == 1
     end
@@ -148,7 +126,6 @@ defmodule Supablock.DatabaseTest do
       assert {:ok, body} = Database.render_page(@ref, "app", "widgets", 250, :csv)
       lines = String.split(body, "\n", trim: true)
       assert hd(lines) == "id,name"
-      # rows 250..499 -> 250 rows + header
       assert length(lines) == 251
       assert Enum.at(lines, 1) == "250,w250"
     end

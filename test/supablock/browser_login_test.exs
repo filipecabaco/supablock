@@ -1,25 +1,10 @@
 defmodule Supablock.BrowserLoginTest do
   use ExUnit.Case, async: false
 
-  alias Supablock.{BrowserLogin, TestEnv}
+  alias Supablock.{BrowserLogin, DashboardStub, TestEnv}
 
-  # Plays the dashboard's role: ECDH against the session's public key, then
-  # AES-256-GCM with the Go convention (16-byte tag appended to the
-  # ciphertext). This is exactly what the CLI must undo.
-  defp server_encrypt(session_public_key, plaintext) do
-    {server_pub, server_priv} = :crypto.generate_key(:ecdh, :prime256v1)
-    secret = :crypto.compute_key(:ecdh, session_public_key, server_priv, :prime256v1)
-    nonce = :crypto.strong_rand_bytes(12)
-
-    {ciphertext, tag} =
-      :crypto.crypto_one_time_aead(:aes_256_gcm, secret, nonce, plaintext, <<>>, 16, true)
-
-    %{
-      "access_token" => Base.encode16(ciphertext <> tag, case: :lower),
-      "public_key" => Base.encode16(server_pub, case: :lower),
-      "nonce" => Base.encode16(nonce, case: :lower)
-    }
-  end
+  defp server_encrypt(session_public_key, plaintext),
+    do: DashboardStub.encrypt(session_public_key, plaintext)
 
   defp fake_token, do: "sbp_" <> String.duplicate("f", 40)
 
@@ -27,7 +12,6 @@ defmodule Supablock.BrowserLoginTest do
     test "builds a session with fresh keys and a dashboard URL" do
       session = BrowserLogin.new_session()
 
-      # uncompressed P-256 point: 0x04 || X (32) || Y (32)
       assert byte_size(session.public_key) == 65
       assert <<4, _rest::binary>> = session.public_key
 

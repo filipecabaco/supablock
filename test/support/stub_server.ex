@@ -161,8 +161,6 @@ defmodule Supablock.StubServer do
     {path, query_params} = split_target(target)
     bump(path)
 
-    # POST exists only for the OAuth endpoints (which authenticate via basic
-    # auth/body, not Bearer); the resource API stays GET-only.
     case Map.get(routes, {:post, path}) do
       {:params, fun} when is_function(fun, 1) ->
         params = Map.merge(query_params, body_params(headers, body))
@@ -175,7 +173,6 @@ defmodule Supablock.StubServer do
   end
 
   defp respond(socket, _method, _target, _headers, _body, _routes) do
-    # Read-only API: anything else is refused outright.
     send_json(socket, 405, %{"message" => "method not allowed"})
   end
 

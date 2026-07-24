@@ -96,35 +96,35 @@ defmodule Supablock.EndpointsTest do
     assert Endpoints.path(:disk_config, %{ref: "abc"}) == "/v1/projects/abc/config/disk"
   end
 
-  test "every endpoint carries a known TTL class" do
-    keys = [
-      :realtime_config,
-      :storage_config,
-      :buckets,
-      :sso_providers,
-      :third_party_auth,
-      :function_body,
-      :postgrest_config,
-      :logs,
-      :advisors_security,
-      :advisors_performance,
-      :typescript_types,
-      :secrets,
-      :migrations,
-      :backups,
-      :readonly,
-      :network_restrictions,
-      :ssl_enforcement,
-      :custom_hostname,
-      :vanity_subdomain,
-      :upgrade_eligibility,
-      :pgbouncer_config,
-      :pooler_config,
-      :disk_config
+  test "every endpoint maps to its exact TTL class" do
+    expected = [
+      {:realtime_config, "project"},
+      {:storage_config, "project"},
+      {:buckets, "project"},
+      {:sso_providers, "project"},
+      {:third_party_auth, "project"},
+      {:function_body, "project"},
+      {:postgrest_config, "project"},
+      {:secrets, "project"},
+      {:migrations, "project"},
+      {:backups, "project"},
+      {:readonly, "project"},
+      {:pgbouncer_config, "project"},
+      {:pooler_config, "project"},
+      {:disk_config, "project"},
+      {:advisors_security, "static"},
+      {:advisors_performance, "static"},
+      {:typescript_types, "static"},
+      {:network_restrictions, "static"},
+      {:ssl_enforcement, "static"},
+      {:custom_hostname, "static"},
+      {:vanity_subdomain, "static"},
+      {:upgrade_eligibility, "static"},
+      {:logs, "logs"}
     ]
 
-    for key <- keys do
-      assert Endpoints.ttl_class(key) in ["orgs", "project", "health", "static", "logs"]
+    for {key, class} <- expected do
+      assert Endpoints.ttl_class(key) == class
     end
   end
 end

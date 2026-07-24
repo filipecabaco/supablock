@@ -1,17 +1,9 @@
 defmodule Supablock.RouterTest do
-  use ExUnit.Case, async: false
+  use Supablock.AuthedCase, async: false
 
-  alias Supablock.{Cache, Config, Render, Router, TestEnv}
+  alias Supablock.{Cache, Config, DataApiStub, Render, Router, TestEnv}
 
   @proj_a1 "projaone1234567890ab"
-
-  setup do
-    TestEnv.isolate_xdg!()
-    TestEnv.fake_login!()
-    TestEnv.stub_api!()
-    Cache.flush()
-    :ok
-  end
 
   describe "describe/list on directories" do
     test "root" do
@@ -90,7 +82,6 @@ defmodule Supablock.RouterTest do
     end
 
     test "sso 404 (SAML not enabled) surfaces as an empty listing, not an error" do
-      # org-alpha's second project 404s the sso endpoint in the fixtures.
       base = "/organizations/org-alpha/projects/projatwo1234567890ab/config/auth"
       assert {:ok, []} = Router.list("#{base}/sso")
     end
@@ -200,7 +191,6 @@ defmodule Supablock.RouterTest do
       assert {:ok, body} = Router.read("#{base}/custom-hostname.json")
       assert body =~ "db.example.com"
 
-      # projatwo has no custom hostname: the endpoint 404s, the file reads {}
       other = "/organizations/org-alpha/projects/projatwo1234567890ab/network"
       assert {:ok, "{}\n"} = Router.read("#{other}/custom-hostname.json")
       assert {:ok, {:file, 3}} = Router.describe("#{other}/custom-hostname.json")
@@ -242,21 +232,16 @@ defmodule Supablock.RouterTest do
       base = "/organizations/org-alpha/projects/#{@proj_a1}"
       path = "#{base}/how-to-change.md"
 
-      # Warm the org/project listing caches so the measurement below isolates
-      # the doc render itself.
       assert {:ok, _children} = Router.list(base)
 
       before = TestEnv.total_hits()
       assert {:ok, body} = Router.read(path)
-      # Purely static: rendering the doc costs no Management API request.
       assert TestEnv.total_hits() == before
 
       assert String.starts_with?(body, "# How to change this project")
-      # A mutable resource shows its exact endpoint with the ref filled in.
       assert body =~ "PATCH"
       assert body =~ "/v1/projects/#{@proj_a1}/config/auth"
       assert body =~ "supabase functions deploy"
-      # Read-only / derived resources must never be presented as writable.
       refute body =~ "advisors"
       refute body =~ "/health"
       refute body =~ "types/typescript"
@@ -279,16 +264,12 @@ defmodule Supablock.RouterTest do
       assert {:ok, auth} = Router.read("#{base}/config/auth.json")
       assert String.starts_with?(auth, "// supablock is read-only")
       assert auth =~ "PATCH /v1/projects/#{@proj_a1}/config/auth"
-      # The real JSON body still follows the header untouched.
       assert auth =~ "site_url"
       assert auth =~ "\n{\n"
 
-      # A derived, read-only file is never annotated, flag on or off.
       assert {:ok, health} = Router.read("#{base}/health")
       refute String.starts_with?(health, "//")
 
-      # api-keys is mutable, but its files render raw key material (not JSON),
-      # so the JSONC header is gated out to avoid corrupting the read.
       assert {:ok, publishable} = Router.read("#{base}/api-keys/publishable")
       refute String.starts_with?(publishable, "//")
     end
@@ -326,7 +307,6 @@ defmodule Supablock.RouterTest do
       path = "/organizations/org-alpha/projects/#{@proj_a1}/functions/hello/body"
       assert {:ok, body} = Router.read(path)
       assert body == Supablock.Fixtures.function_body()
-      # opaque binary, not JSON-rendered
       refute String.ends_with?(body, "\n")
       assert {:ok, {:file, size}} = Router.describe(path)
       assert size == byte_size(body)
@@ -338,7 +318,6 @@ defmodule Supablock.RouterTest do
       assert {:ok, body} = Router.read(path)
       assert body =~ "americas"
 
-      # the root no longer exposes regions.json (the endpoint needs a slug)
       assert {:error, :enoent} = Router.describe("/regions.json")
     end
 
@@ -358,7 +337,6 @@ defmodule Supablock.RouterTest do
         |> Enum.map(&Jason.decode!/1)
 
       assert [%{"event_message" => _, "timestamp" => _} | _] = rows
-      # Chronological: earlier timestamp comes first.
       timestamps = Enum.map(rows, & &1["timestamp"])
       assert timestamps == Enum.sort(timestamps)
 
@@ -490,7 +468,6 @@ defmodule Supablock.RouterTest do
     test "'.' and '..' are neutralized so snapshot paths cannot walk up" do
       assert Router.sanitize(".") == "_"
       assert Router.sanitize("..") == "__"
-      # A dot inside a name is fine — only the exact traversal names change.
       assert Router.sanitize("my.bucket") == "my.bucket"
       assert Router.sanitize("...") == "..."
     end
@@ -523,28 +500,10 @@ defmodule Supablock.RouterTest do
 
   describe "database tree" do
     setup do
-      # Exposed schemas come from the stubbed Management API PostgREST config
-      # (org-alpha fixtures expose "app, public"); row data comes from the
-      # in-memory Data API stub below.
-      Application.put_env(:supablock, :data_api_fun, Supablock.DataApiStub.fun(db_model()))
+      Application.put_env(:supablock, :data_api_fun, DataApiStub.fun(DataApiStub.sample_model()))
       Cache.flush()
       on_exit(fn -> Application.delete_env(:supablock, :data_api_fun) end)
       :ok
-    end
-
-    # Models app.widgets (1200 rows) and app.empty (0 rows); public has none.
-    defp db_model do
-      %{
-        "app" => %{
-          "widgets" => %{
-            columns: ["id", "name"],
-            pk: ["id"],
-            rows: for(i <- 0..1199, do: %{"id" => i, "name" => "w#{i}"})
-          },
-          "empty" => %{columns: ["id"], pk: ["id"], rows: []}
-        },
-        "public" => %{}
-      }
     end
 
     test "database appears in every project's children" do
@@ -598,7 +557,6 @@ defmodule Supablock.RouterTest do
 
       assert {:ok, body} = Router.read(path)
       assert String.starts_with?(body, "id,name\n1000,w1000\n")
-      # last page holds rows 1000..1199 -> 200 rows + header
       assert length(String.split(body, "\n", trim: true)) == 201
 
       assert {:ok, {:file, size}} = Router.describe(path)
@@ -617,11 +575,8 @@ defmodule Supablock.RouterTest do
       base = "/organizations/org-alpha/projects/#{@proj_a1}/database"
       assert {:error, :enoent} = Router.describe("#{base}/nope")
       assert {:error, :enoent} = Router.describe("#{base}/app/missing")
-      # offset not on a page boundary
       assert {:error, :enoent} = Router.describe("#{base}/app/widgets/rows-000123.csv")
-      # offset past the end
       assert {:error, :enoent} = Router.describe("#{base}/app/widgets/rows-999999.csv")
-      # not a page file at all
       assert {:error, :enoent} = Router.describe("#{base}/app/widgets/whatever.txt")
     end
   end

@@ -56,7 +56,6 @@ defmodule Supablock.ConfigTest do
 
     assert :ok = Config.set("ttl.orgs", "90")
     assert Config.get("ttl.orgs") == 90
-    # setting one ttl leaves the others at their defaults
     assert Config.get("ttl.health") == 10
   end
 
@@ -74,13 +73,10 @@ defmodule Supablock.ConfigTest do
     assert message =~ "control characters"
     assert {:error, _message} = Config.set("mountpoint", "/mnt/x\r\nX")
     assert {:error, _message} = Config.set("oauth.client_id", "id\ninjected")
-    # A clean value still works.
     assert :ok = Config.set("mountpoint", "/mnt/clean")
   end
 
   test "boolean keys read as strict booleans even if the stored value is a string" do
-    # Simulate a hand-edited config.json with a truthy string, which must not
-    # flip a security default on.
     Paths.ensure!()
     File.write!(Paths.config_file(), Jason.encode!(%{"expose_secrets" => "false"}))
     assert Config.get("expose_secrets") == false
@@ -89,14 +85,14 @@ defmodule Supablock.ConfigTest do
     assert Config.get("expose_secrets") == true
   end
 
-  test "config dir is 0700 and config file 0644 after a write" do
+  test "config dir is 0700 and config file 0600 after a write" do
     :ok = Config.set("mountpoint", "/mnt/x")
 
     assert {:ok, %File.Stat{mode: dir_mode}} = File.stat(Paths.config_dir())
     assert Bitwise.band(dir_mode, 0o777) == 0o700
 
     assert {:ok, %File.Stat{mode: file_mode}} = File.stat(Paths.config_file())
-    assert Bitwise.band(file_mode, 0o777) == 0o644
+    assert Bitwise.band(file_mode, 0o777) == 0o600
   end
 
   test "ttl_ms converts seconds to milliseconds" do

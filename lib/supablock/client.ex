@@ -48,9 +48,6 @@ defmodule Supablock.Client do
     end
   end
 
-  # A stored OAuth token the API just rejected may simply have expired:
-  # rotate it once (single-flight via TokenStore) and retry. Explicit tokens
-  # and unauthenticated calls never retry.
   defp retry_after_refresh(path, failed_token, opts, error) do
     stored? =
       is_binary(failed_token) and opts[:token] == nil and
@@ -74,14 +71,10 @@ defmodule Supablock.Client do
         {:ok, opts[:token]}
 
       true ->
-        # TokenStore (not Credentials directly): OAuth credentials refresh
-        # transparently, serialized through one process.
         Supablock.TokenStore.access_token()
     end
   end
 
-  # Testing escape hatch only: the e2e suite points the release at a local
-  # stub API. Real usage never sets either override.
   @doc false
   def base_url do
     case System.get_env("SUPABLOCK_API_URL") do
@@ -125,7 +118,6 @@ defmodule Supablock.Client do
         max_retries: 3
       )
       |> then(fn req ->
-        # nil = deliberately unauthenticated (the login polling endpoint).
         if token, do: Req.merge(req, auth: {:bearer, token}), else: req
       end)
       |> apply_test_plug()
@@ -149,8 +141,6 @@ defmodule Supablock.Client do
   end
 
   @doc false
-  # Test seam shared by every HTTP module: when a stub plug is configured,
-  # merge it into the request; a no-op in production.
   def apply_test_plug(req) do
     case Application.get_env(:supablock, :req_plug) do
       nil -> req
@@ -159,9 +149,50 @@ defmodule Supablock.Client do
   end
 
   @doc false
-  # A project ref as an environment-variable suffix (upper-cased, non-alnum
-  # to `_`), for the per-ref data-API/metrics URL overrides.
   def env_key(ref), do: ref |> String.upcase() |> String.replace(~r/[^A-Z0-9]/, "_")
+
+  @doc """
+  True when `ref` is the known project-ref shape (20 lowercase alphanumerics).
+  A ref is interpolated into the Data API / metrics hostname while the request
+  carries the project's secret key, so callers must refuse anything else before
+  it can steer the request at another host.
+  """
+  @spec valid_ref?(term) :: boolean
+  def valid_ref?(ref) when is_binary(ref), do: Regex.match?(~r/^[a-z0-9]{20}$/, ref)
+  def valid_ref?(_ref), do: false
+
+  @doc """
+  Shared read-only transport for the per-project hosts (Data API, metrics)
+  that authenticate with a project key rather than the OAuth token. `opts`
+  accepts `:headers`, `:auth`, and `:timeout_ms`. Returns the raw
+  `Req.Response` (undecoded body) or `{:error, reason}`.
+  """
+  @spec raw_get(String.t(), keyword) :: {:ok, Req.Response.t()} | {:error, reason}
+  def raw_get(url, opts \\ []) do
+    budget_ms = Keyword.get(opts, :timeout_ms) || Config.get("http_timeout_ms") || 8_000
+
+    req =
+      [
+        url: url,
+        method: :get,
+        receive_timeout: budget_ms,
+        connect_options: connect_options(budget_ms),
+        decode_body: false,
+        retry: false
+      ]
+      |> Keyword.merge(Keyword.take(opts, [:headers, :auth]))
+      |> Req.new()
+      |> apply_test_plug()
+
+    case Req.request(req) do
+      {:ok, %Req.Response{} = resp} ->
+        {:ok, resp}
+
+      {:error, %{__exception__: true} = error} ->
+        Logger.debug("supablock: GET #{url} failed: #{redact(Exception.message(error))}")
+        {:error, transport_reason(error)}
+    end
+  end
 
   @doc false
   def connect_options(budget_ms) do
@@ -185,7 +216,6 @@ defmodule Supablock.Client do
     end
   end
 
-  # Standard NO_PROXY semantics, plus loopback never goes through a proxy.
   defp proxy_excluded?(nil), do: true
   defp proxy_excluded?(host) when host in ["localhost", "127.0.0.1", "::1"], do: true
 
@@ -239,8 +269,6 @@ defmodule Supablock.Client do
         case Req.Response.get_header(resp, "x-ratelimit-reset") do
           [value | _rest] ->
             case Integer.parse(value) do
-              # Could be epoch seconds or delta seconds; treat small values
-              # as deltas and anything else as "too far away".
               {seconds, _rest} when seconds < 3_600 -> seconds * 1_000
               _other -> nil
             end
@@ -256,8 +284,6 @@ defmodule Supablock.Client do
   defp interpret(%Req.Response{status: 403}), do: {:error, :forbidden}
   defp interpret(%Req.Response{status: 404}), do: {:error, :not_found}
 
-  # A 400 that only signals a plan/add-on entitlement gate is unavailability,
-  # not a bad request — surface it like a 404 so optional surfaces read `{}`.
   defp interpret(%Req.Response{status: 400, body: body}) do
     if entitlement_gated?(body), do: {:error, :unavailable}, else: {:error, {:http, 400}}
   end
@@ -291,8 +317,6 @@ defmodule Supablock.Client do
   defp transport_reason(%{reason: :timeout}), do: :timeout
   defp transport_reason(%{reason: reason}), do: {:transport, reason}
   defp transport_reason(error), do: {:transport, error.__struct__}
-
-  ## Rate limit bookkeeping
 
   defp record_ratelimit(path, resp) do
     remaining = first_int_header(resp, ["x-ratelimit-remaining", "ratelimit-remaining"])
@@ -352,6 +376,8 @@ defmodule Supablock.Client do
     |> String.replace(~r/Bearer\s+\S+/, "Bearer sbp_…")
     |> String.replace(~r/sbp_[A-Za-z0-9_-]+/, "sbp_…")
     |> String.replace(~r/oauth_refresh_[A-Za-z0-9_-]+/, "oauth_refresh_…")
+    |> String.replace(~r/sb_(secret|publishable)_[A-Za-z0-9_-]+/, "sb_…")
+    |> String.replace(~r/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/, "eyJ…")
   end
 
   def redact(term, token) do

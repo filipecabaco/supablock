@@ -62,8 +62,6 @@ defmodule Supablock.Logs do
     iso_start = DateTime.to_iso8601(DateTime.add(now, -86_400, :second))
     path = Endpoints.path(:logs, %{ref: ref, sql: sql, iso_start: iso_start, iso_end: iso_end})
     ttl_ms = Config.ttl_ms("logs")
-    # Key on {ref, source} — NOT the URL, whose iso_start/iso_end embed the
-    # current time and change every call, which would defeat the cache.
     Cache.fetch({:logs, ref, source}, ttl_ms, fn -> Client.get(path, timeout_ms: 30_000) end)
   end
 
@@ -75,8 +73,6 @@ defmodule Supablock.Logs do
   def fetch_since(ref, source, since_us) when is_integer(since_us) do
     table = Map.fetch!(@tables, source)
 
-    # `timestamp` is a BigQuery TIMESTAMP, so the microsecond watermark has to
-    # be wrapped in TIMESTAMP_MICROS/1 — a bare integer comparison errors out.
     sql =
       "SELECT timestamp, event_message, metadata FROM #{table} WHERE timestamp > TIMESTAMP_MICROS(#{since_us}) ORDER BY timestamp DESC LIMIT #{limit()}"
 

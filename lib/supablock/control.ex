@@ -31,12 +31,7 @@ defmodule Supablock.Control do
 
   @connect_timeout 2_000
 
-  # A remote read may have to fetch from the API on a cold daemon cache, so
-  # give it several HTTP budgets before the client falls back to fetching
-  # directly itself.
   @read_timeout 30_000
-
-  ## Server side
 
   def start(mountpoint) do
     case GenServer.start(__MODULE__, mountpoint, name: __MODULE__) do
@@ -44,7 +39,6 @@ defmodule Supablock.Control do
         {:ok, pid}
 
       {:error, {:already_started, pid}} ->
-        # Remounting after a crash: reuse the running control server.
         {:ok, pid}
 
       {:error, reason} ->
@@ -76,9 +70,6 @@ defmodule Supablock.Control do
            ifaddr: {:local, String.to_charlist(sock_path)}
          ]) do
       {:ok, listener} ->
-        # Belt-and-suspenders with the 0700 state dir: the socket itself is
-        # owner-only, so no other local user can drive the daemon's API
-        # (which reads the account with the owner's token).
         File.chmod(sock_path, 0o600)
         state = %{listener: listener, sock_path: sock_path, mountpoint: mountpoint}
         {:ok, spawn_acceptor(state)}
@@ -146,7 +137,6 @@ defmodule Supablock.Control do
     :gen_tcp.close(socket)
 
     spawn(fn ->
-      # A `supablock serve` daemon has no mount to undo.
       if state.mountpoint, do: Supablock.Fs.unmount(state.mountpoint)
       System.stop(0)
     end)
@@ -184,9 +174,6 @@ defmodule Supablock.Control do
     :gen_tcp.close(socket)
   end
 
-  # Reads can hit the API; keep them off the control GenServer so flush and
-  # unmount stay responsive. Sending/closing a passive socket from another
-  # process is fine — the acceptor stays the owner.
   defp serve_async(socket, fun) do
     spawn(fn ->
       fun.()
@@ -198,8 +185,6 @@ defmodule Supablock.Control do
     data = IO.iodata_to_binary(payload)
     :gen_tcp.send(socket, ["ok #{byte_size(data)}\n", data])
   end
-
-  ## Client side
 
   @doc """
   Send a command over the control socket. Returns `{:ok, reply_line}` or
@@ -296,7 +281,6 @@ defmodule Supablock.Control do
   defp recv_exact(_socket, 0), do: {:ok, ""}
 
   defp recv_exact(socket, bytes) do
-    # The header came through the line packetizer; the payload is raw.
     :inet.setopts(socket, packet: :raw)
 
     case :gen_tcp.recv(socket, bytes, @read_timeout) do
@@ -309,6 +293,5 @@ defmodule Supablock.Control do
   defp errno("eacces"), do: :eacces
   defp errno("eagain"), do: :eagain
   defp errno("eio"), do: :eio
-  # "unknown" from an older daemon, or anything unexpected: fall back.
   defp errno(_other), do: :unavailable
 end

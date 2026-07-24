@@ -18,9 +18,7 @@ defmodule Supablock.Database.DataApi do
   the raw (undecoded) response body.
   """
 
-  require Logger
-
-  alias Supablock.{Client, Config, Database, Endpoints}
+  alias Supablock.{Client, Database, Endpoints}
 
   @type response :: %{
           status: non_neg_integer,
@@ -43,38 +41,18 @@ defmodule Supablock.Database.DataApi do
   end
 
   defp real_get(ref, path, headers) do
-    with {:ok, key} <- api_key(ref) do
-      budget_ms = Config.get("http_timeout_ms") || 8_000
-
-      req =
-        Req.new(
-          url: base_url(ref) <> path,
-          method: :get,
-          headers: [{"apikey", key}, {"authorization", "Bearer " <> key} | headers],
-          receive_timeout: budget_ms,
-          connect_options: Client.connect_options(budget_ms),
-          decode_body: false,
-          retry: false
-        )
-        |> Client.apply_test_plug()
-
-      case Req.request(req) do
-        {:ok, %Req.Response{status: status, headers: resp_headers, body: body}} ->
-          {:ok, %{status: status, headers: normalize_headers(resp_headers), body: to_body(body)}}
-
-        {:error, %{__exception__: true} = error} ->
-          Logger.debug(
-            "supablock: data-api #{path} failed: #{Client.redact(Exception.message(error), key)}"
-          )
-
-          {:error, transport_reason(error)}
-      end
+    with true <- Client.valid_ref?(ref),
+         {:ok, key} <- api_key(ref),
+         request_headers = [{"apikey", key}, {"authorization", "Bearer " <> key} | headers],
+         {:ok, %Req.Response{status: status, headers: resp_headers, body: body}} <-
+           Client.raw_get(base_url(ref) <> path, headers: request_headers) do
+      {:ok, %{status: status, headers: normalize_headers(resp_headers), body: to_body(body)}}
+    else
+      false -> {:error, :invalid_ref}
+      {:error, _reason} = error -> error
     end
   end
 
-  # The Data API key is fetched from the Management API's api-keys endpoint —
-  # the same call `api-keys/secret` renders — so no extra credential is needed.
-  # `service_role` needs `reveal=true`; `anon` is returned without it.
   defp api_key(ref) do
     kind = Database.key_kind()
 
@@ -92,10 +70,6 @@ defmodule Supablock.Database.DataApi do
     end
   end
 
-  # Testing escape hatch only (mirrors Supablock.Client): route the request
-  # through the stub plug so hermetic tests never reach a real Data API host.
-  # Hosted projects answer at `<ref>.supabase.co`. A custom domain or a
-  # self-hosted project can point elsewhere with `SUPABLOCK_DATA_API_URL_<REF>`.
   defp base_url(ref) do
     case System.get_env("SUPABLOCK_DATA_API_URL_" <> Client.env_key(ref)) do
       url when is_binary(url) and url != "" -> String.trim_trailing(String.trim(url), "/")
@@ -117,8 +91,4 @@ defmodule Supablock.Database.DataApi do
 
   defp to_body(body) when is_binary(body), do: body
   defp to_body(body), do: Jason.encode!(body)
-
-  defp transport_reason(%{reason: :timeout}), do: :timeout
-  defp transport_reason(%{reason: reason}), do: {:transport, reason}
-  defp transport_reason(error), do: {:transport, error.__struct__}
 end

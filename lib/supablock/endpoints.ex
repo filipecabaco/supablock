@@ -204,9 +204,6 @@ defmodule Supablock.Endpoints do
         note: "PATCH updates metadata; deploy new code with the CLI. DELETE .../{slug} removes."
       )
 
-  # Bucket writes are not a Management API surface (its buckets endpoint is
-  # GET-only): they go through the project's own Storage API, authenticated
-  # with the secret (service_role) key — the one in api-keys/secret.
   def mutation(:buckets),
     do:
       mut("POST", "https://{ref}.supabase.co/storage/v1/bucket",
@@ -309,8 +306,6 @@ defmodule Supablock.Endpoints do
   def ttl_class(:health), do: "health"
   def ttl_class(key) when key in [:api_keys, :regions], do: "static"
 
-  # Advisor runs, generated types and network settings change rarely and some
-  # are expensive server-side — cache them at the long-lived tier.
   def ttl_class(key)
       when key in [:advisors_security, :advisors_performance, :typescript_types],
       do: "static"

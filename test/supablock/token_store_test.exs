@@ -57,7 +57,6 @@ defmodule Supablock.TokenStoreTest do
     assert Enum.all?(results, &(&1 == {:ok, fresh}))
     assert TestEnv.hits("/v1/oauth/token") == 1
 
-    # the new pair was persisted
     assert {:ok, credential} = Credentials.load_credential()
     assert credential.access_token == fresh
     assert credential.refresh_token == "oauth_refresh_" <> String.duplicate("e", 20)
@@ -71,7 +70,6 @@ defmodule Supablock.TokenStoreTest do
     assert fresh == new_access()
     assert TestEnv.hits("/v1/oauth/token") == 1
 
-    # concurrent caller whose 401 raced the rotation: no second refresh
     assert {:ok, ^fresh} = TokenStore.after_401("sbp_oauth_rejected")
     assert TestEnv.hits("/v1/oauth/token") == 1
   end

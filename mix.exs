@@ -14,14 +14,7 @@ defmodule Supablock.MixProject do
     ]
   end
 
-  # Burrito's wrapper unpacks the payload into a per-user cache dir keyed by
-  # "<release>_erts-<ertsvsn>_<app_version>" and reuses it whenever that key
-  # already exists — so every published binary must carry a unique version,
-  # or an upgraded binary silently keeps running the previously unpacked
-  # code. The release workflow sets SUPABLOCK_BUILD_VERSION per build (the
-  # tag for versioned releases, "<base>-canary.<sha>" for canary builds);
-  # local builds fall back to the static default.
-  @version "0.5.0"
+  @version "0.5.1"
   defp version, do: System.get_env("SUPABLOCK_BUILD_VERSION", @version)
 
   def application do
@@ -33,20 +26,11 @@ defmodule Supablock.MixProject do
 
   defp releases do
     [
-      # Classic release, used by bin/supablock (the thin launcher) and the
-      # e2e suite: MIX_ENV=prod mix release
       supablock: [
         include_executables_for: [:unix],
         strip_beams: true,
-        # userfs/efuse are runtime: false deps (CLI commands like `login`
-        # must not start the FUSE machinery); `mount` starts them on demand.
         applications: [userfs: :load, efuse: :load]
       ],
-      # Single-file binary via Burrito (needs zig 0.15.x and xz on PATH):
-      #   MIX_ENV=prod mix release supablock_burrito
-      # Binaries land in burrito_out/. The bundled efuse FUSE port is a
-      # native executable compiled on the build machine, so build each
-      # platform's binary natively (no useful cross-targets).
       supablock_burrito: [
         include_executables_for: [:unix],
         strip_beams: true,
@@ -57,9 +41,6 @@ defmodule Supablock.MixProject do
     ]
   end
 
-  # Native target only (see note above). BURRITO_ERTS_PATH overrides where
-  # the ERTS comes from (an unpacked OTP root, e.g. /usr/lib/erlang) for
-  # build hosts that cannot reach Burrito's precompiled-ERTS CDN.
   defp burrito_targets do
     os =
       case :os.type() do

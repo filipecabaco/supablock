@@ -15,10 +15,7 @@ defmodule Supablock.Fs do
 
   alias Supablock.{Control, Paths, Router}
 
-  # POSIX errno values, passed through the port to the kernel.
   @errno %{enoent: 2, eio: 5, eagain: 11, eacces: 13, erofs: 30}
-
-  ## Userfs.Fs callbacks
 
   @impl true
   def userfs_init(_mount_point, opts), do: {:ok, opts}
@@ -63,8 +60,6 @@ defmodule Supablock.Fs do
   end
 
   defp errno(error), do: Map.get(@errno, error, @errno.eio)
-
-  ## Mount lifecycle
 
   @doc """
   Mount at `mountpoint`: recover any stale mount, start the FUSE machinery
@@ -159,7 +154,6 @@ defmodule Supablock.Fs do
         end)
 
       {:error, _reason} ->
-        # No /proc (macOS): ask mount(8).
         case System.cmd("mount", [], stderr_to_stdout: true) do
           {out, 0} -> String.contains?(out, " on #{mountpoint} ")
           _other -> false
@@ -167,7 +161,6 @@ defmodule Supablock.Fs do
     end
   end
 
-  # /proc/mounts octal-escapes spaces etc. in mount points.
   defp escape_mount(mountpoint) do
     mountpoint
     |> String.replace(" ", "\\040")

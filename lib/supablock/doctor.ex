@@ -116,7 +116,6 @@ defmodule Supablock.Doctor do
     end
   end
 
-  # Linux only: a dynamically linked port needs its libfuse present.
   defp missing_shared_libs?(path) do
     with {:unix, :linux} <- :os.type(),
          ldd when is_binary(ldd) <- System.find_executable("ldd"),

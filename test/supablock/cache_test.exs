@@ -16,7 +16,6 @@ defmodule Supablock.CacheTest do
 
     stats = Cache.stats()
     assert stats.entries == 2
-    # the zero-TTL entry is immediately past its deadline
     assert stats.stale == 1
   end
 

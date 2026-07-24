@@ -20,6 +20,25 @@ defmodule Supablock.DataApiStub do
   Install with `Application.put_env(:supablock, :data_api_fun, DataApiStub.fun(model))`.
   """
 
+  @doc """
+  A ready-made model with an `app` schema (`widgets` of `row_count` rows, and
+  an empty `empty` table) plus an empty `public` schema. Shared by the router,
+  database and FUSE suites so a page-window change is exercised consistently.
+  """
+  def sample_model(row_count \\ 1200) do
+    %{
+      "app" => %{
+        "widgets" => %{
+          columns: ["id", "name"],
+          pk: ["id"],
+          rows: for(i <- 0..(row_count - 1), do: %{"id" => i, "name" => "w#{i}"})
+        },
+        "empty" => %{columns: ["id"], pk: ["id"], rows: []}
+      },
+      "public" => %{}
+    }
+  end
+
   @doc "A `(ref, path, headers) -> {:ok, resp} | {:error, term}` fun over `model`."
   def fun(model) do
     fn _ref, path, headers ->
@@ -105,8 +124,6 @@ defmodule Supablock.DataApiStub do
     Jason.encode!(rows)
   end
 
-  # A minimal PostgREST Swagger doc: column order is preserved (ordered
-  # objects), and primary-key columns carry the `<pk/>` marker in `description`.
   defp openapi_body(tables) do
     definitions =
       tables

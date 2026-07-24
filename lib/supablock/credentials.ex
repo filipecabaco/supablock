@@ -89,7 +89,6 @@ defmodule Supablock.Credentials do
          }}
 
       _not_json ->
-        # legacy single-line PAT
         {:ok, %Credential{type: :pat, access_token: body}}
     end
   end
