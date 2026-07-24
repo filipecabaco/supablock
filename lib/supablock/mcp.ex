@@ -27,7 +27,10 @@ defmodule Supablock.MCP do
   config/, api-keys/, secrets.json, functions/, storage/, branches/,
   database/ (schema dirs with schema.json + rows-*.csv, plus
   backups/migrations/readonly.json), network/, logs/<source>, metrics,
-  types.ts and upgrade-eligibility.json. Start with: ls "" then descend.
+  types.ts and upgrade-eligibility.json. Each project also has a
+  how-to-change.md documenting the Management API / CLI write path for every
+  mutable resource (supablock itself never writes). Start with: ls "" then
+  descend.
   """
 
   @doc "Serve MCP over `input`/`output` until EOF. Blocks."
@@ -214,9 +217,9 @@ defmodule Supablock.MCP do
 
   defp call_tool("find", args) do
     start = display(tool_path(args))
-    max_depth = args["maxdepth"] || :infinity
+    max_depth = max_depth(args)
     type = %{"f" => :file, "d" => :dir}[args["type"]]
-    name_regex = if is_binary(args["name"]), do: glob_regex(args["name"])
+    name_regex = if is_binary(args["name"]), do: Walk.glob_regex(args["name"])
 
     {lines, errors} =
       Walk.reduce(start, max_depth, {[], []}, fn
@@ -239,7 +242,7 @@ defmodule Supablock.MCP do
     with {:ok, regex} <-
            Regex.compile(args["pattern"] || "", if(args["ignore_case"], do: "i", else: "")) do
       start = display(tool_path(args))
-      max_depth = args["maxdepth"] || :infinity
+      max_depth = max_depth(args)
       files_only? = args["files_only"] || false
 
       {lines, errors} =
@@ -270,6 +273,13 @@ defmodule Supablock.MCP do
   end
 
   defp call_tool(_name, _args), do: :unknown_tool
+
+  # The schema declares maxdepth an integer, but a client can still send a
+  # string; anything non-integer would defeat the `depth < max_depth` bound
+  # (integer < binary is always true in Erlang term order) and force an
+  # unbounded walk, so coerce to a real bound or none.
+  defp max_depth(%{"maxdepth" => n}) when is_integer(n) and n >= 0, do: n
+  defp max_depth(_args), do: :infinity
 
   defp grep_file(regex, path, body, files_only?, lines) do
     cond do
@@ -312,17 +322,6 @@ defmodule Supablock.MCP do
   defp describe(path, :eacces), do: "access denied: #{display(path)} (run: supablock login)"
   defp describe(path, :eagain), do: "rate limited: #{display(path)} — retry shortly"
   defp describe(path, _reason), do: "API error reading #{display(path)}"
-
-  # Shell-glob basename matching: * and ? only, anchored (same as find).
-  defp glob_regex(glob) do
-    pattern =
-      glob
-      |> Regex.escape()
-      |> String.replace("\\*", ".*")
-      |> String.replace("\\?", ".")
-
-    Regex.compile!("^" <> pattern <> "$")
-  end
 
   defp version do
     case Application.spec(:supablock, :vsn) do

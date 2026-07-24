@@ -76,6 +76,10 @@ defmodule Supablock.Control do
            ifaddr: {:local, String.to_charlist(sock_path)}
          ]) do
       {:ok, listener} ->
+        # Belt-and-suspenders with the 0700 state dir: the socket itself is
+        # owner-only, so no other local user can drive the daemon's API
+        # (which reads the account with the owner's token).
+        File.chmod(sock_path, 0o600)
         state = %{listener: listener, sock_path: sock_path, mountpoint: mountpoint}
         {:ok, spawn_acceptor(state)}
 

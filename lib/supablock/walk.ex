@@ -84,4 +84,20 @@ defmodule Supablock.Walk do
 
   defp join(".", name), do: "./" <> name
   defp join(path, name), do: String.trim_trailing(path, "/") <> "/" <> name
+
+  @doc """
+  Compile a shell-style glob (`*`, `?`) into an anchored regex for matching
+  a single path basename, as `find -name` does. Literal regex metacharacters
+  in the glob are escaped first, so only `*`/`?` are special.
+  """
+  @spec glob_regex(String.t()) :: Regex.t()
+  def glob_regex(glob) do
+    pattern =
+      glob
+      |> Regex.escape()
+      |> String.replace("\\*", ".*")
+      |> String.replace("\\?", ".")
+
+    Regex.compile!("^" <> pattern <> "$")
+  end
 end

@@ -42,7 +42,7 @@ defmodule Supablock.Metrics do
           decode_body: false,
           retry: false
         )
-        |> apply_test_plug()
+        |> Client.apply_test_plug()
 
       case Req.request(req) do
         {:ok, %Req.Response{status: 200, body: body}} ->
@@ -58,7 +58,10 @@ defmodule Supablock.Metrics do
           {:error, {:http, status}}
 
         {:error, %{__exception__: true} = error} ->
-          Logger.debug("supablock: metrics #{ref} failed: #{Exception.message(error)}")
+          Logger.debug(
+            "supablock: metrics #{ref} failed: #{Client.redact(Exception.message(error), key)}"
+          )
+
           {:error, {:transport, error.__struct__}}
       end
     end
@@ -82,19 +85,10 @@ defmodule Supablock.Metrics do
 
   defp find_secret(_), do: nil
 
-  defp apply_test_plug(req) do
-    case Application.get_env(:supablock, :req_plug) do
-      nil -> req
-      plug -> Req.merge(req, plug: plug, retry: false)
-    end
-  end
-
   defp base_url(ref) do
-    case System.get_env("SUPABLOCK_METRICS_URL_" <> env_key(ref)) do
+    case System.get_env("SUPABLOCK_METRICS_URL_" <> Client.env_key(ref)) do
       url when is_binary(url) and url != "" -> String.trim_trailing(url, "/")
       _unset -> "https://#{ref}.supabase.co"
     end
   end
-
-  defp env_key(ref), do: ref |> String.upcase() |> String.replace(~r/[^A-Z0-9]/, "_")
 end

@@ -745,7 +745,8 @@
 <span class="path">        <span class="t">├──</span> <span class="d">network/</span></span><span class="note">restrictions, SSL, custom &amp; vanity domains</span>
 <span class="path">        <span class="t">├──</span> <span class="d">logs/</span>&lt;source&gt;</span><span class="note">NDJSON: postgres, auth, edge, storage…</span>
 <span class="path">        <span class="t">├──</span> metrics</span><span class="note">Prometheus text for the whole project</span>
-<span class="path">        <span class="t">└──</span> types.ts</span><span class="note">generated TypeScript types</span></div>
+<span class="path">        <span class="t">├──</span> types.ts</span><span class="note">generated TypeScript types</span>
+<span class="path">        <span class="t">└──</span> how-to-change.md</span><span class="note">the write path for each resource</span></div>
       </div>
 
       <p class="body">
@@ -867,6 +868,12 @@
         <div class="fact">
           <span class="k"><svg class="icon" aria-hidden="true"><use href="#i-command-line"/></svg>reads without FUSE</span>
           <p>The same commands resolve straight off the API — coreutils semantics, no privileges, pipe-friendly.</p>
+        </div>
+        <div class="fact">
+          <span class="k"><svg class="icon" aria-hidden="true"><use href="#i-wrench-screwdriver"/></svg>how-to-change.md</span>
+          <p>supablock only reads — so each project carries a <code>how-to-change.md</code> with the exact
+             API/CLI request to change each resource. An agent knows the write path without guessing, and
+             runs it itself.</p>
         </div>
         <div class="fact">
           <span class="k"><svg class="icon" aria-hidden="true"><use href="#i-arrow-down-tray"/></svg>skills add · llms.txt</span>
@@ -1060,7 +1067,7 @@ schema.json  rows-000000.csv  rows-000500.csv  rows-001000.csv
             <tr><td><code>supablock logout</code></td><td>Delete the credential and revoke the OAuth grant.</td></tr>
             <tr><td><code>supablock status [--json]</code></td><td>Auth state (masked token), org count, mount state, last-seen rate limits — <code>--json</code> for scripts.</td></tr>
             <tr><td><code>supablock doctor</code></td><td>Environment checks with a fix hint per failure.</td></tr>
-            <tr><td><code>supablock config set|get|list</code></td><td>Mountpoint, cache TTLs, <code>http_timeout_ms</code>, <code>expose_secrets</code>, <code>db_format</code>, <code>db_page_size</code>, <code>db_key</code>.</td></tr>
+            <tr><td><code>supablock config set|get|list</code></td><td>Mountpoint, cache TTLs, <code>http_timeout_ms</code>, <code>expose_secrets</code>, <code>inline_docs</code>, <code>db_format</code>, <code>db_page_size</code>, <code>db_key</code>.</td></tr>
             <tr><td><code>supablock mount [--path dir] [dir]</code></td><td>Mount in the background and return immediately (default <code>~/Supabase</code>); recovers stale mounts automatically. <code>--foreground</code> blocks instead.</td></tr>
             <tr><td><code>supablock unmount [dir]</code></td><td>Unmount from another shell.</td></tr>
             <tr><td><code>supablock ls [path]</code></td><td>List a tree directory straight off the API — no mount, no FUSE, no privileges.</td></tr>
@@ -1112,6 +1119,10 @@ schema.json  rows-000000.csv  rows-000500.csv  rows-001000.csv
             logged, and shows up masked in <code>status</code>.</li>
         <li><code>api-keys/secret</code> stays <code>REDACTED</code> until you set
             <code>expose_secrets true</code>. The publishable key is always visible.</li>
+        <li>Each project's <code>how-to-change.md</code> <em>documents</em> the write path — the exact
+            API/CLI request to change a resource — so agents don't guess it. supablock still never makes
+            that request; it's static text you run yourself. <code>config set inline_docs true</code>
+            prints the same guidance as a <code>//</code> header inside each mutable file.</li>
         <li>Slow calls become <code>EIO</code>, a rate-limit becomes <code>EAGAIN</code>. The
             filesystem never hangs.</li>
       </ul>

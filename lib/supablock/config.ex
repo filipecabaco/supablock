@@ -10,6 +10,7 @@ defmodule Supablock.Config do
   @defaults %{
     "mountpoint" => nil,
     "expose_secrets" => false,
+    "inline_docs" => false,
     "http_timeout_ms" => 8_000,
     "db_page_size" => 500,
     "db_format" => "csv",
@@ -28,6 +29,7 @@ defmodule Supablock.Config do
   @valid_keys [
     "mountpoint",
     "expose_secrets",
+    "inline_docs",
     "http_timeout_ms",
     "db_page_size",
     "db_format",
@@ -43,13 +45,19 @@ defmodule Supablock.Config do
     "log_limit"
   ]
 
+  # Keys whose stored value must be interpreted as a strict boolean, so a
+  # hand-edited config with `"expose_secrets": "false"` (a truthy string)
+  # can never flip a security-sensitive default on.
+  @boolean_keys ~w(expose_secrets inline_docs)
+
   def defaults, do: @defaults
 
   def valid_keys, do: @valid_keys
 
-  @doc "Read a top-level key with defaults applied."
+  @doc "Read a top-level key with defaults applied. Boolean keys coerce to a strict boolean."
   def get(key) when is_binary(key) do
-    get_in_path(String.split(key, "."))
+    value = get_in_path(String.split(key, "."))
+    if key in @boolean_keys, do: value == true, else: value
   end
 
   @doc "Read a nested value, e.g. `get_in_path([\"ttl\", \"orgs\"])`."
@@ -102,14 +110,32 @@ defmodule Supablock.Config do
     end
   end
 
-  defp coerce("mountpoint", value), do: {:ok, value}
-  defp coerce("oauth." <> _key, value), do: {:ok, value}
+  # Both flow into files written verbatim — the mountpoint into systemd unit
+  # `Description=`/launchd plist strings, oauth values into request URLs — so
+  # a newline or NUL could inject directives/markup. Reject control chars.
+  defp coerce("mountpoint", value) do
+    if safe_value?(value),
+      do: {:ok, value},
+      else: {:error, "mountpoint must not contain control characters"}
+  end
+
+  defp coerce("oauth." <> _key, value) do
+    if safe_value?(value),
+      do: {:ok, value},
+      else: {:error, "value must not contain control characters"}
+  end
 
   defp coerce("expose_secrets", value) when value in ~w(true false),
     do: {:ok, value == "true"}
 
   defp coerce("expose_secrets", _),
     do: {:error, "expose_secrets must be true or false"}
+
+  defp coerce("inline_docs", value) when value in ~w(true false),
+    do: {:ok, value == "true"}
+
+  defp coerce("inline_docs", _),
+    do: {:error, "inline_docs must be true or false"}
 
   defp coerce("db_format", value) when value in ~w(csv json), do: {:ok, value}
 
@@ -125,6 +151,8 @@ defmodule Supablock.Config do
       _other -> {:error, "#{key} must be a positive integer"}
     end
   end
+
+  defp safe_value?(value), do: not String.contains?(value, ["\n", "\r", <<0>>])
 
   # RawFile (not File) — Config.load runs on the FUSE-serving path, which
   # must never wait on the file server; see Supablock.RawFile.

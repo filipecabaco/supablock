@@ -10,10 +10,12 @@ defmodule Supablock.AuthCallback do
   verifier (never in any URL) is what makes a stolen code useless anyway.
   """
 
+  # log_level stays high: the callback request carries `?code=…` in its
+  # target, and debug request logging would surface that single-use code.
   use Francis,
     bandit_opts: [ip: {127, 0, 0, 1}, port: 53682, startup_log: false],
     static: false,
-    log_level: :debug
+    log_level: :warning
 
   @page """
   <!doctype html>
@@ -82,6 +84,7 @@ defmodule Supablock.AuthCallback do
               # the login process died: no point serving callbacks anymore
               {:DOWN, ^waiter_ref, :process, _pid, _reason} ->
                 Supervisor.stop(supervisor)
+                :persistent_term.erase({__MODULE__, :waiter})
 
               {:EXIT, ^supervisor, _reason} ->
                 :ok

@@ -148,12 +148,20 @@ defmodule Supablock.Client do
       {:error, {:transport, kind}}
   end
 
-  defp apply_test_plug(req) do
+  @doc false
+  # Test seam shared by every HTTP module: when a stub plug is configured,
+  # merge it into the request; a no-op in production.
+  def apply_test_plug(req) do
     case Application.get_env(:supablock, :req_plug) do
       nil -> req
       plug -> Req.merge(req, plug: plug, retry: false)
     end
   end
+
+  @doc false
+  # A project ref as an environment-variable suffix (upper-cased, non-alnum
+  # to `_`), for the per-ref data-API/metrics URL overrides.
+  def env_key(ref), do: ref |> String.upcase() |> String.replace(~r/[^A-Z0-9]/, "_")
 
   @doc false
   def connect_options(budget_ms) do

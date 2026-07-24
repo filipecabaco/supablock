@@ -69,6 +69,26 @@ defmodule Supablock.ConfigTest do
     assert {:error, _message} = Config.set("expose_secrets", "maybe")
   end
 
+  test "mountpoint and oauth values reject embedded control characters" do
+    assert {:error, message} = Config.set("mountpoint", "/mnt/x\nExecStartPre=/bin/sh -c evil")
+    assert message =~ "control characters"
+    assert {:error, _message} = Config.set("mountpoint", "/mnt/x\r\nX")
+    assert {:error, _message} = Config.set("oauth.client_id", "id\ninjected")
+    # A clean value still works.
+    assert :ok = Config.set("mountpoint", "/mnt/clean")
+  end
+
+  test "boolean keys read as strict booleans even if the stored value is a string" do
+    # Simulate a hand-edited config.json with a truthy string, which must not
+    # flip a security default on.
+    Paths.ensure!()
+    File.write!(Paths.config_file(), Jason.encode!(%{"expose_secrets" => "false"}))
+    assert Config.get("expose_secrets") == false
+
+    File.write!(Paths.config_file(), Jason.encode!(%{"expose_secrets" => true}))
+    assert Config.get("expose_secrets") == true
+  end
+
   test "config dir is 0700 and config file 0644 after a write" do
     :ok = Config.set("mountpoint", "/mnt/x")
 

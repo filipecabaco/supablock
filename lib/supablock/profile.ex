@@ -19,7 +19,10 @@ defmodule Supablock.Profile do
   Only keys in `Supablock.Config.valid_keys/0` are applied (same validation
   and coercion as `config set`); anything else is reported and skipped, so a
   malicious or stale profile cannot touch credentials or arbitrary state.
-  Personal things — tokens, database passwords — never belong in a profile.
+  Values are validated as `config set` would — control characters in the
+  mountpoint or oauth keys are rejected, so a profile cannot inject unit-file
+  directives. Personal things — tokens, database passwords — never belong in
+  a profile, and applying one you don't trust is applying its OAuth client.
   """
 
   alias Supablock.{Client, Config}
@@ -45,7 +48,9 @@ defmodule Supablock.Profile do
     {valid, skipped} =
       profile
       |> Enum.sort_by(fn {key, _value} -> key end)
-      |> Enum.split_with(fn {key, _value} -> key in Config.valid_keys() end)
+      |> Enum.split_with(fn {key, value} ->
+        key in Config.valid_keys() and scalar?(value)
+      end)
 
     valid
     |> Enum.reduce_while({:ok, [], skipped_keys(skipped)}, fn {key, value},
@@ -56,6 +61,10 @@ defmodule Supablock.Profile do
       end
     end)
   end
+
+  # Only scalars coerce to a config string; an object/array value for a valid
+  # key is skipped rather than crashing `to_string/1` on it.
+  defp scalar?(value), do: is_binary(value) or is_number(value) or is_boolean(value)
 
   defp skipped_keys(pairs), do: Enum.map(pairs, fn {key, _value} -> key end)
 
@@ -78,12 +87,7 @@ defmodule Supablock.Profile do
         retry: false,
         redirect: true
       )
-      |> then(fn request ->
-        case Application.get_env(:supablock, :req_plug) do
-          nil -> request
-          plug -> Req.merge(request, plug: plug)
-        end
-      end)
+      |> Client.apply_test_plug()
 
     case Req.request(request) do
       {:ok, %Req.Response{status: 200, body: body}} when is_binary(body) ->

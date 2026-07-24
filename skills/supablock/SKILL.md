@@ -7,6 +7,9 @@ description: >-
   filesystem semantics. Use when asked to inspect, audit, compare or verify
   anything in a Supabase account — project settings, health, signup policy,
   bucket visibility, deployed functions, row data — without risk of writes.
+  Also use when asked to CHANGE a Supabase resource: supablock never writes,
+  but each project's how-to-change.md gives the exact Management API / CLI
+  request to alter each resource you can otherwise only read.
 ---
 
 # supablock — verify Supabase state, read-only by construction
@@ -128,6 +131,7 @@ organizations/<org>/
     network/{restrictions,ssl-enforcement,custom-hostname,vanity-subdomain}.json
     types.ts                  # generated TypeScript types
     upgrade-eligibility.json
+    how-to-change.md          # per-resource write path (API/CLI) — supablock stays read-only
 ```
 
 ## Verification recipes
@@ -167,6 +171,31 @@ supablock ls  organizations/<org>/projects/<ref>/database/public
 supablock cat organizations/<org>/projects/<ref>/database/public/users/rows-000000.csv
 ```
 
+## Changing a resource — supablock reads, and documents how to write
+
+supablock never writes to Supabase. When the user asks you to *change*
+state, don't guess the API — read the project's `how-to-change.md`. For
+each read-only resource that can actually be changed, it gives the exact
+request to make the change yourself: the Management API method + path (or
+the project's Storage API for buckets), the `supabase` CLI verb where one
+genuinely exists, with the project ref already filled in. Every path and
+verb is checked against Supabase's Management API reference. Purely derived
+files (health, advisors, metrics, logs, types.ts) have no entry — nothing
+is shown as writable that isn't.
+
+```bash
+# read the current state, then the write path for the same project
+supablock cat organizations/<org>/projects/<ref>/config/auth.json
+supablock cat organizations/<org>/projects/<ref>/how-to-change.md
+```
+
+Then run the printed command yourself, with the user's token, outside
+supablock — it is static documentation, not something supablock executes.
+If the user prefers the guidance inline, `supablock config set inline_docs
+true` prepends the same commands as a `//` header on top of each mutable
+JSON file (JSONC); it's off by default because `//` comments break strict
+JSON parsers like `jq`, so leave it off unless asked.
+
 ## Behaviour you should expect
 
 - **Exit codes:** 0 ok · 1 usage/no-such-path (grep: also "no matches") ·
@@ -192,3 +221,5 @@ supablock cat organizations/<org>/projects/<ref>/database/public/users/rows-0000
   default they use the service-role key internally (bypassing RLS); the
   key is never printed.
 - **Read-only:** every request is a GET; there is nothing you can break.
+  To *change* something, read `how-to-change.md` (above) for the exact
+  API/CLI request and run it yourself — supablock never writes.

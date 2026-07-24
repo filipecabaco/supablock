@@ -166,12 +166,7 @@ defmodule Supablock.OAuth do
       connect_options: Client.connect_options(@timeout_ms),
       retry: false
     )
-    |> then(fn request ->
-      case Application.get_env(:supablock, :req_plug) do
-        nil -> request
-        plug -> Req.merge(request, plug: plug)
-      end
-    end)
+    |> Client.apply_test_plug()
   end
 
   defp parse_tokens(body) when is_binary(body) do

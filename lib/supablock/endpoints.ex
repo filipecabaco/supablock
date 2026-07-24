@@ -110,6 +110,185 @@ defmodule Supablock.Endpoints do
   def path(:pooler_config, %{ref: ref}), do: "/v1/projects/#{ref}/config/database/pooler"
   def path(:disk_config, %{ref: ref}), do: "/v1/projects/#{ref}/config/disk"
 
+  @doc """
+  How to *change* the resource behind `key`, as static documentation only —
+  supablock never issues these requests, it merely shows them so an agent
+  standing on a read-only file knows the write path instead of guessing it.
+
+  Returns `nil` only for genuinely read-only or derived resources that have
+  no write endpoint at all — health, advisors, metrics, logs, generated
+  types, org listings, available regions, pgbouncer config (GET-only in the
+  spec): those must never be presented as writable. Everything the
+  Management API can change carries a clause, including `api_keys`
+  (create/rotate/delete). The api-keys *files* render raw key material, so
+  consumers must not inline a comment header there — that is a rendering
+  concern (a JSON-body guard), not a reason to hide the write path from the
+  per-project doc.
+
+  `path` carries `{ref}`/`{slug}` placeholders the caller fills from the
+  tree path. A path starting with `https://` is not a Management API
+  surface — buckets, for example, are written through the project's own
+  Storage API — and `auth` then names the credential to use instead of the
+  management token. `cli` is the equivalent `supabase` CLI verb only when
+  one genuinely exists — an approximate incantation is worse than none, so
+  it stays `nil` otherwise. `body: false` marks endpoints that take no
+  request body. Consumers should render the "verify against the reference"
+  pointer too: paths and verbs below are checked against the Management API
+  OpenAPI spec, but request bodies evolve.
+  """
+  @type mutation :: %{
+          method: String.t(),
+          path: String.t(),
+          cli: String.t() | nil,
+          note: String.t() | nil,
+          auth: String.t() | nil,
+          body: boolean
+        }
+
+  @spec mutation(key) :: mutation | nil
+  def mutation(:project),
+    do:
+      mut("PATCH", "/v1/projects/{ref}",
+        note: "Updates project settings (e.g. name). DELETE /v1/projects/{ref} removes the project."
+      )
+
+  def mutation(:auth_config),
+    do:
+      mut("PATCH", "/v1/projects/{ref}/config/auth",
+        note: "Partial update — send only the keys you change."
+      )
+
+  def mutation(:db_config),
+    do: mut("PUT", "/v1/projects/{ref}/config/database/postgres")
+
+  def mutation(:disk_config),
+    do: mut("POST", "/v1/projects/{ref}/config/disk")
+
+  def mutation(:pooler_config),
+    do: mut("PATCH", "/v1/projects/{ref}/config/database/pooler")
+
+  def mutation(:postgrest_config),
+    do: mut("PATCH", "/v1/projects/{ref}/postgrest")
+
+  def mutation(:realtime_config),
+    do: mut("PATCH", "/v1/projects/{ref}/config/realtime")
+
+  def mutation(:storage_config),
+    do: mut("PATCH", "/v1/projects/{ref}/config/storage")
+
+  def mutation(:secrets),
+    do:
+      mut("POST", "/v1/projects/{ref}/secrets",
+        cli: "supabase secrets set NAME=value",
+        note:
+          "DELETE the same path with a JSON array of names to remove secrets " <>
+            "(CLI: supabase secrets unset NAME)."
+      )
+
+  def mutation(:sso_providers),
+    do:
+      mut("POST", "/v1/projects/{ref}/config/auth/sso/providers",
+        note: "PUT .../{slug} updates a provider, DELETE .../{slug} removes it."
+      )
+
+  def mutation(:third_party_auth),
+    do:
+      mut("POST", "/v1/projects/{ref}/config/auth/third-party-auth",
+        note: "DELETE .../{slug} removes an integration."
+      )
+
+  def mutation(:function),
+    do:
+      mut("PATCH", "/v1/projects/{ref}/functions/{slug}",
+        cli: "supabase functions deploy {slug}",
+        note: "PATCH updates metadata; deploy new code with the CLI. DELETE .../{slug} removes."
+      )
+
+  # Bucket writes are not a Management API surface (its buckets endpoint is
+  # GET-only): they go through the project's own Storage API, authenticated
+  # with the secret (service_role) key — the one in api-keys/secret.
+  def mutation(:buckets),
+    do:
+      mut("POST", "https://{ref}.supabase.co/storage/v1/bucket",
+        auth: "$SUPABASE_SERVICE_ROLE_KEY",
+        note:
+          "Storage API, not the Management API — authenticate with the secret " <>
+            "(service_role) key from api-keys/secret. " <>
+            "PUT .../bucket/{slug} updates, DELETE .../bucket/{slug} removes."
+      )
+
+  def mutation(:branches),
+    do:
+      mut("POST", "/v1/projects/{ref}/branches",
+        cli: "supabase branches create",
+        note:
+          "Per-branch operations live at /v1/branches/{branch-id}: PATCH updates, " <>
+            "DELETE removes (CLI: supabase branches delete)."
+      )
+
+  def mutation(:migrations),
+    do:
+      mut("POST", "/v1/projects/{ref}/database/migrations",
+        cli: "supabase db push",
+        note:
+          "Applies a migration (version, name, SQL). " <>
+            "PUT upserts a migration without applying it."
+      )
+
+  def mutation(:backups),
+    do:
+      mut("PATCH", "/v1/projects/{ref}/database/backups/schedule",
+        note: "Changes the backup schedule time only; restores are separate endpoints."
+      )
+
+  def mutation(:readonly),
+    do:
+      mut("POST", "/v1/projects/{ref}/readonly/temporary-disable",
+        body: false,
+        note: "Disables read-only mode for the next 15 minutes. No request body."
+      )
+
+  def mutation(:network_restrictions),
+    do: mut("POST", "/v1/projects/{ref}/network-restrictions/apply")
+
+  def mutation(:ssl_enforcement),
+    do: mut("PUT", "/v1/projects/{ref}/ssl-enforcement")
+
+  def mutation(:custom_hostname),
+    do:
+      mut("POST", "/v1/projects/{ref}/custom-hostname/initialize",
+        note: "Then POST .../custom-hostname/reverify and .../custom-hostname/activate."
+      )
+
+  def mutation(:vanity_subdomain),
+    do: mut("POST", "/v1/projects/{ref}/vanity-subdomain/activate")
+
+  def mutation(:api_keys),
+    do:
+      mut("POST", "/v1/projects/{ref}/api-keys",
+        note:
+          "Creates an API key. PATCH/DELETE /v1/projects/{ref}/api-keys/{id} rotates or removes one."
+      )
+
+  def mutation(:upgrade_eligibility),
+    do:
+      mut("POST", "/v1/projects/{ref}/upgrade",
+        note: "Upgrades the project's Postgres version; check this file (eligibility) first."
+      )
+
+  def mutation(_key), do: nil
+
+  defp mut(method, path, opts \\ []) do
+    %{
+      method: method,
+      path: path,
+      cli: opts[:cli],
+      note: opts[:note],
+      auth: opts[:auth],
+      body: Keyword.get(opts, :body, true)
+    }
+  end
+
   @doc "TTL class for the endpoint, matching the `ttl` config map keys."
   @spec ttl_class(key) :: String.t()
   def ttl_class(key) when key in [:orgs, :org, :org_members], do: "orgs"
