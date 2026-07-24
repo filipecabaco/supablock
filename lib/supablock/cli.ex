@@ -1233,7 +1233,7 @@ defmodule Supablock.CLI do
   end
 
   defp parse_find([flag, glob | rest], path, opts) when flag in ["-name", "--name"] do
-    parse_find(rest, path, %{opts | name: glob_regex(glob)})
+    parse_find(rest, path, %{opts | name: Walk.glob_regex(glob)})
   end
 
   defp parse_find([flag, value | rest], path, opts)
@@ -1259,17 +1259,6 @@ defmodule Supablock.CLI do
 
   defp parse_find([arg | _rest], _path, _opts),
     do: {:error, "find: one start path only (extra argument: #{arg})"}
-
-  # Shell-glob basename matching: * and ? only, anchored.
-  defp glob_regex(glob) do
-    pattern =
-      glob
-      |> Regex.escape()
-      |> String.replace("\\*", ".*")
-      |> String.replace("\\?", ".")
-
-    Regex.compile!("^" <> pattern <> "$")
-  end
 
   ## grep — search file contents; directories recurse (like grep -r)
 

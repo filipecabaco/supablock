@@ -38,7 +38,8 @@ config, keys, functions and table data with ordinary Unix tools — `ls`,
                 │                           #   custom-hostname, vanity-subdomain .json
                 ├── logs/<source>           # NDJSON: postgres, auth, edge, storage, …
                 ├── metrics                 # Prometheus text, project-wide
-                └── types.ts                # generated TypeScript types
+                ├── types.ts                # generated TypeScript types
+                └── how-to-change.md        # the write path for each resource (docs only)
 ```
 
 **It cannot change anything.** Every request is a `GET`, and every mount is
@@ -301,7 +302,7 @@ supablock login [--token|--no-browser]  browser login, pasted token, or SSH-frie
 supablock logout                    delete the credential (and revoke the OAuth grant)
 supablock status [--json] | whoami  auth, org count, mount state, rate limits
 supablock doctor                    environment checks with fix hints
-supablock config set|get|list       mountpoint, TTLs, timeouts, expose_secrets, db_*, oauth.*
+supablock config set|get|list       mountpoint, TTLs, timeouts, expose_secrets, inline_docs, db_*, oauth.*
 supablock mount [mountpoint]        mount in the foreground (default ~/Supabase)
 supablock unmount [mountpoint]      unmount from another shell
 supablock ls|cat <path>             read the tree straight off the API (no mount)
@@ -358,6 +359,18 @@ output, and the filesystem shape means existing file tools (or plain
 
 * **llms.txt** — a machine-oriented summary at
   [filipecabaco.github.io/supablock/llms.txt](https://filipecabaco.github.io/supablock/llms.txt).
+* **The write path is documented inline** — supablock only *reads*, so every
+  project carries a `how-to-change.md` that lists, per resource, the exact
+  request (Management API — or the project's Storage API where that is the
+  real write surface — plus the `supabase` CLI verb where one exists) to
+  change it, with the project ref filled in. An agent that just read a config file
+  knows how to change it without leaving the tree or guessing the API — it
+  runs the command itself, with its own token. Read-only and derived files
+  (`health`, `advisors/`, `metrics`, `types.ts`, `api-keys/`) are never
+  listed, so nothing is implied to be writable that isn't. To get the same
+  guidance *inside* each file as a leading `//` header (JSONC), turn on
+  `supablock config set inline_docs true` — off by default, since comments
+  break strict JSON parsers like `jq`.
 
 Give an agent a scoped, revocable token rather than your interactive
 credential, and leave `expose_secrets` off.

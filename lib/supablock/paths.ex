@@ -31,14 +31,17 @@ defmodule Supablock.Paths do
   def mount_info_file, do: Path.join(state_dir(), "mount.info")
 
   @doc """
-  Create the config and state directories; the config directory (which holds
-  the credentials) is locked down to the owner.
+  Create the config and state directories, both locked down to the owner.
+  The config dir holds the credentials; the state dir holds the control
+  socket, and any local user who could reach that socket could drive the
+  daemon's API with the owner's token — so it must be owner-only too.
   """
   @spec ensure!() :: :ok
   def ensure! do
     File.mkdir_p!(config_dir())
     File.chmod!(config_dir(), 0o700)
     File.mkdir_p!(state_dir())
+    File.chmod!(state_dir(), 0o700)
     :ok
   end
 

@@ -58,7 +58,8 @@ defmodule Supablock.RouterTest do
                  "logs",
                  "metrics",
                  "types.ts",
-                 "upgrade-eligibility.json"
+                 "upgrade-eligibility.json",
+                 "how-to-change.md"
                ]
     end
 
@@ -235,6 +236,61 @@ defmodule Supablock.RouterTest do
       path = "/organizations/org-alpha/projects/#{@proj_a1}/upgrade-eligibility.json"
       assert {:ok, body} = Router.read(path)
       assert body =~ ~s("eligible": true)
+    end
+
+    test "how-to-change.md renders write docs from the endpoint map, no API call" do
+      base = "/organizations/org-alpha/projects/#{@proj_a1}"
+      path = "#{base}/how-to-change.md"
+
+      # Warm the org/project listing caches so the measurement below isolates
+      # the doc render itself.
+      assert {:ok, _children} = Router.list(base)
+
+      before = TestEnv.total_hits()
+      assert {:ok, body} = Router.read(path)
+      # Purely static: rendering the doc costs no Management API request.
+      assert TestEnv.total_hits() == before
+
+      assert String.starts_with?(body, "# How to change this project")
+      # A mutable resource shows its exact endpoint with the ref filled in.
+      assert body =~ "PATCH"
+      assert body =~ "/v1/projects/#{@proj_a1}/config/auth"
+      assert body =~ "supabase functions deploy"
+      # Read-only / derived resources must never be presented as writable.
+      refute body =~ "advisors"
+      refute body =~ "/health"
+      refute body =~ "types/typescript"
+
+      assert {:ok, {:file, size}} = Router.describe(path)
+      assert size == byte_size(body)
+    end
+
+    test "inline_docs off (default) leaves JSON bodies as pure JSON" do
+      path = "/organizations/org-alpha/projects/#{@proj_a1}/config/auth.json"
+      assert {:ok, body} = Router.read(path)
+      assert String.starts_with?(body, "{")
+      refute String.starts_with?(body, "//")
+    end
+
+    test "inline_docs on prepends a JSONC write header to mutable files only" do
+      assert :ok = Config.set("inline_docs", "true")
+      base = "/organizations/org-alpha/projects/#{@proj_a1}"
+
+      assert {:ok, auth} = Router.read("#{base}/config/auth.json")
+      assert String.starts_with?(auth, "// supablock is read-only")
+      assert auth =~ "PATCH /v1/projects/#{@proj_a1}/config/auth"
+      # The real JSON body still follows the header untouched.
+      assert auth =~ "site_url"
+      assert auth =~ "\n{\n"
+
+      # A derived, read-only file is never annotated, flag on or off.
+      assert {:ok, health} = Router.read("#{base}/health")
+      refute String.starts_with?(health, "//")
+
+      # api-keys is mutable, but its files render raw key material (not JSON),
+      # so the JSONC header is gated out to avoid corrupting the read.
+      assert {:ok, publishable} = Router.read("#{base}/api-keys/publishable")
+      refute String.starts_with?(publishable, "//")
     end
 
     test "database dir carries backups/migrations/readonly files alongside schemas" do
@@ -429,6 +485,14 @@ defmodule Supablock.RouterTest do
       assert Router.sanitize("a" <> <<0>> <> "b") == "a_b"
       assert Router.sanitize("") == "_"
       assert Router.sanitize("ok-name") == "ok-name"
+    end
+
+    test "'.' and '..' are neutralized so snapshot paths cannot walk up" do
+      assert Router.sanitize(".") == "_"
+      assert Router.sanitize("..") == "__"
+      # A dot inside a name is fine — only the exact traversal names change.
+      assert Router.sanitize("my.bucket") == "my.bucket"
+      assert Router.sanitize("...") == "..."
     end
 
     test "collisions get deterministic ~2/~3 suffixes in list order" do

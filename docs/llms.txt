@@ -78,6 +78,7 @@ Tree shape (all paths under the root):
     organizations/<org>/projects/<ref>/metrics         # Prometheus text, project-wide
     organizations/<org>/projects/<ref>/types.ts        # generated TypeScript types
     organizations/<org>/projects/<ref>/upgrade-eligibility.json
+    organizations/<org>/projects/<ref>/how-to-change.md # write path per resource: exact API request (Management API, or the project's Storage API for buckets) + CLI verb (docs only; supablock never writes). `config set inline_docs true` also prepends it inside each mutable file as a // JSONC header.
 
 Drift tracking: `supablock snapshot <dir>` writes the tree to a real
 directory (config surface by default — logs, metrics, rows and function

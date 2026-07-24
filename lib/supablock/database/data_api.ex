@@ -56,7 +56,7 @@ defmodule Supablock.Database.DataApi do
           decode_body: false,
           retry: false
         )
-        |> apply_test_plug()
+        |> Client.apply_test_plug()
 
       case Req.request(req) do
         {:ok, %Req.Response{status: status, headers: resp_headers, body: body}} ->
@@ -94,23 +94,14 @@ defmodule Supablock.Database.DataApi do
 
   # Testing escape hatch only (mirrors Supablock.Client): route the request
   # through the stub plug so hermetic tests never reach a real Data API host.
-  defp apply_test_plug(req) do
-    case Application.get_env(:supablock, :req_plug) do
-      nil -> req
-      plug -> Req.merge(req, plug: plug, retry: false)
-    end
-  end
-
   # Hosted projects answer at `<ref>.supabase.co`. A custom domain or a
   # self-hosted project can point elsewhere with `SUPABLOCK_DATA_API_URL_<REF>`.
   defp base_url(ref) do
-    case System.get_env("SUPABLOCK_DATA_API_URL_" <> env_key(ref)) do
+    case System.get_env("SUPABLOCK_DATA_API_URL_" <> Client.env_key(ref)) do
       url when is_binary(url) and url != "" -> String.trim_trailing(String.trim(url), "/")
       _unset -> "https://#{ref}.supabase.co"
     end
   end
-
-  defp env_key(ref), do: ref |> String.upcase() |> String.replace(~r/[^A-Z0-9]/, "_")
 
   defp normalize_headers(headers) when is_map(headers) do
     Map.new(headers, fn {name, value} ->

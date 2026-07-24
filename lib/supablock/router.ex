@@ -49,6 +49,7 @@ defmodule Supablock.Router do
                       rows-000500.csv        # ...
                 types.ts                     # generated TypeScript types
                 upgrade-eligibility.json     # `{}` when unavailable
+                how-to-change.md             # write path per resource (supablock stays read-only)
 
   Dynamic segments are validated against the cached parent listing, so a
   bogus name is a cheap `:enoent` (plus negative caching) rather than an API
@@ -56,12 +57,12 @@ defmodule Supablock.Router do
   stable.
   """
 
-  alias Supablock.{Cache, Client, Config, Database, Endpoints, Logs, Metrics, Render}
+  alias Supablock.{Cache, Client, Config, Database, Endpoints, Logs, Metrics, Render, WriteDocs}
 
   @type node_kind :: :dir | {:file, non_neg_integer}
   @type error :: :enoent | :eio | :eagain | :eacces
 
-  @project_children ~w(info.json health advisors config api-keys secrets.json functions storage branches database network logs metrics types.ts upgrade-eligibility.json)
+  @project_children ~w(info.json health advisors config api-keys secrets.json functions storage branches database network logs metrics types.ts upgrade-eligibility.json how-to-change.md)
   @config_children ~w(auth.json database.json disk.json pgbouncer.json pooler.json postgrest.json realtime.json storage.json auth)
   @auth_config_children ~w(sso third-party)
   @api_key_children ~w(publishable secret)
@@ -276,6 +277,12 @@ defmodule Supablock.Router do
 
   defp resolve_project(project, ["upgrade-eligibility.json"]),
     do: optional_file(:upgrade_eligibility, %{ref: project_ref(project)})
+
+  # Static, GET-only documentation: how to *change* each resource under this
+  # project (supablock never writes — the agent runs these itself). Rendered
+  # from the endpoint map, so it costs no API request.
+  defp resolve_project(project, ["how-to-change.md"]),
+    do: {:file, fn -> {:ok, WriteDocs.project_doc(project_ref(project))} end}
 
   # Edge-function secrets: the endpoint returns names *and* values, so values
   # are redacted at render time unless expose_secrets is on — the names alone
@@ -526,7 +533,7 @@ defmodule Supablock.Router do
     {:file,
      fn ->
        with {:ok, value} <- fetch(endpoint, args, opts) do
-         {:ok, render_fun.(value)}
+         {:ok, WriteDocs.maybe_prepend(endpoint, args, render_fun.(value))}
        end
      end}
   end
@@ -538,9 +545,14 @@ defmodule Supablock.Router do
     {:file,
      fn ->
        case fetch(endpoint, args) do
-         {:ok, value} -> {:ok, Render.json(value)}
-         {:error, reason} when reason in [:enoent, :eacces] -> {:ok, "{}\n"}
-         {:error, reason} -> {:error, reason}
+         {:ok, value} ->
+           {:ok, WriteDocs.maybe_prepend(endpoint, args, Render.json(value))}
+
+         {:error, reason} when reason in [:enoent, :eacces] ->
+           {:ok, WriteDocs.maybe_prepend(endpoint, args, "{}\n")}
+
+         {:error, reason} ->
+           {:error, reason}
        end
      end}
   end
@@ -680,15 +692,20 @@ defmodule Supablock.Router do
 
   @doc false
   # API-supplied names become path components: no separators, no NULs, never
-  # empty; collisions get a deterministic ~2/~3 suffix in API list order.
+  # empty, and never `.`/`..` — which `snapshot`/`diff` turn into real
+  # filesystem paths where they would mean "walk up a directory". Collisions
+  # get a deterministic ~2/~3 suffix in API list order.
   def sanitize(name) do
-    sanitized =
-      name
-      |> to_string()
-      |> String.replace("/", "_")
-      |> String.replace(<<0>>, "_")
-
-    if sanitized == "", do: "_", else: sanitized
+    name
+    |> to_string()
+    |> String.replace("/", "_")
+    |> String.replace(<<0>>, "_")
+    |> case do
+      "" -> "_"
+      "." -> "_"
+      ".." -> "__"
+      other -> other
+    end
   end
 
   @doc false

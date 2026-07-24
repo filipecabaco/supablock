@@ -49,6 +49,21 @@ defmodule Supablock.ProfileTest do
     assert Enum.sort(skipped) == ["evil.key", "token"]
   end
 
+  test "a non-scalar value for a valid key is skipped, not crashed", %{base: base} do
+    path = write_profile!(base, %{"ttl.orgs" => %{"nested" => 1}, "db_page_size" => 250})
+
+    assert {:ok, profile} = Profile.fetch(path)
+    assert {:ok, ["db_page_size"], ["ttl.orgs"]} = Profile.apply(profile)
+  end
+
+  test "a value with control characters is rejected by coercion", %{base: base} do
+    path = write_profile!(base, %{"mountpoint" => "/mnt/x\nExecStartPre=/bin/sh -c evil"})
+
+    assert {:ok, profile} = Profile.fetch(path)
+    assert {:error, message} = Profile.apply(profile)
+    assert message =~ "mountpoint"
+  end
+
   test "a value that fails coercion reports the key", %{base: base} do
     path = write_profile!(base, %{"ttl.orgs" => "many"})
 
@@ -77,12 +92,12 @@ defmodule Supablock.ProfileTest do
       "/team/supablock.json" => fn conn ->
         conn
         |> Plug.Conn.put_resp_content_type("application/json")
-        |> Plug.Conn.send_resp(200, Jason.encode!(%{"mountpoint" => "/mnt/from-url"}))
+        |> Plug.Conn.send_resp(200, Jason.encode!(%{"ttl.orgs" => 300}))
       end
     })
 
     assert {:ok, profile} = Profile.fetch("https://team.example.com/team/supablock.json")
-    assert {:ok, ["mountpoint"], []} = Profile.apply(profile)
-    assert Config.get("mountpoint") == "/mnt/from-url"
+    assert {:ok, ["ttl.orgs"], []} = Profile.apply(profile)
+    assert Config.get("ttl.orgs") == 300
   end
 end
