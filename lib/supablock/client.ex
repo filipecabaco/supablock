@@ -12,6 +12,14 @@ defmodule Supablock.Client do
       remaining budget, otherwise `{:error, :rate_limited}` immediately;
     * the token never leaks: nothing here logs headers, and `redact/1`
       scrubs the token from anything that does get logged.
+
+  Response bodies are decoded as JSON and nothing else. Req >= 0.6 stopped
+  negotiating and decoding response compression by default, and stopped
+  auto-decoding archive content types, after a decompression-bomb advisory
+  (CVE-2026-49755) — a tiny response expanding to gigabytes in memory. That
+  default is deliberately left alone: the Management API does not compress
+  unless asked, so nothing is gained by opting back in with `compressed:
+  true` or by widening `:decoders`.
   """
 
   require Logger

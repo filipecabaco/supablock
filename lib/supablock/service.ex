@@ -110,27 +110,7 @@ defmodule Supablock.Service do
     File.mkdir_p!(Path.dirname(path))
     Paths.ensure!()
 
-    File.write!(path, """
-    <?xml version="1.0" encoding="UTF-8"?>
-    <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-    <plist version="1.0">
-    <dict>
-      <key>Label</key><string>#{@agent_label}</string>
-      <key>ProgramArguments</key>
-      <array>
-        <string>#{bin}</string>
-        <string>mount</string>
-        <string>--foreground</string>
-      </array>
-      <key>RunAtLoad</key><true/>
-      <key>KeepAlive</key>
-      <dict><key>SuccessfulExit</key><false/></dict>
-      <key>StandardOutPath</key><string>#{Paths.log_file()}</string>
-      <key>StandardErrorPath</key><string>#{Paths.log_file()}</string>
-      <key>Comment</key><string>supablock mount at #{mountpoint}</string>
-    </dict>
-    </plist>
-    """)
+    File.write!(path, launchd_plist(bin, mountpoint))
 
     messages = ["Wrote #{path}"]
 
@@ -142,6 +122,52 @@ defmodule Supablock.Service do
     else
       {:ok, messages ++ ["launchctl not found — load manually."]}
     end
+  end
+
+  @doc """
+  The launchd agent plist for `bin` mounting at `mountpoint`. Public so the
+  escaping below is testable on any platform, not only macOS.
+  """
+  @spec launchd_plist(String.t(), String.t()) :: String.t()
+  def launchd_plist(bin, mountpoint) do
+    """
+    <?xml version="1.0" encoding="UTF-8"?>
+    <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+    <plist version="1.0">
+    <dict>
+      <key>Label</key><string>#{@agent_label}</string>
+      <key>ProgramArguments</key>
+      <array>
+        <string>#{xml(bin)}</string>
+        <string>mount</string>
+        <string>--foreground</string>
+      </array>
+      <key>RunAtLoad</key><true/>
+      <key>KeepAlive</key>
+      <dict><key>SuccessfulExit</key><false/></dict>
+      <key>StandardOutPath</key><string>#{xml(Paths.log_file())}</string>
+      <key>StandardErrorPath</key><string>#{xml(Paths.log_file())}</string>
+      <key>Comment</key><string>supablock mount at #{xml(mountpoint)}</string>
+    </dict>
+    </plist>
+    """
+  end
+
+  # The plist is XML, so a value carrying `</string>` would close the element
+  # and let the rest be read as further plist keys — a later duplicate
+  # `ProgramArguments` wins, which is a login-time command. `mountpoint` is
+  # the reachable input: `config set` and `setup <profile>` both accept it,
+  # and the profile can come off the network. Control characters are already
+  # refused there (that is what keeps the systemd unit safe, which is INI and
+  # line-oriented); XML needs escaping too, not just a newline check.
+  defp xml(value) do
+    value
+    |> to_string()
+    |> String.replace("&", "&amp;")
+    |> String.replace("<", "&lt;")
+    |> String.replace(">", "&gt;")
+    |> String.replace("\"", "&quot;")
+    |> String.replace("'", "&apos;")
   end
 
   defp platform do

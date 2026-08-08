@@ -1397,26 +1397,70 @@ defmodule Supablock.CLI do
         out("Files differ: #{rel}")
 
       diff_bin ->
-        tmp =
-          Path.join(
-            System.tmp_dir!(),
-            "supablock-diff-#{:erlang.unique_integer([:positive])}"
-          )
+        case private_temp_dir() do
+          {:ok, dir} ->
+            tmp = Path.join(dir, "tree")
 
-        try do
-          File.write!(tmp, live_body)
+            try do
+              File.write!(tmp, live_body)
 
-          {output, _code} =
-            System.cmd(
-              diff_bin,
-              ["-u", "--label", "snapshot/#{rel}", "--label", "tree/#{rel}", snap_file, tmp],
-              stderr_to_stdout: true
-            )
+              {output, _code} =
+                System.cmd(
+                  diff_bin,
+                  ["-u", "--label", "snapshot/#{rel}", "--label", "tree/#{rel}", snap_file, tmp],
+                  stderr_to_stdout: true
+                )
 
-          out_bytes(output)
-        after
-          File.rm(tmp)
+              out_bytes(output)
+            after
+              File.rm(tmp)
+              File.rmdir(dir)
+            end
+
+          {:error, reason} ->
+            err("diff: could not create a temporary directory: #{inspect(reason)}")
+            out("Files differ: #{rel}")
         end
+    end
+  end
+
+  @doc """
+  A fresh owner-only directory under the system temp dir, for a body that
+  must not be readable by other users on the machine. Public so the
+  properties below are directly testable.
+  """
+  # The live body handed to diff(1) can hold table rows, and api-keys/secret
+  # or secrets.json values when expose_secrets is on. The system temp dir is
+  # world-writable and shared by every user, so the body goes into a fresh
+  # owner-only directory rather than a bare file there: mkdir fails on an
+  # existing name (so a pre-planted symlink is refused instead of written
+  # through), the name is unpredictable, and the 0700 happens while the
+  # directory is still empty — no window where the body is world-readable.
+  @spec private_temp_dir(non_neg_integer) :: {:ok, Path.t()} | {:error, term}
+  def private_temp_dir(attempts \\ 8)
+
+  def private_temp_dir(0), do: {:error, :eexist}
+
+  def private_temp_dir(attempts) do
+    suffix = Base.url_encode64(:crypto.strong_rand_bytes(12), padding: false)
+    dir = Path.join(System.tmp_dir!(), "supablock-diff-" <> suffix)
+
+    case File.mkdir(dir) do
+      :ok ->
+        case File.chmod(dir, 0o700) do
+          :ok ->
+            {:ok, dir}
+
+          {:error, reason} ->
+            File.rmdir(dir)
+            {:error, reason}
+        end
+
+      {:error, :eexist} ->
+        private_temp_dir(attempts - 1)
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 

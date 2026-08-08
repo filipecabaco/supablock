@@ -37,14 +37,22 @@ defmodule Supablock.Completions do
   defp bash do
     """
     # supablock bash completion — eval "$(supablock completions bash)"
+    #
+    # Candidate names come from a live Supabase account (org slugs, project
+    # names, buckets, branches, function slugs, table names) and are therefore
+    # third-party text. `compgen -W "$list"` would *expand* each word — a table
+    # named '$(cmd)' would run cmd on Tab — so entries are read line by line
+    # and matched with a literal prefix test instead. Nothing account-derived
+    # is ever re-parsed by the shell.
     _supablock_paths() {
-      local cur="$1" parent entries
+      local cur="$1" parent line
       if [[ "$cur" == */* ]]; then parent="${cur%/*}"; else parent=""; fi
-      entries=$(supablock ls "${parent:-/}" 2>/dev/null) || return
-      if [ -n "$parent" ]; then
-        entries=$(printf '%s\\n' "$entries" | sed "s|^|$parent/|")
-      fi
-      COMPREPLY=($(compgen -W "$entries" -- "$cur"))
+      COMPREPLY=()
+      while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        [ -n "$parent" ] && line="$parent/$line"
+        [[ "$line" == "$cur"* ]] && COMPREPLY+=("$line")
+      done < <(supablock ls "${parent:-/}" 2>/dev/null)
       # entries may be directories the user will descend into
       [ ${#COMPREPLY[@]} -eq 1 ] && compopt -o nospace 2>/dev/null
     }
