@@ -1,6 +1,12 @@
 # Builds the container image (see Dockerfile) and pushes it to Docker Hub as
 # filipecabaco/supablock — the source of the quick-start:
 #
+#   docker run --rm --cap-drop ALL --security-opt no-new-privileges \
+#     -e SUPABLOCK_TOKEN=sbp_... filipecabaco/supablock ls organizations
+#
+# Only `supablock mount` needs FUSE, which is what forces the privileged
+# form (host device + CAP_SYS_ADMIN + AppArmor exemption):
+#
 #   docker run -it --rm --device /dev/fuse --cap-add SYS_ADMIN \
 #     --security-opt apparmor=unconfined \
 #     -v supablock-config:/root/.config/supablock filipecabaco/supablock
@@ -81,6 +87,32 @@ jobs:
         run: |
           docker run --rm supablock:smoke help
           docker run --rm supablock:smoke doctor || true
+
+      # Everything except `mount` must work with no capabilities, no host
+      # device and a read-only rootfs — a subcommand missing from the
+      # entrypoint's passthrough list falls through to the mount path and
+      # demands --cap-add SYS_ADMIN for a command that needs none, which is
+      # how users end up running the image privileged for no reason.
+      - name: Unprivileged subcommands need no FUSE
+        run: |
+          hardened() {
+            docker run --rm -i --cap-drop ALL \
+              --security-opt no-new-privileges --read-only \
+              -e SUPABLOCK_TOKEN=sbp_smoke_not_a_real_token supablock:smoke "$@"
+          }
+          # These reach the API and fail on auth, never on /dev/fuse.
+          for cmd in "ls organizations" "cat organizations" \
+                     "find organizations -maxdepth 1" "grep -l x organizations"; do
+            # shellcheck disable=SC2086
+            out="$(hardened $cmd 2>&1 || true)"
+            case "$out" in
+              */dev/fuse*) echo "::error::'$cmd' fell through to the mount path: $out"; exit 1 ;;
+            esac
+          done
+          # mcp speaks JSON-RPC on stdio; initialize must answer.
+          echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}' \
+            | hardened mcp | grep -q '"serverInfo"' \
+            || { echo "::error::mcp did not initialize under the hardened flags"; exit 1; }
 
       - name: Report image size
         run: |

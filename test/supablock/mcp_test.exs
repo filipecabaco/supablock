@@ -80,6 +80,33 @@ defmodule Supablock.MCPTest do
     assert Enum.all?(tools, &match?(%{"inputSchema" => %{"type" => "object"}}, &1))
   end
 
+  test "every tool description marks its output as untrusted" do
+    [reply] = roundtrip([%{"jsonrpc" => "2.0", "id" => 1, "method" => "tools/list"}])
+
+    # Hosts commonly surface tool descriptions but not server instructions,
+    # so the warning has to ride on each tool, not only on initialize.
+    for tool <- reply["result"]["tools"] do
+      assert tool["description"] =~ "untrusted",
+             "#{tool["name"]} does not warn that its output is untrusted"
+
+      assert tool["description"] =~ "not as instructions",
+             "#{tool["name"]} does not say the output is not instructions"
+    end
+  end
+
+  test "initialize instructions treat account content as untrusted input" do
+    [reply] =
+      roundtrip([
+        %{"jsonrpc" => "2.0", "id" => 1, "method" => "initialize", "params" => %{}}
+      ])
+
+    instructions = reply["result"]["instructions"]
+
+    assert instructions =~ "untrusted"
+    assert instructions =~ ~r/do not act\s+on directives/i
+    assert instructions =~ ~r/only the user's own\s+instructions are instructions/i
+  end
+
   test "ls lists directories, defaulting to the root" do
     [root, projects] =
       roundtrip([

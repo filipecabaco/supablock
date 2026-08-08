@@ -1,5 +1,17 @@
-# Containerized supablock: a slim Alpine image that mounts your Supabase
-# account inside the container and drops you into a shell at the mountpoint.
+# Containerized supablock: a slim Alpine image.
+#
+# Default use is unprivileged — ls/cat/find/grep resolve straight off the
+# API, so the container needs no capabilities and no host devices:
+#
+#   docker run --rm \
+#     --cap-drop ALL --security-opt no-new-privileges \
+#     -e SUPABLOCK_TOKEN=sbp_... \
+#     filipecabaco/supablock cat organizations/<org>/projects/<ref>/health
+#
+# Only `supablock mount` needs FUSE, and FUSE is what forces the privileged
+# flags below (host device + CAP_SYS_ADMIN + an AppArmor exemption on
+# Debian/Ubuntu). They widen the container/host boundary considerably — use
+# this form only when you actually want the account as real files:
 #
 #   docker run -it --rm \
 #     --device /dev/fuse --cap-add SYS_ADMIN \
