@@ -15,21 +15,36 @@ MOUNTPOINT="${SUPABLOCK_MOUNTPOINT:-/supabase}"
 CREDENTIALS="${XDG_CONFIG_HOME:-$HOME/.config}/supablock/credentials"
 
 # Pass supablock subcommands straight through. Notably the tree readers
-# (ls, cat, head, tail, find, grep) and the cache daemon (serve) read the
-# tree without mounting, so they need none of the FUSE flags:
-#   docker run --rm -e SUPABLOCK_TOKEN=sbp_... filipecabaco/supablock \
+# (ls, cat, head, tail, find, grep), the MCP server, snapshot/diff and the
+# cache daemon (serve) read the tree without mounting, so they need none of
+# the FUSE flags below:
+#   docker run --rm --cap-drop ALL --security-opt no-new-privileges \
+#     -e SUPABLOCK_TOKEN=sbp_... filipecabaco/supablock \
 #     grep -l '"disable_signup": false' organizations
+# Every clause of Supablock.CLI.dispatch/1 must be listed here: a missing
+# one falls through to the mount path and demands the privileged flags for
+# a command that does not need them.
 # (To run the *shell* tools over a real mount instead, use a command that
 # is not a supablock subcommand: ... supablock-image sh -c 'grep -r ...'.)
 case "${1:-}" in
-    setup|login|logout|status|whoami|doctor|config|mount|unmount|ls|cat|head|tail|find|grep|serve|refresh|service|help|-h|--help)
+    setup|login|logout|status|whoami|doctor|config|mount|unmount|ls|cat|head|tail|find|grep|snapshot|diff|mcp|completions|serve|refresh|service|help|-h|--help)
         exec supablock "$@"
         ;;
 esac
 
 if [ ! -c /dev/fuse ]; then
     cat >&2 <<'EOF'
-/dev/fuse is not available in this container. Run the image with:
+/dev/fuse is not available in this container, so the account cannot be
+mounted. Most work does not need a mount — the readers resolve straight off
+the API and run with no capabilities at all:
+
+  docker run --rm --cap-drop ALL --security-opt no-new-privileges --read-only \
+    -e SUPABLOCK_TOKEN=sbp_... filipecabaco/supablock \
+    cat organizations/<org>/projects/<ref>/health
+
+If you really do want the mount, FUSE needs a host device, CAP_SYS_ADMIN
+and an AppArmor exemption — flags that meaningfully weaken the
+container/host boundary:
 
   docker run -it --rm \
     --device /dev/fuse --cap-add SYS_ADMIN \

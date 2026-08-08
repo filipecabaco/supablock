@@ -174,6 +174,14 @@ jobs:
     # proved stale during a branch rename, silently skipping publish.
     if: always() && (startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
+    # id-token + attestations are what let this job mint a sigstore build
+    # provenance statement for the binaries (`gh attestation verify`), so an
+    # installer download can be traced back to this workflow and commit
+    # rather than merely matching a checksum the same server handed out.
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     steps:
       # Checkout before download-artifact: the npm publish step needs
       # npm/publish.sh, and checkout would wipe an earlier dist/.
@@ -187,6 +195,24 @@ jobs:
 
       - name: List built binaries
         run: ls -la dist/
+
+      # SHA256SUMS ships as a release asset so install.sh can verify what it
+      # downloaded before making it executable. Written in coreutils
+      # `sha256sum -c` format, basenames only, sorted for reproducibility.
+      - name: Generate SHA256SUMS
+        working-directory: dist
+        run: |
+          sha256sum supablock-* | sort -k2 > SHA256SUMS
+          cat SHA256SUMS
+
+      # Provenance is the half that actually matters: a checksum served from
+      # the same release as the binary only proves the two agree. This binds
+      # each binary to this workflow, repo and commit, verifiable offline
+      # against sigstore's transparency log.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: dist/supablock-*
 
       - name: Publish versioned release
         if: startsWith(github.ref, 'refs/tags/')

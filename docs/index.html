@@ -775,8 +775,24 @@
       </div>
 
       <p class="body">
+        Piping a script into a shell is trust in whoever served it, so the installer verifies
+        what it downloaded against the <span class="mono">SHA256SUMS</span> asset of the same
+        release and refuses to install on a mismatch. Release binaries also carry a sigstore
+        build provenance attestation tying them to the workflow and commit that built them —
+        the part a checksum cannot prove. Read the script first if you prefer
+        (<span class="mono">curl … -o install.sh</span>, then <span class="mono">sh install.sh</span>):
+      </p>
+
+      <div class="code">
+        <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
+        <pre><span class="p">$</span> gh attestation verify ~/.local/bin/supablock --repo filipecabaco/supablock</pre>
+      </div>
+
+      <p class="body">
         The same binaries are on npm — the channel for restricted sandboxes (CI, AI agents)
-        whose egress blocks this site and GitHub's release CDN but allows the npm registry:
+        whose egress blocks this site and GitHub's release CDN but allows the npm registry.
+        No install script runs: the binary ships inside the tarball, covered by npm's own
+        integrity hashes.
       </p>
 
       <div class="code">
@@ -805,10 +821,25 @@
       <p class="sec-label"><svg class="icon" aria-hidden="true"><use href="#i-cube"/></svg>Docker</p>
       <h2>One command — <span class="mono">docker run</span></h2>
       <p class="body">
-        Nothing on your machine but Docker. The
+        Nothing on your machine but Docker. Reads resolve straight off the API, so the
         <a href="https://hub.docker.com/r/filipecabaco/supablock" rel="noopener">filipecabaco/supablock</a>
-        image (Alpine, amd64/arm64) logs you in, mounts your account, and drops you into a shell
-        at <span class="mono">/supabase</span>. Exiting unmounts and removes the container.
+        image (Alpine, amd64/arm64) runs with every capability dropped, no host devices and a
+        read-only filesystem:
+      </p>
+
+      <div class="code">
+        <button class="copy" type="button"><svg class="icon" aria-hidden="true"><use href="#i-clipboard"/></svg><span>copy</span></button>
+        <pre><span class="p">$</span> docker run --rm \
+    --cap-drop ALL --security-opt no-new-privileges --read-only \
+    -e SUPABLOCK_TOKEN=sbp_... \
+    filipecabaco/supablock cat organizations/&lt;org&gt;/projects/&lt;ref&gt;/health</pre>
+      </div>
+
+      <p class="body">
+        Mounting the account as real files is the one thing that needs FUSE, and FUSE is what
+        forces a host device, <code>CAP_SYS_ADMIN</code> and an AppArmor exemption. Those flags
+        widen the container/host boundary considerably — reach for this form only when you want
+        the mount, since every read above works without it:
       </p>
 
       <div class="code">
@@ -826,12 +857,12 @@
           <p>An empty <code>supablock-config</code> volume triggers login; later runs go straight to the shell.</p>
         </div>
         <div class="fact">
-          <span class="k"><svg class="icon" aria-hidden="true"><use href="#i-lock-closed"/></svg>--device /dev/fuse</span>
-          <p>The flags are FUSE plumbing: host device, <code>CAP_SYS_ADMIN</code>, an AppArmor exemption on Debian/Ubuntu.</p>
+          <span class="k"><svg class="icon" aria-hidden="true"><use href="#i-lock-closed"/></svg>privileges are opt-in</span>
+          <p>Only <code>mount</code> needs them. <code>ls</code>/<code>cat</code>/<code>find</code>/<code>grep</code> run under <code>--cap-drop ALL</code>.</p>
         </div>
         <div class="fact">
-          <span class="k"><svg class="icon" aria-hidden="true"><use href="#i-command-line"/></svg>scriptable</span>
-          <p>Args after the image run at the mountpoint; <code>-e SUPABLOCK_TOKEN=sbp_…</code> skips login for CI.</p>
+          <span class="k"><svg class="icon" aria-hidden="true"><use href="#i-command-line"/></svg>pin by digest</span>
+          <p><code>filipecabaco/supablock@sha256:…</code> gets the same bits twice, unlike the floating tag.</p>
         </div>
       </div>
     </div>
