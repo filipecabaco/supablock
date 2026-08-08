@@ -393,7 +393,12 @@ output, and the filesystem shape means existing file tools (or plain
 `ls`/`cat`) are the whole integration.
 
 * **Agent skill** — `npx skills add filipecabaco/supablock` teaches an agent
-  to get the tool, authenticate, and run the common checks.
+  to run the common checks. It declares `allowed-tools: Bash(supablock:*)`,
+  so the whole skill is one read-only command: no installer, no package
+  manager, no container runtime, no shell utilities, and every recipe
+  written in supablock's own `ls`/`cat`/`head`/`find`/`grep`. It never
+  handles your token, and it hands write requests to you rather than
+  running them. See [SECURITY.md](SECURITY.md).
 * **Sandbox-safe install** — `npm install -g supablock` (or `npx supablock`)
   delivers the prebuilt binary through the npm registry, which sandbox
   egress policies typically allowlist even when the curl installer and
@@ -479,6 +484,9 @@ prepended to a JSON body, so raw key files stay intact. Either way supablock
 issues none of these requests: you run them, with your own token.
 
 ## Security notes
+
+Full model, including the agent skill's capability bound and how to report
+a vulnerability: [SECURITY.md](SECURITY.md).
 
 * The credential lives in `~/.config/supablock/credentials` (mode `0600`,
   `0700` dir), written atomically. Tokens are never logged or rendered into
