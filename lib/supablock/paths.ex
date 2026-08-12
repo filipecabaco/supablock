@@ -27,6 +27,33 @@ defmodule Supablock.Paths do
   @spec control_socket() :: String.t()
   def control_socket, do: Path.join(state_dir(), "control.sock")
 
+  # `sockaddr_un.sun_path` holds 104 bytes on the BSDs (macOS) and 108 on
+  # Linux, terminating NUL included — 103 is the portable ceiling. A deep
+  # `XDG_STATE_HOME` (a sandbox or CI scratch directory, typically) pushes
+  # the control socket past it, and the bind then fails with a bare
+  # `:einval` that names nothing.
+  @sun_path_max 103
+
+  @doc """
+  Whether the control socket path fits in a Unix socket address. Checked
+  before binding so the failure arrives with its cause and its fix rather
+  than as an unexplained `:einval`.
+  """
+  @spec validate_control_socket() :: :ok | {:error, String.t()}
+  def validate_control_socket do
+    path = control_socket()
+    size = byte_size(path)
+
+    if size <= @sun_path_max do
+      :ok
+    else
+      {:error,
+       "the socket path is #{size} bytes, over the #{@sun_path_max} a Unix " <>
+         "socket address holds (#{path}) — point XDG_STATE_HOME somewhere " <>
+         "shorter, e.g. XDG_STATE_HOME=/tmp/supablock"}
+    end
+  end
+
   @spec mount_info_file() :: String.t()
   def mount_info_file, do: Path.join(state_dir(), "mount.info")
 

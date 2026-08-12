@@ -513,8 +513,12 @@ supablock tracks `X-RateLimit-*` per scope (see `status`) and degrades to
 
 ## Troubleshooting
 
-* **`supablock doctor`** checks `/dev/fuse`, unmount tools, permissions and
-  the compiled FUSE port, with a fix hint per failure.
+* **`supablock doctor`** checks the environment, grouped by what each check
+  gates, with a fix hint per failure. Only the *Reading* group is required —
+  it exits `0` when `ls`/`cat`/`find`/`grep` will work, marking optional
+  gaps (`serve`'s socket path, the FUSE prerequisites for `mount`) with `!`
+  rather than failing the run. A sandbox with no FUSE is a working
+  supablock, not a broken one.
 * **Stale mount** (`Transport endpoint is not connected`): re-run
   `supablock mount` (it recovers automatically) or `fusermount3 -u <mp>`.
 * **Rate limited**: reads fail with `EAGAIN`; `status` shows the remaining

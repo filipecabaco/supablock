@@ -452,10 +452,22 @@ defmodule Supablock.CLITest do
              "Unknown key: nope"
   end
 
-  test "doctor reports checks and exits 0 or 4" do
-    output = capture_io(fn -> CLI.run(["doctor"]) end)
+  test "doctor groups its checks, and a missing credential is fatal" do
+    output = capture_io(fn -> assert CLI.run(["doctor"]) == 4 end)
+
+    assert output =~ "Reading —"
+    assert output =~ "Mounting —"
+    assert output =~ "✗ credential available"
     assert output =~ "unmount tool on PATH"
     assert output =~ "efuse port binary compiled"
+  end
+
+  test "doctor exits 0 when reads work, whatever the FUSE checks say" do
+    System.put_env("SUPABLOCK_TOKEN", "sbp_headless00000000000000000000000cafe")
+    on_exit(fn -> System.delete_env("SUPABLOCK_TOKEN") end)
+
+    output = capture_io(fn -> assert CLI.run(["doctor"]) == 0 end)
+    assert output =~ "✓ credential available"
   end
 
   describe "ls / cat (the tree without a mount)" do
@@ -1054,7 +1066,8 @@ defmodule Supablock.CLITest do
 
       assert %File.Stat{type: :directory, mode: mode} = File.stat!(dir)
       assert Bitwise.band(mode, 0o777) == 0o700
-      assert Path.dirname(dir) == System.tmp_dir!()
+      # $TMPDIR verbatim, so trailing slash on macOS — normalise before comparing.
+      assert Path.dirname(dir) == Path.dirname(Path.join(System.tmp_dir!(), "probe"))
     end
 
     test "names are unpredictable, not a counter another user can guess" do

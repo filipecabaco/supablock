@@ -34,6 +34,14 @@ defmodule Supablock.ControlTest do
     assert {:error, :not_mounted} = Control.send_cmd("flush")
   end
 
+  test "a socket path over the Unix address limit fails with its fix, not :einval" do
+    Control.stop()
+    System.put_env("XDG_STATE_HOME", "/tmp/" <> String.duplicate("nested/", 20))
+
+    assert {:error, {:control_socket_path, fix}} = Control.start(nil)
+    assert fix =~ "XDG_STATE_HOME"
+  end
+
   describe "remote reads (kind / list / read over the socket)" do
     @health_path "/organizations/org-alpha/projects/projaone1234567890ab/health"
 

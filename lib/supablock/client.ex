@@ -13,13 +13,14 @@ defmodule Supablock.Client do
     * the token never leaks: nothing here logs headers, and `redact/1`
       scrubs the token from anything that does get logged.
 
-  Response bodies are decoded as JSON and nothing else. Req >= 0.6 stopped
-  negotiating and decoding response compression by default, and stopped
-  auto-decoding archive content types, after a decompression-bomb advisory
-  (CVE-2026-49755) — a tiny response expanding to gigabytes in memory. That
-  default is deliberately left alone: the Management API does not compress
-  unless asked, so nothing is gained by opting back in with `compressed:
-  true` or by widening `:decoders`.
+  Response bodies are decoded as JSON and nothing else. Req 0.6.0 stopped
+  auto-decoding archive content types (zip/tar/tgz/gz/zst/csv) after a
+  decompression-bomb advisory — GHSA-655f-mp8p-96gv, a tiny response
+  expanding to gigabytes in memory — and 0.6.1 separately stopped
+  negotiating and decoding response compression unless `compressed: true`
+  is set. Both defaults are deliberately left alone: the Management API
+  does not compress unless asked, and it never serves an archive, so
+  nothing is gained by opting back in or by widening `:decoders`.
   """
 
   require Logger

@@ -72,7 +72,8 @@ defmodule Supablock.MixProject do
       {:req, "~> 0.7.2"},
       {:jason, "~> 1.4"},
       {:francis, "~> 0.3.3"},
-      {:burrito, "~> 1.5.0", runtime: false}
+      {:burrito, "~> 1.5.0", runtime: false},
+      {:mix_audit, "~> 2.1", only: [:dev, :test], runtime: false}
     ]
   end
 end

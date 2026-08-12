@@ -593,15 +593,30 @@ defmodule Supablock.CLI do
   end
 
   defp doctor do
-    results = Doctor.run()
+    groups = Doctor.run()
 
-    Enum.each(results, fn
-      {name, :ok} -> IO.puts("✓ #{name}")
-      {name, {:error, fix}} -> IO.puts("✗ #{name}\n  fix: #{fix}")
+    Enum.each(groups, fn {kind, title, checks} ->
+      IO.puts(title)
+      Enum.each(checks, &IO.puts(check_line(kind, &1)))
     end)
 
-    if Enum.any?(results, &match?({_name, {:error, _fix}}, &1)), do: 4, else: 0
+    reads_ok = Doctor.reads_ok?(groups)
+
+    if reads_ok and Doctor.optional_gaps?(groups) do
+      IO.puts("""
+
+      Reads work. The checks marked ! gate optional features only — no audit
+      needs them, and `mount` in particular is never the way past a blocked
+      read. See the supablock-sandbox skill.\
+      """)
+    end
+
+    if reads_ok, do: 0, else: 4
   end
+
+  defp check_line(_kind, {name, :ok}), do: "  ✓ #{name}"
+  defp check_line(:reading, {name, {:error, fix}}), do: "  ✗ #{name}\n    fix: #{fix}"
+  defp check_line(_optional, {name, {:error, fix}}), do: "  ! #{name}\n    fix: #{fix}"
 
   defp config(["set", key, value]) do
     case Config.set(key, value) do
@@ -671,7 +686,7 @@ defmodule Supablock.CLI do
         0
 
       {:error, reason} ->
-        IO.puts(:stderr, "Mount failed: #{inspect(reason)}")
+        IO.puts(:stderr, "Mount failed: #{daemon_error(reason)}")
         IO.puts(:stderr, "Run: supablock doctor")
         4
     end
@@ -1402,7 +1417,9 @@ defmodule Supablock.CLI do
             tmp = Path.join(dir, "tree")
 
             try do
-              File.write!(tmp, live_body)
+              # O_EXCL: refuses an existing name, so the body is never written
+              # through a symlink planted inside the directory.
+              File.open!(tmp, [:write, :binary, :exclusive], &IO.binwrite(&1, live_body))
 
               {output, _code} =
                 System.cmd(
@@ -1430,12 +1447,14 @@ defmodule Supablock.CLI do
   properties below are directly testable.
   """
   # The live body handed to diff(1) can hold table rows, and api-keys/secret
-  # or secrets.json values when expose_secrets is on. The system temp dir is
-  # world-writable and shared by every user, so the body goes into a fresh
-  # owner-only directory rather than a bare file there: mkdir fails on an
-  # existing name (so a pre-planted symlink is refused instead of written
-  # through), the name is unpredictable, and the 0700 happens while the
-  # directory is still empty — no window where the body is world-readable.
+  # or secrets.json values when expose_secrets is on. On Linux the system temp
+  # dir is /tmp, mode 1777 and shared by every user, so the body goes into a
+  # fresh owner-only directory rather than a bare file there: mkdir fails on an
+  # existing name (a pre-planted symlink is refused, not written through), the
+  # name is unpredictable, and the 0700 lands while the directory is empty.
+  #
+  # mkdir applies the caller's umask, so a loose umask leaves a window before
+  # the chmod. The caller closes that by creating the file itself with O_EXCL.
   @spec private_temp_dir(non_neg_integer) :: {:ok, Path.t()} | {:error, term}
   def private_temp_dir(attempts \\ 8)
 
@@ -1536,10 +1555,16 @@ defmodule Supablock.CLI do
         0
 
       {:error, reason} ->
-        IO.puts(:stderr, "Could not start the cache daemon: #{inspect(reason)}")
+        IO.puts(:stderr, "Could not start the cache daemon: #{daemon_error(reason)}")
         4
     end
   end
+
+  # A control-socket path that overflows `sockaddr_un` is the one daemon
+  # failure with a fix the caller can act on, so it arrives as prose rather
+  # than as the kernel's bare :einval.
+  defp daemon_error({:control_socket_path, fix}), do: fix
+  defp daemon_error(reason), do: inspect(reason)
 
   defp split_lines(body) do
     lines = String.split(body, "\n")

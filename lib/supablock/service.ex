@@ -68,20 +68,7 @@ defmodule Supablock.Service do
     path = systemd_unit_path()
     File.mkdir_p!(Path.dirname(path))
 
-    File.write!(path, """
-    [Unit]
-    Description=supablock — Supabase account mounted at #{mountpoint}
-    After=network-online.target
-
-    [Service]
-    Type=simple
-    ExecStart=#{bin} mount --foreground
-    Restart=on-failure
-    RestartSec=3
-
-    [Install]
-    WantedBy=default.target
-    """)
+    File.write!(path, systemd_unit(bin, mountpoint))
 
     messages = ["Wrote #{path}"]
 
@@ -125,6 +112,44 @@ defmodule Supablock.Service do
   end
 
   @doc """
+  The systemd user unit for `bin` mounting at `mountpoint`. Public so the
+  escaping below is testable on any platform, not only Linux.
+  """
+  @spec systemd_unit(String.t(), String.t()) :: String.t()
+  def systemd_unit(bin, mountpoint) do
+    """
+    [Unit]
+    Description=supablock — Supabase account mounted at #{unit_value(mountpoint)}
+    After=network-online.target
+
+    [Service]
+    Type=simple
+    ExecStart="#{exec_arg(bin)}" mount --foreground
+    Restart=on-failure
+    RestartSec=3
+
+    [Install]
+    WantedBy=default.target
+    """
+  end
+
+  # A unit file is line-oriented, so a newline in a value opens a new directive
+  # and a second [Service]/ExecStart would win. Control characters are dropped
+  # rather than escaped — no legitimate mountpoint carries one.
+  defp unit_value(value) do
+    value |> to_string() |> String.replace(~r/[\x00-\x1f\x7f]/, "")
+  end
+
+  # ExecStart is shell-like: whitespace splits arguments, and `\` and `"` stay
+  # meaningful inside the quotes the caller wraps this in.
+  defp exec_arg(value) do
+    value
+    |> unit_value()
+    |> String.replace("\\", "\\\\")
+    |> String.replace("\"", "\\\"")
+  end
+
+  @doc """
   The launchd agent plist for `bin` mounting at `mountpoint`. Public so the
   escaping below is testable on any platform, not only macOS.
   """
@@ -157,9 +182,9 @@ defmodule Supablock.Service do
   # and let the rest be read as further plist keys — a later duplicate
   # `ProgramArguments` wins, which is a login-time command. `mountpoint` is
   # the reachable input: `config set` and `setup <profile>` both accept it,
-  # and the profile can come off the network. Control characters are already
-  # refused there (that is what keeps the systemd unit safe, which is INI and
-  # line-oriented); XML needs escaping too, not just a newline check.
+  # and the profile can come off the network. `Config.coerce/2` refuses
+  # newlines on the way in, but only on the write path — the config file is
+  # read back without revalidation, so both writers escape their own format.
   defp xml(value) do
     value
     |> to_string()
