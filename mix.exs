@@ -69,10 +69,11 @@ defmodule Supablock.MixProject do
       {:userfs, path: "vendor/userfs", runtime: false},
       {:efuse, path: "vendor/efuse", override: true, runtime: false},
       {:castore, path: "vendor/castore", override: true},
-      {:req, "~> 0.5.18"},
+      {:req, "~> 0.7.2"},
       {:jason, "~> 1.4"},
       {:francis, "~> 0.3.3"},
-      {:burrito, "~> 1.5.0", runtime: false}
+      {:burrito, "~> 1.5.0", runtime: false},
+      {:mix_audit, "~> 2.1", only: [:dev, :test], runtime: false}
     ]
   end
 end

@@ -43,6 +43,15 @@ jobs:
       - name: Check formatting
         run: mix format --check-formatted
 
+      # The binary is distributed, so a dep advisory ships with it. `deps.audit`
+      # matches the lock against the security advisory DB; `hex.audit` only
+      # reports retired packages, which is a different (and much narrower) set.
+      - name: Dependency advisories
+        run: mix deps.audit
+
+      - name: Retired dependencies
+        run: mix hex.audit
+
       - name: Unit tests
         run: mix test
 

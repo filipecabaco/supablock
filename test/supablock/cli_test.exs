@@ -452,10 +452,22 @@ defmodule Supablock.CLITest do
              "Unknown key: nope"
   end
 
-  test "doctor reports checks and exits 0 or 4" do
-    output = capture_io(fn -> CLI.run(["doctor"]) end)
+  test "doctor groups its checks, and a missing credential is fatal" do
+    output = capture_io(fn -> assert CLI.run(["doctor"]) == 4 end)
+
+    assert output =~ "Reading —"
+    assert output =~ "Mounting —"
+    assert output =~ "✗ credential available"
     assert output =~ "unmount tool on PATH"
     assert output =~ "efuse port binary compiled"
+  end
+
+  test "doctor exits 0 when reads work, whatever the FUSE checks say" do
+    System.put_env("SUPABLOCK_TOKEN", "sbp_headless00000000000000000000000cafe")
+    on_exit(fn -> System.delete_env("SUPABLOCK_TOKEN") end)
+
+    output = capture_io(fn -> assert CLI.run(["doctor"]) == 0 end)
+    assert output =~ "✓ credential available"
   end
 
   describe "ls / cat (the tree without a mount)" do
@@ -894,6 +906,22 @@ defmodule Supablock.CLITest do
 
       assert stderr =~ "Unknown shell"
     end
+
+    test "bash path completion never re-expands account-derived names" do
+      bash = capture_io(fn -> assert CLI.run(["completions", "bash"]) == 0 end)
+
+      [_all, body] = Regex.run(~r/^_supablock_paths\(\) \{\n(.*?)^\}$/ms, bash)
+
+      # `compgen -W "$list"` expands every word it is handed, so a bucket or
+      # table named `$(cmd)` would run cmd on Tab. Candidate names come from a
+      # live account, so they are read line by line and prefix-tested with the
+      # *user's* word on the pattern side — never handed back to the parser.
+      refute body =~ "compgen"
+      refute body =~ "eval"
+      assert body =~ "while IFS= read -r line"
+      assert body =~ "[[ \"$line\" == \"$cur\"* ]]"
+      assert body =~ "COMPREPLY+=(\"$line\")"
+    end
   end
 
   describe "status --json" do
@@ -974,6 +1002,23 @@ defmodule Supablock.CLITest do
       assert output == "changed: #{@snap_base}/config/auth.json\n"
     end
 
+    test "diff leaves nothing of its own behind in the shared temp dir", %{dir: dir} do
+      capture_io(fn -> assert CLI.run(["snapshot", dir]) == 0 end)
+
+      target = Path.join(dir, "#{@snap_base}/config/auth.json")
+      File.write!(target, String.replace(File.read!(target), "3600", "60"))
+
+      leftovers = fn ->
+        System.tmp_dir!() |> File.ls!() |> Enum.filter(&String.starts_with?(&1, "supablock-diff-"))
+      end
+
+      before = Enum.sort(leftovers.())
+      output = capture_io(fn -> assert CLI.run(["diff", dir]) == 1 end)
+
+      assert output =~ "+  \"jwt_exp\": 3600"
+      assert Enum.sort(leftovers.()) == before
+    end
+
     test "diff reports files only in the tree or only in the snapshot", %{dir: dir} do
       capture_io(fn -> assert CLI.run(["snapshot", dir]) == 0 end)
 
@@ -1011,6 +1056,47 @@ defmodule Supablock.CLITest do
         end)
 
       assert stderr =~ "Not a snapshot directory"
+    end
+  end
+
+  describe "private_temp_dir/1 (diff scratch space)" do
+    test "creates an owner-only directory nobody else can read" do
+      assert {:ok, dir} = CLI.private_temp_dir()
+      on_exit(fn -> File.rm_rf(dir) end)
+
+      assert %File.Stat{type: :directory, mode: mode} = File.stat!(dir)
+      assert Bitwise.band(mode, 0o777) == 0o700
+      # $TMPDIR verbatim, so trailing slash on macOS — normalise before comparing.
+      assert Path.dirname(dir) == Path.dirname(Path.join(System.tmp_dir!(), "probe"))
+    end
+
+    test "names are unpredictable, not a counter another user can guess" do
+      dirs =
+        for _ <- 1..8 do
+          assert {:ok, dir} = CLI.private_temp_dir()
+          on_exit(fn -> File.rm_rf(dir) end)
+          Path.basename(dir)
+        end
+
+      assert length(Enum.uniq(dirs)) == 8
+      # long random suffix, not "supablock-diff-34"
+      for name <- dirs, do: refute(name =~ ~r/^supablock-diff-\d+$/)
+    end
+
+    test "gives up rather than reusing a name it did not create" do
+      # Creation is mkdir, which fails on an existing name — including a
+      # symlink someone else planted — so the body is never written through
+      # another user's path. When every attempt collides it errors out; the
+      # caller falls back to "Files differ" rather than writing anywhere.
+      assert CLI.private_temp_dir(0) == {:error, :eexist}
+
+      planted = Path.join(System.tmp_dir!(), "supablock-diff-planted")
+      File.rm_rf(planted)
+      File.write!(planted, "someone else's file\n")
+      on_exit(fn -> File.rm_rf(planted) end)
+
+      assert File.mkdir(planted) == {:error, :eexist}
+      assert File.read!(planted) == "someone else's file\n"
     end
   end
 end

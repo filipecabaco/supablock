@@ -1,22 +1,74 @@
 defmodule Supablock.Doctor do
   @moduledoc """
-  Environment checks for `supablock doctor`. Each check yields
-  `{name, :ok}` or `{name, {:error, fix_suggestion}}`.
+  Environment checks for `supablock doctor`, grouped by the capability each
+  one gates.
+
+  Only the `:reading` group is required. The tree readers resolve straight
+  off the API — no FUSE, no privileges, no daemon — so a sandbox, container
+  or CI runner that fails every `:mounting` check is still a working
+  supablock, and reporting it as broken sends people looking for privileges
+  they do not need. `reads_ok?/1` is the signal worth branching on.
+
+  Each check yields `{name, :ok}` or `{name, {:error, fix_suggestion}}`.
   """
 
   import Bitwise, only: [&&&: 2]
 
-  alias Supablock.Paths
+  alias Supablock.{Credentials, Paths}
 
-  @spec run() :: [{String.t(), :ok | {:error, String.t()}}]
+  @type check :: {String.t(), :ok | {:error, String.t()}}
+  @type group :: {:reading | :daemon | :mounting, String.t(), [check]}
+
+  @spec run() :: [group]
   def run do
     [
-      fuse_device(),
-      unmount_tool(),
-      config_dir_perms(),
-      credentials_perms(),
-      port_binary()
+      {:reading, "Reading — ls, cat, head, tail, find, grep, snapshot, mcp",
+       [credential(), config_dir_perms(), credentials_perms()]},
+      {:daemon, "Shared cache daemon — serve (optional)", [control_socket_path()]},
+      {:mounting, "Mounting — mount (optional, needs FUSE)",
+       [fuse_device(), unmount_tool(), port_binary()]}
     ]
+  end
+
+  @doc """
+  True when every required check passed — i.e. the tree readers will work.
+  Failures outside the `:reading` group gate optional features only.
+  """
+  @spec reads_ok?([group]) :: boolean
+  def reads_ok?(groups) do
+    Enum.all?(groups, fn
+      {:reading, _title, checks} -> Enum.all?(checks, &passed?/1)
+      {_optional, _title, _checks} -> true
+    end)
+  end
+
+  @doc "True when some optional check failed, so the caller can say so once."
+  @spec optional_gaps?([group]) :: boolean
+  def optional_gaps?(groups) do
+    Enum.any?(groups, fn
+      {:reading, _title, _checks} -> false
+      {_optional, _title, checks} -> Enum.any?(checks, &(not passed?(&1)))
+    end)
+  end
+
+  defp passed?({_name, :ok}), do: true
+  defp passed?({_name, {:error, _fix}}), do: false
+
+  defp credential do
+    case Credentials.load() do
+      {:ok, _token} ->
+        {"credential available", :ok}
+
+      :missing ->
+        {"credential available",
+         {:error,
+          "run: supablock login — or export SUPABLOCK_TOKEN, which is the " <>
+            "headless path (export it, never pass it on a command line)"}}
+    end
+  end
+
+  defp control_socket_path do
+    {"control socket path fits a Unix socket address", Paths.validate_control_socket()}
   end
 
   defp fuse_device do

@@ -58,6 +58,13 @@ defmodule Supablock.Control do
 
   @impl true
   def init(mountpoint) do
+    case Paths.validate_control_socket() do
+      :ok -> listen(mountpoint)
+      {:error, fix} -> {:stop, {:control_socket_path, fix}}
+    end
+  end
+
+  defp listen(mountpoint) do
     Paths.ensure!()
     sock_path = Paths.control_socket()
     File.rm(sock_path)

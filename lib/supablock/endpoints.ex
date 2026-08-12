@@ -53,62 +53,89 @@ defmodule Supablock.Endpoints do
           | :upgrade_eligibility
 
   @spec path(key, map) :: String.t()
-  def path(key, args \\ %{})
+  def path(key, args \\ %{}), do: build(key, encode_ids(args))
 
-  def path(:orgs, _args), do: "/v1/organizations"
-  def path(:org, %{slug: slug}), do: "/v1/organizations/#{slug}"
-  def path(:org_members, %{slug: slug}), do: "/v1/organizations/#{slug}/members"
-  def path(:projects, _args), do: "/v1/projects"
-  def path(:project, %{ref: ref}), do: "/v1/projects/#{ref}"
+  # `ref`, `slug` and `fn_slug` are interpolated straight into the request
+  # path, and they arrive from Management API responses rather than from a
+  # constant — so they are percent-encoded here, once, before any clause sees
+  # them. Without this a value carrying `/`, `?`, `#` or `..` would steer the
+  # request at a different endpoint than the tree path names. (`Client.valid_ref?/1`
+  # is the equivalent guard for the per-project *hostname*.) The `:logs` clause
+  # encodes its own query parameters, so only these three keys are touched.
+  defp encode_ids(args) do
+    Enum.reduce([:ref, :slug, :fn_slug], args, fn key, acc ->
+      case acc do
+        %{^key => value} when is_binary(value) -> %{acc | key => segment(value)}
+        _absent -> acc
+      end
+    end)
+  end
 
-  def path(:health, %{ref: ref}) do
+  # `.` is unreserved, so percent-encoding alone would leave a "." or ".."
+  # segment intact — and RFC 3986 dot-segment removal (which the HTTP client
+  # applies when resolving the path against the base URL) would then walk the
+  # request up the tree. Those two spellings are escaped explicitly; every
+  # other value keeps its usual bytes.
+  defp segment("."), do: "%2E"
+  defp segment(".."), do: "%2E%2E"
+  defp segment(value), do: URI.encode(value, &URI.char_unreserved?/1)
+
+  defp build(:orgs, _args), do: "/v1/organizations"
+  defp build(:org, %{slug: slug}), do: "/v1/organizations/#{slug}"
+  defp build(:org_members, %{slug: slug}), do: "/v1/organizations/#{slug}/members"
+  defp build(:projects, _args), do: "/v1/projects"
+  defp build(:project, %{ref: ref}), do: "/v1/projects/#{ref}"
+
+  defp build(:health, %{ref: ref}) do
     query = Enum.map_join(@health_services, "&", &("services=" <> &1))
     "/v1/projects/#{ref}/health?#{query}"
   end
 
-  def path(:auth_config, %{ref: ref}), do: "/v1/projects/#{ref}/config/auth"
-  def path(:db_config, %{ref: ref}), do: "/v1/projects/#{ref}/config/database/postgres"
-  def path(:realtime_config, %{ref: ref}), do: "/v1/projects/#{ref}/config/realtime"
-  def path(:storage_config, %{ref: ref}), do: "/v1/projects/#{ref}/config/storage"
-  def path(:buckets, %{ref: ref}), do: "/v1/projects/#{ref}/storage/buckets"
-  def path(:sso_providers, %{ref: ref}), do: "/v1/projects/#{ref}/config/auth/sso/providers"
-  def path(:third_party_auth, %{ref: ref}), do: "/v1/projects/#{ref}/config/auth/third-party-auth"
-  def path(:api_keys, %{ref: ref, reveal: true}), do: "/v1/projects/#{ref}/api-keys?reveal=true"
-  def path(:api_keys, %{ref: ref}), do: "/v1/projects/#{ref}/api-keys"
-  def path(:postgrest_config, %{ref: ref}), do: "/v1/projects/#{ref}/postgrest"
-  def path(:functions, %{ref: ref}), do: "/v1/projects/#{ref}/functions"
-  def path(:function, %{ref: ref, fn_slug: fn_slug}), do: "/v1/projects/#{ref}/functions/#{fn_slug}"
+  defp build(:auth_config, %{ref: ref}), do: "/v1/projects/#{ref}/config/auth"
+  defp build(:db_config, %{ref: ref}), do: "/v1/projects/#{ref}/config/database/postgres"
+  defp build(:realtime_config, %{ref: ref}), do: "/v1/projects/#{ref}/config/realtime"
+  defp build(:storage_config, %{ref: ref}), do: "/v1/projects/#{ref}/config/storage"
+  defp build(:buckets, %{ref: ref}), do: "/v1/projects/#{ref}/storage/buckets"
+  defp build(:sso_providers, %{ref: ref}), do: "/v1/projects/#{ref}/config/auth/sso/providers"
+  defp build(:third_party_auth, %{ref: ref}), do: "/v1/projects/#{ref}/config/auth/third-party-auth"
+  defp build(:api_keys, %{ref: ref, reveal: true}), do: "/v1/projects/#{ref}/api-keys?reveal=true"
+  defp build(:api_keys, %{ref: ref}), do: "/v1/projects/#{ref}/api-keys"
+  defp build(:postgrest_config, %{ref: ref}), do: "/v1/projects/#{ref}/postgrest"
+  defp build(:functions, %{ref: ref}), do: "/v1/projects/#{ref}/functions"
 
-  def path(:function_body, %{ref: ref, fn_slug: fn_slug}),
+  defp build(:function, %{ref: ref, fn_slug: fn_slug}),
+    do: "/v1/projects/#{ref}/functions/#{fn_slug}"
+
+  defp build(:function_body, %{ref: ref, fn_slug: fn_slug}),
     do: "/v1/projects/#{ref}/functions/#{fn_slug}/body"
 
-  def path(:branches, %{ref: ref}), do: "/v1/projects/#{ref}/branches"
+  defp build(:branches, %{ref: ref}), do: "/v1/projects/#{ref}/branches"
 
-  def path(:regions, %{slug: slug}),
+  defp build(:regions, %{slug: slug}),
     do: "/v1/projects/available-regions?organization_slug=#{slug}"
 
-  def path(:logs, %{ref: ref, sql: sql, iso_start: iso_start, iso_end: iso_end}),
+  defp build(:logs, %{ref: ref, sql: sql, iso_start: iso_start, iso_end: iso_end}),
     do:
       "/v1/projects/#{ref}/analytics/endpoints/logs.all" <>
         "?sql=#{URI.encode_www_form(sql)}" <>
         "&iso_timestamp_start=#{URI.encode_www_form(iso_start)}" <>
         "&iso_timestamp_end=#{URI.encode_www_form(iso_end)}"
 
-  def path(:advisors_security, %{ref: ref}), do: "/v1/projects/#{ref}/advisors/security"
-  def path(:advisors_performance, %{ref: ref}), do: "/v1/projects/#{ref}/advisors/performance"
-  def path(:typescript_types, %{ref: ref}), do: "/v1/projects/#{ref}/types/typescript"
-  def path(:secrets, %{ref: ref}), do: "/v1/projects/#{ref}/secrets"
-  def path(:migrations, %{ref: ref}), do: "/v1/projects/#{ref}/database/migrations"
-  def path(:backups, %{ref: ref}), do: "/v1/projects/#{ref}/database/backups"
-  def path(:readonly, %{ref: ref}), do: "/v1/projects/#{ref}/readonly"
-  def path(:network_restrictions, %{ref: ref}), do: "/v1/projects/#{ref}/network-restrictions"
-  def path(:ssl_enforcement, %{ref: ref}), do: "/v1/projects/#{ref}/ssl-enforcement"
-  def path(:custom_hostname, %{ref: ref}), do: "/v1/projects/#{ref}/custom-hostname"
-  def path(:vanity_subdomain, %{ref: ref}), do: "/v1/projects/#{ref}/vanity-subdomain"
-  def path(:upgrade_eligibility, %{ref: ref}), do: "/v1/projects/#{ref}/upgrade/eligibility"
-  def path(:pgbouncer_config, %{ref: ref}), do: "/v1/projects/#{ref}/config/database/pgbouncer"
-  def path(:pooler_config, %{ref: ref}), do: "/v1/projects/#{ref}/config/database/pooler"
-  def path(:disk_config, %{ref: ref}), do: "/v1/projects/#{ref}/config/disk"
+  defp build(:advisors_security, %{ref: ref}), do: "/v1/projects/#{ref}/advisors/security"
+  defp build(:advisors_performance, %{ref: ref}), do: "/v1/projects/#{ref}/advisors/performance"
+  defp build(:typescript_types, %{ref: ref}), do: "/v1/projects/#{ref}/types/typescript"
+  defp build(:secrets, %{ref: ref}), do: "/v1/projects/#{ref}/secrets"
+  defp build(:migrations, %{ref: ref}), do: "/v1/projects/#{ref}/database/migrations"
+  defp build(:backups, %{ref: ref}), do: "/v1/projects/#{ref}/database/backups"
+  defp build(:readonly, %{ref: ref}), do: "/v1/projects/#{ref}/readonly"
+  defp build(:network_restrictions, %{ref: ref}), do: "/v1/projects/#{ref}/network-restrictions"
+  defp build(:ssl_enforcement, %{ref: ref}), do: "/v1/projects/#{ref}/ssl-enforcement"
+  defp build(:custom_hostname, %{ref: ref}), do: "/v1/projects/#{ref}/custom-hostname"
+  defp build(:vanity_subdomain, %{ref: ref}), do: "/v1/projects/#{ref}/vanity-subdomain"
+  defp build(:upgrade_eligibility, %{ref: ref}), do: "/v1/projects/#{ref}/upgrade/eligibility"
+  defp build(:pgbouncer_config, %{ref: ref}), do: "/v1/projects/#{ref}/config/database/pgbouncer"
+  defp build(:pooler_config, %{ref: ref}), do: "/v1/projects/#{ref}/config/database/pooler"
+  defp build(:disk_config, %{ref: ref}), do: "/v1/projects/#{ref}/config/disk"
 
   @doc """
   How to *change* the resource behind `key`, as static documentation only —

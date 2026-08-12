@@ -127,4 +127,46 @@ defmodule Supablock.EndpointsTest do
       assert Endpoints.ttl_class(key) == class
     end
   end
+
+  describe "identifier encoding" do
+    test "ref, slug and fn_slug are percent-encoded before interpolation" do
+      assert Endpoints.path(:org, %{slug: "evil/../../v1/projects"}) ==
+               "/v1/organizations/evil%2F..%2F..%2Fv1%2Fprojects"
+
+      assert Endpoints.path(:project, %{ref: "abc?reveal=true"}) ==
+               "/v1/projects/abc%3Freveal%3Dtrue"
+
+      assert Endpoints.path(:function_body, %{ref: "abc", fn_slug: "a/b"}) ==
+               "/v1/projects/abc/functions/a%2Fb/body"
+
+      assert Endpoints.path(:regions, %{slug: "a&b"}) ==
+               "/v1/projects/available-regions?organization_slug=a%26b"
+    end
+
+    test "dot segments cannot walk the request up the tree" do
+      assert Endpoints.path(:project, %{ref: ".."}) == "/v1/projects/%2E%2E"
+      assert Endpoints.path(:org, %{slug: "."}) == "/v1/organizations/%2E"
+    end
+
+    test "ordinary identifiers keep their bytes" do
+      assert Endpoints.path(:project, %{ref: "projaone1234567890ab"}) ==
+               "/v1/projects/projaone1234567890ab"
+
+      assert Endpoints.path(:function, %{ref: "abc", fn_slug: "hello-world_1"}) ==
+               "/v1/projects/abc/functions/hello-world_1"
+    end
+
+    test "the logs clause still encodes its own query parameters exactly once" do
+      path =
+        Endpoints.path(:logs, %{
+          ref: "abc",
+          sql: "SELECT 1",
+          iso_start: "2024-01-01T00:00:00Z",
+          iso_end: "2024-01-02T00:00:00Z"
+        })
+
+      assert path =~ "sql=SELECT+1"
+      refute path =~ "%25"
+    end
+  end
 end
