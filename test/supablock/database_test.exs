@@ -142,6 +142,54 @@ defmodule Supablock.DatabaseTest do
       assert Enum.at(lines, 1) == "250,w250"
     end
 
+    test "primary key names are quoted in order=, so , . and quotes stay one column" do
+      model = %{
+        "app" => %{
+          "odd" => %{
+            columns: ["a,b", "x.desc", ~s(q"t)],
+            pk: ["a,b", "x.desc", ~s(q"t)],
+            rows: [%{"a,b" => 1, "x.desc" => 2, ~s(q"t) => 3}]
+          }
+        }
+      }
+
+      test_pid = self()
+      stub = DataApiStub.fun(model)
+
+      Application.put_env(:supablock, :data_api_fun, fn ref, path, headers ->
+        send(test_pid, {:data_api_path, path})
+        stub.(ref, path, headers)
+      end)
+
+      assert {:ok, %{rows: [[1, 2, 3]]}} = Database.rows(@ref, "app", "odd", 0, 500)
+
+      order =
+        Stream.repeatedly(fn ->
+          receive do
+            {:data_api_path, path} -> path
+          after
+            0 -> nil
+          end
+        end)
+        |> Enum.take_while(& &1)
+        |> Enum.find_value(fn path ->
+          path
+          |> URI.parse()
+          |> Map.get(:query, "")
+          |> to_string()
+          |> URI.decode_query()
+          |> Map.get("order")
+        end)
+
+      assert order == ~s("a,b","x.desc","q\\"t")
+    end
+
+    test "quote_ident escapes backslashes and double quotes" do
+      assert Database.quote_ident("id") == ~s("id")
+      assert Database.quote_ident(~s(a"b)) == ~s("a\\"b")
+      assert Database.quote_ident("a\\b") == ~s("a\\\\b")
+    end
+
     test "a missing table is enoent" do
       stub_data_api()
       assert {:error, :enoent} = Database.rows(@ref, "app", "gone", 0, 500)

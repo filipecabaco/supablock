@@ -326,7 +326,8 @@ initiative to unblock a task:
 
 ## Behaviour you should expect
 
-- **Exit codes:** 0 ok · 1 usage/no-such-path (grep: also "no matches") ·
+- **Exit codes:** 0 ok · 1 usage/no-such-path (grep: 1 only means "no
+  matches"; its usage and missing-path errors are 2) ·
   2 not authenticated · 3 API/network/rate-limit · 4 environment ·
   141 downstream pipe closed. Branch on them.
 - **Streams behave like coreutils:** `supablock head -n 5 …` and

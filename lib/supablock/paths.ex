@@ -21,6 +21,10 @@ defmodule Supablock.Paths do
   @spec credentials_file() :: String.t()
   def credentials_file, do: Path.join(config_dir(), "credentials")
 
+  @doc "Held while one process refreshes the OAuth pair (see `Supablock.TokenStore`)."
+  @spec refresh_lock_file() :: String.t()
+  def refresh_lock_file, do: Path.join(config_dir(), "credentials.refresh.lock")
+
   @spec log_file() :: String.t()
   def log_file, do: Path.join(state_dir(), "supablock.log")
 

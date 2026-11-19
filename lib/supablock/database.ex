@@ -321,7 +321,7 @@ defmodule Supablock.Database do
 
   defp order_clause(desc, table) do
     case Map.get(desc, table) do
-      %{pk: [_ | _] = pk} -> "&order=" <> Enum.map_join(pk, ",", &encode/1)
+      %{pk: [_ | _] = pk} -> "&order=" <> Enum.map_join(pk, ",", &(&1 |> quote_ident() |> encode()))
       _none -> ""
     end
   end
@@ -349,6 +349,16 @@ defmodule Supablock.Database do
   end
 
   defp encode(name), do: URI.encode(to_string(name), &URI.char_unreserved?/1)
+
+  # PostgREST splits `order=` on `,` and reads `.` as a modifier
+  # (`col.desc`) *after* URL-decoding, so encoding alone is not enough: a
+  # primary key named `a,b` or `x.y` would turn into other columns. Quoted
+  # names are taken whole; `"` and `\` inside are backslash-escaped.
+  @doc false
+  def quote_ident(name) do
+    escaped = name |> to_string() |> String.replace("\\", "\\\\") |> String.replace("\"", "\\\"")
+    "\"" <> escaped <> "\""
+  end
 
   @doc "Render `columns`/`rows` as a CSV or JSON body with a trailing newline."
   @spec render([String.t()], [[term]], :csv | :json) :: binary

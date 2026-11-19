@@ -213,11 +213,18 @@ cat /mnt/supabase/organizations/*/projects/*/health
    present (config, `SUPABLOCK_OAUTH_CLIENT_ID`/`_SECRET`, or the identity
    baked into a released binary). Short-lived scoped tokens that refresh
    automatically; register the app read-only and read-only is enforced
-   server-side. `logout` revokes the grant.
+   server-side. `logout` revokes the grant. The loopback callback only
+   accepts the `state` of the login in progress, so a stray or forged
+   redirect cannot end or hijack it.
 2. **Dashboard session flow** — no OAuth app configured: mirrors the
    supabase CLI (opens the dashboard, you type a verification code, token
    arrives end-to-end encrypted). Works over SSH with `--no-browser`.
 3. **Token paste** — `supablock login --token sbp_...` always works.
+
+Flows 2 and 3 store a personal access token, which the Management API
+cannot revoke: `logout` deletes the local copy and points you at
+[account/tokens](https://supabase.com/dashboard/account/tokens) to revoke
+it there.
 
 ### Team onboarding
 
@@ -373,7 +380,7 @@ supablock head|tail [-n N] <path>   first/last lines of tree files (no mount)
                                     tail -f [-s secs] follows a logs/<source> file
 supablock find [path] [filters]     walk the tree; -type f|d, -name <glob>, -maxdepth N,
                                     -print0
-supablock grep [-iln] <pat> [path]  search file contents; dirs recurse, exit 1 = no match
+supablock grep [-iln] <pat> [path]  search file contents; dirs recurse, exit 1 = no match, 2 = bad path/usage
 supablock snapshot <dir> [path]     write the tree to a real directory (--all, --prune)
 supablock diff <dir> [path]         live tree vs snapshot: unified diffs; --brief
 supablock mcp                       MCP server on stdio (tools: ls, cat, find, grep)
