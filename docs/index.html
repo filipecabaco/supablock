@@ -1081,6 +1081,18 @@ schema.json  rows-000000.csv  rows-000500.csv  rows-001000.csv
         publishable</code> switches to <code>anon</code> and shows only what RLS allows. Pages are
         ordered by primary key, so paging is stable.
       </p>
+
+      <p class="body" style="font-size: 13.5px;">
+        On the mount, row pages show size <code>0</code> in <code>ls -l</code>: knowing a page's
+        size means downloading it, so listing a big table would fetch every page. Anything that
+        reads to the end gets every byte (GNU <code>cat</code>/<code>cp</code>,
+        <code>head</code>, <code>tail</code>, <code>grep</code>, Python's <code>read()</code>).
+        Tools that copy with <code>sendfile()</code> (busybox <code>cat</code>/<code>cp</code>,
+        Python's <code>shutil.copyfile</code>) stop at that size and write an empty file without
+        an error. The Docker image ships GNU coreutils for this reason. Tables too big to count
+        in five seconds list pages from Postgres' estimate plus one spare page, so the last page
+        can come back short or empty.
+      </p>
     </div>
   </section>
 
@@ -1096,7 +1108,7 @@ schema.json  rows-000000.csv  rows-000500.csv  rows-001000.csv
           <tbody>
             <tr><td><code>supablock setup [profile]</code></td><td>One-command onboarding: apply a shared team profile (URL or file), log in, offer the auto-start service.</td></tr>
             <tr><td><code>supablock login</code></td><td>Browser login: OAuth2 + PKCE with scoped, auto-refreshing tokens (app identity baked into released binaries), dashboard session flow otherwise. <code>--token sbp_…</code> pastes a token; <code>--no-browser</code> just prints the URL.</td></tr>
-            <tr><td><code>supablock logout</code></td><td>Delete the credential and revoke the OAuth grant.</td></tr>
+            <tr><td><code>supablock logout</code></td><td>Delete the credential and revoke the OAuth grant. A personal access token can't be revoked over the API: <code>logout</code> says so and links to the dashboard page that revokes it.</td></tr>
             <tr><td><code>supablock status [--json]</code></td><td>Auth state (masked token), org count, mount state, last-seen rate limits — <code>--json</code> for scripts.</td></tr>
             <tr><td><code>supablock doctor</code></td><td>Environment checks with a fix hint per failure.</td></tr>
             <tr><td><code>supablock config set|get|list</code></td><td>Mountpoint, cache TTLs, <code>http_timeout_ms</code>, <code>expose_secrets</code>, <code>inline_docs</code>, <code>db_format</code>, <code>db_page_size</code>, <code>db_key</code>.</td></tr>
@@ -1106,7 +1118,7 @@ schema.json  rows-000000.csv  rows-000500.csv  rows-001000.csv
             <tr><td><code>supablock cat &lt;path|-&gt; [path…]</code></td><td>Print tree file(s) straight off the API. <code>-</code> reads paths from stdin as they arrive (<code>find … | cat -</code>); <code>-0</code> takes NUL-delimited stdin.</td></tr>
             <tr><td><code>supablock head|tail [-n N] &lt;path…&gt;</code></td><td>First/last lines of tree file(s) — sample a big rows file before fetching every page. <code>tail -f</code> follows a <code>logs/&lt;source&gt;</code> file, polling for new entries (<code>-s N</code> sets the interval, default 30s).</td></tr>
             <tr><td><code>supablock find [path] [filters]</code></td><td>Walk the tree and print paths, find(1)-style: <code>-type f|d</code>, <code>-name &lt;glob&gt;</code>, <code>-maxdepth N</code>, <code>-print0</code>.</td></tr>
-            <tr><td><code>supablock grep [-iln] &lt;pat&gt; [path…]</code></td><td>Search file contents; directories recurse, binary bodies are flagged, exit <code>1</code> means no match — grep(1) semantics.</td></tr>
+            <tr><td><code>supablock grep [-iln] &lt;pat&gt; [path…]</code></td><td>Search file contents; directories recurse, binary bodies are flagged. Exit <code>1</code> means no match, <code>2</code> a usage error or missing path — grep(1) semantics.</td></tr>
             <tr><td><code>supablock snapshot &lt;dir&gt; [path]</code></td><td>Write the tree to a real directory — the config surface by default (<code>--all</code> for everything, <code>--prune</code> drops deleted files). Commit it to git for an audit trail.</td></tr>
             <tr><td><code>supablock diff &lt;dir&gt; [path]</code></td><td>Compare the live tree against a snapshot: unified diffs, <code>--brief</code> for names only. Exits like diff(1): 0 identical · 1 differences · 2 errors.</td></tr>
             <tr><td><code>supablock mcp</code></td><td>Model Context Protocol server on stdio — ls/cat/find/grep as MCP tools for AI clients, same Router and redaction as everything else.</td></tr>
@@ -1119,10 +1131,13 @@ schema.json  rows-000000.csv  rows-000500.csv  rows-001000.csv
         </table>
       </div>
       <p class="body" style="font-size: 13.5px;">
-        Exit codes: <span class="mono">0</span> ok · <span class="mono">1</span> usage
-        (grep: no matches) · <span class="mono">2</span> not authenticated ·
+        Exit codes: <span class="mono">0</span> ok · <span class="mono">1</span> usage or
+        no such path · <span class="mono">2</span> not authenticated ·
         <span class="mono">3</span> API/network · <span class="mono">4</span> environment ·
-        <span class="mono">141</span> downstream pipe closed. Output is pipe-safe:
+        <span class="mono">141</span> downstream pipe closed. <code>grep</code> follows grep(1):
+        <span class="mono">1</span> only means no match, and its usage errors and missing paths
+        are <span class="mono">2</span>. Mistyped options are refused, never ignored. Output is
+        pipe-safe:
         <span class="mono">supablock cat … | head</span> ends quietly, and bodies pass
         through byte-exact.
       </p>
@@ -1207,7 +1222,8 @@ curl -X PATCH \
             (<code>inline_docs</code>). Static text you run yourself; supablock never makes the
             request.</li>
         <li>Slow calls become <code>EIO</code>, a rate-limit becomes <code>EAGAIN</code>. The
-            filesystem never hangs.</li>
+            filesystem never hangs, and requests are served concurrently, so one slow read
+            doesn't hold up the rest of the mount.</li>
       </ul>
     </div>
   </section>
@@ -1231,6 +1247,18 @@ curl -X PATCH \
         <div class="faq-body">
           That's <code>EAGAIN</code>: the Management API rate-limited you. Wait a moment and retry;
           <code>supablock status</code> shows the last-seen remaining budget per scope.
+        </div>
+      </details>
+
+      <details class="faq">
+        <summary><svg class="icon" aria-hidden="true"><use href="#i-chevron-right"/></svg>A copied row page is empty</summary>
+        <div class="faq-body">
+          Row pages (<code>rows-*.csv</code>/<code>.json</code>) report size <code>0</code> and are
+          read to the end. Busybox <code>cat</code>/<code>cp</code> and Python's
+          <code>shutil.copyfile</code> copy with <code>sendfile()</code>, which stops at that size.
+          Use GNU coreutils, or read the file
+          (<code>shutil.copyfileobj(open(src, "rb"), open(dst, "wb"))</code>). An empty copy is
+          not an empty table.
         </div>
       </details>
 
