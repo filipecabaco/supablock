@@ -15,7 +15,7 @@ Four ways to read the tree:
   `find [path] [-type f|d] [-name <glob>] [-maxdepth <n>] [-print0]` walks
   the tree and prints paths; `grep [-iln] [--maxdepth <n>] <pattern>
   [path...]` searches file contents (directories recurse; exit 1 = no
-  matches, like grep(1)); `head`/`tail [-n <count>]` take partial reads of
+  matches, 2 = usage error or missing path, like grep(1)); `head`/`tail [-n <count>]` take partial reads of
   big row files, and `tail -f [-s <secs>]` follows a `logs/<source>` file
   for new entries; `cat -` reads paths from stdin (`-0` = NUL-delimited), so
   `find … -type f | supablock cat -` pipelines discovery into reading.
@@ -93,7 +93,7 @@ Tree shape (all paths under the root):
     organizations/<org>/projects/<ref>/branches/<branch>/info.json
     organizations/<org>/projects/<ref>/database/{backups,migrations,readonly}.json
     organizations/<org>/projects/<ref>/database/<schema>/<table>/schema.json   # columns, types, pk
-    organizations/<org>/projects/<ref>/database/<schema>/<table>/rows-000000.csv   # on the mount: size 0 in stat, read to EOF
+    organizations/<org>/projects/<ref>/database/<schema>/<table>/rows-000000.csv   # on the mount: size 0 in stat, read to EOF (busybox cat/cp and Python shutil.copyfile use sendfile and get an empty file)
     organizations/<org>/projects/<ref>/network/{restrictions,ssl-enforcement,custom-hostname,vanity-subdomain}.json  # custom-hostname/vanity read {} unless the feature is enabled
     organizations/<org>/projects/<ref>/logs/<source>   # NDJSON; source ∈ postgres,auth,edge,storage,…
     organizations/<org>/projects/<ref>/metrics         # Prometheus text, project-wide
