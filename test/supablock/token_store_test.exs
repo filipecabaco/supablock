@@ -119,6 +119,62 @@ defmodule Supablock.TokenStoreTest do
     assert :missing = TokenStore.access_token()
   end
 
+  describe "the cross-process refresh lock (daemon, serve and CLI share one file)" do
+    test "a refresh another process finished while we waited is used, not repeated" do
+      stub_token_endpoint!()
+      :ok = Credentials.store_oauth("sbp_oauth_stale", "oauth_refresh_old", now() + 30)
+
+      # Another supablock process is mid-refresh: it holds the lock.
+      lock = Supablock.Paths.refresh_lock_file()
+      File.write!(lock, "")
+
+      waiting = Task.async(&TokenStore.access_token/0)
+      Process.sleep(200)
+
+      # ...and finishes: the new pair lands on disk, the lock goes away.
+      :ok = Credentials.store_oauth("sbp_oauth_theirs", "oauth_refresh_theirs", now() + 3600)
+      File.rm!(lock)
+
+      assert {:ok, "sbp_oauth_theirs"} = Task.await(waiting, 15_000)
+      # Our copy of oauth_refresh_old was never spent.
+      assert TestEnv.hits("/v1/oauth/token") == 0
+      refute File.exists?(lock)
+    end
+
+    test "a lock left by a process that died mid-refresh is taken over" do
+      stub_token_endpoint!()
+      :ok = Credentials.store_oauth("sbp_oauth_stale", "oauth_refresh_old", now() + 30)
+
+      lock = Supablock.Paths.refresh_lock_file()
+      File.write!(lock, "")
+      File.touch!(lock, now() - 120)
+
+      fresh = new_access()
+      assert {:ok, ^fresh} = TokenStore.access_token()
+      assert TestEnv.hits("/v1/oauth/token") == 1
+      refute File.exists?(lock)
+    end
+
+    test "the lock is released even when the work raises" do
+      lock = Supablock.Paths.refresh_lock_file()
+
+      assert_raise RuntimeError, fn ->
+        TokenStore.with_refresh_lock(fn -> raise "boom" end)
+      end
+
+      refute File.exists?(lock)
+      assert TokenStore.with_refresh_lock(fn -> :ran end) == :ran
+    end
+
+    test "an uncreatable lock does not block the refresh" do
+      lock_dir = Path.dirname(Supablock.Paths.refresh_lock_file())
+      File.chmod!(lock_dir, 0o500)
+      on_exit(fn -> File.chmod(lock_dir, 0o700) end)
+
+      assert TokenStore.with_refresh_lock(fn -> :ran end) == :ran
+    end
+  end
+
   test "a dead refresh token (grant revoked) on an expired credential is missing" do
     TestEnv.stub_api!(%{"/v1/oauth/token" => {:status, 401, %{}}})
     :ok = Credentials.store_oauth("sbp_oauth_gone", "oauth_refresh_dead", now() - 10)

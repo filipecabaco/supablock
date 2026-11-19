@@ -159,10 +159,10 @@ defmodule Supablock.CLI do
       ["--help" | _rest] -> help()
       ["setup" | rest] -> setup(rest)
       ["login" | rest] -> login(rest)
-      ["logout" | _rest] -> logout()
+      ["logout" | rest] -> no_args("logout", rest, &logout/0)
       ["status" | rest] -> status(rest)
       ["whoami" | rest] -> status(rest)
-      ["doctor" | _rest] -> doctor()
+      ["doctor" | rest] -> no_args("doctor", rest, &doctor/0)
       ["config" | rest] -> config(rest)
       ["mount" | rest] -> mount(rest)
       ["unmount" | rest] -> unmount(rest)
@@ -174,7 +174,7 @@ defmodule Supablock.CLI do
       ["grep" | rest] -> grep(rest)
       ["snapshot" | rest] -> snapshot(rest)
       ["diff" | rest] -> diff_cmd(rest)
-      ["mcp" | _rest] -> mcp()
+      ["mcp" | rest] -> no_args("mcp", rest, &mcp/0)
       ["completions" | rest] -> completions(rest)
       ["serve" | rest] -> serve(rest)
       ["refresh" | rest] -> refresh(rest)
@@ -188,17 +188,51 @@ defmodule Supablock.CLI do
     0
   end
 
+  defp no_args(_command, [], run), do: run.()
+
+  defp no_args(command, [arg | _rest], _run),
+    do: usage_error("#{command}: unexpected argument #{arg}")
+
   defp usage_error(message) do
     IO.puts(:stderr, message)
     IO.puts(:stderr, "Run: supablock help")
     1
   end
 
-  defp login(args) do
-    {opts, _rest, _invalid} =
-      OptionParser.parse(args, strict: [token: :string, no_browser: :boolean])
+  # Parse `args` against `switches` and refuse anything else: a mistyped
+  # flag (`refresh --chek`, `login --no-browse`) must not be dropped and
+  # the command run as if it had not been passed. `max_args` bounds the
+  # positional arguments the command takes.
+  defp parse_args(command, args, switches, max_args) do
+    case OptionParser.parse(args, strict: switches) do
+      {_opts, _rest, [{flag, nil} | _more]} ->
+        if known_switch?(flag, switches),
+          do: {:error, "#{command}: #{flag} needs a value"},
+          else: {:error, "#{command}: unknown option #{flag}"}
 
-    run_login(opts)
+      {_opts, _rest, [{flag, _value} | _more]} ->
+        {:error, "#{command}: invalid value for #{flag}"}
+
+      {_opts, rest, []} when length(rest) > max_args ->
+        {:error, "#{command}: unexpected argument #{Enum.at(rest, max_args)}"}
+
+      {opts, rest, []} ->
+        {:ok, opts, rest}
+    end
+  end
+
+  defp known_switch?("--" <> name, switches) do
+    name = String.replace(name, "-", "_")
+    Enum.any?(switches, fn {key, _type} -> Atom.to_string(key) == name end)
+  end
+
+  defp known_switch?(_flag, _switches), do: false
+
+  defp login(args) do
+    case parse_args("login", args, [token: :string, no_browser: :boolean], 0) do
+      {:ok, opts, []} -> run_login(opts)
+      {:error, message} -> usage_error(message)
+    end
   end
 
   defp run_login(opts) do
@@ -218,11 +252,15 @@ defmodule Supablock.CLI do
   end
 
   defp setup(args) do
-    {opts, rest, _invalid} =
-      OptionParser.parse(args,
-        strict: [service: :boolean, no_browser: :boolean, token: :string]
-      )
+    switches = [service: :boolean, no_browser: :boolean, token: :string]
 
+    case parse_args("setup", args, switches, 1) do
+      {:ok, opts, rest} -> run_setup(opts, rest)
+      {:error, message} -> usage_error(message)
+    end
+  end
+
+  defp run_setup(opts, rest) do
     case apply_profile(List.first(rest)) do
       :ok ->
         case ensure_authenticated(opts) do
@@ -314,7 +352,7 @@ defmodule Supablock.CLI do
   defp oauth_login(no_browser?) do
     request = OAuth.new_request()
 
-    case AuthCallback.start_listener(self()) do
+    case AuthCallback.start_listener(self(), request.state) do
       {:ok, listener} ->
         try do
           IO.puts("Open this link in your browser to authorize supablock:\n")
@@ -345,15 +383,17 @@ defmodule Supablock.CLI do
     end
   end
 
+  # The listener only forwards callbacks carrying this login's state; the
+  # check is repeated here so the flow never depends on that alone.
   defp await_oauth_callback(request) do
     receive do
       {:oauth_callback, %{"error" => error} = params} ->
-        description = params["error_description"] || error
+        description = printable(params["error_description"] || error)
         IO.puts(:stderr, "Authorization was not granted: #{description}")
         2
 
       {:oauth_callback, %{"code" => code, "state" => state}} when is_binary(code) ->
-        if Plug.Crypto.secure_compare(state || "", request.state) do
+        if AuthCallback.state_matches?(state, request.state) do
           finish_oauth_login(request, code)
         else
           IO.puts(:stderr, "State mismatch on the OAuth callback — try again.")
@@ -369,6 +409,16 @@ defmodule Supablock.CLI do
         2
     end
   end
+
+  # Text from a redirect URL is attacker-shaped: drop control characters
+  # (terminal escapes), keep it short, and never fail on a non-string.
+  defp printable(value) when is_binary(value) do
+    value
+    |> String.replace(~r/[\x00-\x1f\x7f-\x9f]/u, "")
+    |> String.slice(0, 200)
+  end
+
+  defp printable(_other), do: "(no description)"
 
   defp finish_oauth_login(request, code) do
     with {:ok, tokens} <- OAuth.exchange_code(request, code),
@@ -471,17 +521,34 @@ defmodule Supablock.CLI do
           {:error, _reason} -> IO.puts("Could not revoke server-side; deleted locally.")
         end
 
+      # The Management API cannot revoke a personal access token, so deleting
+      # the local copy leaves it valid. Say so rather than imply it is dead.
+      {:ok, %Credentials.Credential{type: :pat}} ->
+        IO.puts(
+          "The access token still works until you revoke it at " <>
+            "https://supabase.com/dashboard/account/tokens " <>
+            "(supablock logins are named supablock_<user>@<host>_…)."
+        )
+
       _other ->
         :ok
     end
 
     Credentials.delete()
     IO.puts("Logged out.")
+
+    if System.get_env("SUPABLOCK_TOKEN") not in [nil, ""] do
+      IO.puts("SUPABLOCK_TOKEN is still set in this environment, so commands stay authenticated.")
+    end
+
     0
   end
 
   defp status(args) do
-    if "--json" in args, do: status_json(), else: status_text()
+    case parse_args("status", args, [json: :boolean], 0) do
+      {:ok, opts, []} -> if opts[:json], do: status_json(), else: status_text()
+      {:error, message} -> usage_error(message)
+    end
   end
 
   defp status_text do
@@ -660,9 +727,15 @@ defmodule Supablock.CLI do
   defp format_value(value), do: to_string(value)
 
   defp mount(args) do
-    {opts, rest, _invalid} =
-      OptionParser.parse(args, strict: [verbose: :boolean, foreground: :boolean, path: :string])
+    switches = [verbose: :boolean, foreground: :boolean, path: :string]
 
+    case parse_args("mount", args, switches, 1) do
+      {:ok, opts, rest} -> run_mount(opts, rest)
+      {:error, message} -> usage_error(message)
+    end
+  end
+
+  defp run_mount(opts, rest) do
     if opts[:verbose] do
       Logger.configure(level: :debug)
     end
@@ -798,9 +871,16 @@ defmodule Supablock.CLI do
   end
 
   defp unmount(args) do
+    case parse_args("unmount", args, [], 1) do
+      {:ok, _opts, rest} -> run_unmount(rest)
+      {:error, message} -> usage_error(message)
+    end
+  end
+
+  defp run_unmount(args) do
     mountpoint =
       case args do
-        [mountpoint | _rest] ->
+        [mountpoint] ->
           mountpoint
 
         [] ->
@@ -862,6 +942,13 @@ defmodule Supablock.CLI do
   end
 
   defp ls(args) do
+    case parse_args("ls", args, [], 1) do
+      {:ok, _opts, rest} -> run_ls(rest)
+      {:error, message} -> usage_error(message)
+    end
+  end
+
+  defp run_ls(args) do
     with :authed <- require_auth() do
       raw_stdout!()
       path = tree_path(List.first(args) || "/")
@@ -1236,15 +1323,21 @@ defmodule Supablock.CLI do
         end)
 
       cond do
-        code > 0 -> code
+        code > 0 -> grep_trouble(code)
         matched? -> 0
         true -> 1
       end
     else
       {:exit, code} -> code
-      {:error, message} -> usage_error(message)
+      {:error, message} -> grep_trouble(usage_error(message))
     end
   end
+
+  # grep(1): 1 means only "searched everything, nothing matched". A missing
+  # path or a usage error is trouble (2), so `if supablock grep …` cannot
+  # mistake a typo for "no match". API errors keep their own code (3).
+  defp grep_trouble(1), do: 2
+  defp grep_trouble(code), do: code
 
   defp grep_path(regex, path, opts, prefix?, {matched?, code}) do
     case Tree.kind(tree_path(path)) do
@@ -1695,10 +1788,15 @@ defmodule Supablock.CLI do
     usage_error("Usage: supablock service install | uninstall | status")
   end
 
-  defp refresh(["--check" | _rest]), do: refresh_check()
-  defp refresh(["check" | _rest]), do: refresh_check()
+  # Anything but these refuses to run: a mistyped `--check` must not flush.
+  defp refresh(["--check"]), do: refresh_check()
+  defp refresh(["check"]), do: refresh_check()
+  defp refresh([]), do: refresh_flush()
 
-  defp refresh(_flush) do
+  defp refresh([arg | _rest]),
+    do: usage_error("refresh: unexpected argument #{arg}\nUsage: supablock refresh [--check]")
+
+  defp refresh_flush do
     case Control.send_cmd("flush") do
       {:ok, "ok"} ->
         IO.puts("Cache flushed.")

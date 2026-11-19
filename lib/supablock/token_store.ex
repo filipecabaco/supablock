@@ -15,6 +15,11 @@ defmodule Supablock.TokenStore do
       concurrent caller already rotated it (then the fresh token is returned
       without another refresh).
 
+  Across processes (the daemon, `serve` and each CLI command are separate
+  VMs over one credentials file) a lock file next to the credentials makes
+  refresh single-flight too, and whoever gets the lock second picks up the
+  pair the first one wrote instead of spending a dead refresh token.
+
   A failed refresh on a not-yet-expired token returns the old token (it may
   still work); on an expired one it surfaces `:missing` → `EACCES` plus the
   "run: supablock login" hint downstream.
@@ -108,7 +113,91 @@ defmodule Supablock.TokenStore do
     end
   end
 
-  defp rotate(%Credential{refresh_token: refresh}, state) when is_binary(refresh) do
+  # This GenServer makes refresh single-flight within one VM, but the daemon,
+  # `supablock serve` and every CLI command are separate VMs sharing one
+  # credentials file. Two of them refreshing with the same single-use token
+  # means the loser's request kills the grant. So rotation takes a lock file
+  # and, holding it, re-reads the file: if someone else already rotated, use
+  # their pair instead of spending a token that is now dead.
+  defp rotate(%Credential{refresh_token: refresh} = credential, state) when is_binary(refresh) do
+    with_refresh_lock(fn ->
+      case rotated_elsewhere(credential, state) do
+        {:ok, %Credential{access_token: token}} -> {{:ok, token}, state}
+        :no -> do_rotate(credential, state)
+      end
+    end)
+  end
+
+  defp rotate(%Credential{}, state), do: {{:error, :no_refresh_token}, state}
+
+  # Only when the file is authoritative: with an unsaved pair in memory the
+  # file holds the *older*, already-spent pair.
+  defp rotated_elsewhere(%Credential{refresh_token: ours}, %{unsaved: nil}) do
+    case Credentials.load_credential() do
+      {:ok, %Credential{type: :oauth, refresh_token: theirs} = fresh}
+      when is_binary(theirs) and theirs != ours ->
+        {:ok, fresh}
+
+      _same_or_gone ->
+        :no
+    end
+  end
+
+  defp rotated_elsewhere(_credential, _state), do: :no
+
+  @lock_wait_ms 8_000
+  @lock_stale_ms 30_000
+  @lock_poll_ms 50
+
+  @doc false
+  # Run `fun` holding the cross-process refresh lock. A lock older than
+  # @lock_stale_ms belongs to a process that died mid-refresh and is taken
+  # over. If the lock cannot be created at all (read-only config dir) the
+  # refresh still runs: being logged out is worse than the race.
+  def with_refresh_lock(fun, deadline \\ nil) do
+    deadline = deadline || System.monotonic_time(:millisecond) + @lock_wait_ms
+    lock = Supablock.Paths.refresh_lock_file()
+
+    case File.open(lock, [:write, :exclusive]) do
+      {:ok, io} ->
+        File.close(io)
+
+        try do
+          fun.()
+        after
+          File.rm(lock)
+        end
+
+      {:error, :eexist} ->
+        cond do
+          stale_lock?(lock) ->
+            File.rm(lock)
+            with_refresh_lock(fun, deadline)
+
+          System.monotonic_time(:millisecond) < deadline ->
+            Process.sleep(@lock_poll_ms)
+            with_refresh_lock(fun, deadline)
+
+          true ->
+            fun.()
+        end
+
+      {:error, _unwritable} ->
+        fun.()
+    end
+  end
+
+  defp stale_lock?(lock) do
+    case File.stat(lock, time: :posix) do
+      {:ok, %File.Stat{mtime: mtime}} ->
+        (System.os_time(:second) - mtime) * 1_000 > @lock_stale_ms
+
+      {:error, _gone} ->
+        false
+    end
+  end
+
+  defp do_rotate(%Credential{refresh_token: refresh}, state) do
     case OAuth.refresh(refresh) do
       {:ok, tokens} ->
         rotated = %Credential{
@@ -137,8 +226,6 @@ defmodule Supablock.TokenStore do
         {{:error, reason}, state}
     end
   end
-
-  defp rotate(%Credential{}, state), do: {{:error, :no_refresh_token}, state}
 
   # `Paths.ensure!/0` raises on an unwritable state dir; that is a failed
   # write like any other, not a reason to crash with the only live token.

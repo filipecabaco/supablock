@@ -242,7 +242,29 @@ defmodule Supablock.CLITest do
       assert credential.refresh_token == "oauth_refresh_" <> String.duplicate("b", 20)
     end
 
-    test "a state mismatch on the callback is rejected" do
+    test "a forged or stray callback is refused and the login keeps waiting" do
+      url_file = fake_browser!()
+      TestEnv.stub_api!(oauth_routes(self()))
+
+      login =
+        Task.async(fn ->
+          capture_io(fn -> assert CLI.run(["login"]) == 0 end)
+        end)
+
+      query = url_file |> await_file() |> URI.parse() |> Map.get(:query) |> URI.decode_query()
+
+      # Neither a forged code nor a drive-by error (any web page can make the
+      # browser load these) reaches the login or ends it.
+      assert get_callback!(code: "stolen", state: "forged-state").status == 400
+      assert get_callback!(error: "access_denied").status == 400
+      refute_received {:token_form, _form}
+
+      assert get_callback!(code: "consented123", state: query["state"]).status == 200
+      assert Task.await(login, 15_000) =~ "Logged in via OAuth"
+      assert_received {:token_form, %{"code" => "consented123"}}
+    end
+
+    test "a denied consent exits politely, with the provider's text made safe" do
       url_file = fake_browser!()
       TestEnv.stub_api!(oauth_routes(self()))
 
@@ -253,29 +275,18 @@ defmodule Supablock.CLITest do
           end)
         end)
 
-      await_file(url_file)
-      get_callback!(code: "stolen", state: "forged-state")
+      query = url_file |> await_file() |> URI.parse() |> Map.get(:query) |> URI.decode_query()
+
+      get_callback!(
+        error: "access_denied",
+        error_description: "User denied \e[2J\e]0;pwned\a access",
+        state: query["state"]
+      )
 
       stderr = Task.await(login, 15_000)
-      assert stderr =~ "State mismatch"
-      refute_received {:token_form, _form}
-      assert Credentials.load() == :missing
-    end
-
-    test "a denied consent exits politely" do
-      TestEnv.stub_api!(oauth_routes(self()))
-
-      login =
-        Task.async(fn ->
-          capture_io(:stderr, fn ->
-            capture_io(fn -> assert CLI.run(["login", "--no-browser"]) == 2 end)
-          end)
-        end)
-
-      get_callback!(error: "access_denied", error_description: "User denied access")
-
-      stderr = Task.await(login, 15_000)
-      assert stderr =~ "Authorization was not granted: User denied access"
+      assert stderr =~ "Authorization was not granted: User denied [2J]0;pwned access"
+      refute stderr =~ "\e"
+      refute stderr =~ "\a"
       assert Credentials.load() == :missing
     end
 
@@ -403,8 +414,24 @@ defmodule Supablock.CLITest do
 
   test "logout deletes credentials and is idempotent" do
     :ok = Credentials.store("sbp_t000000000000000000000000000000000000t")
-    assert capture_io(fn -> assert CLI.run(["logout"]) == 0 end) =~ "Logged out."
-    assert capture_io(fn -> assert CLI.run(["logout"]) == 0 end) =~ "Logged out."
+    first = capture_io(fn -> assert CLI.run(["logout"]) == 0 end)
+    assert first =~ "Logged out."
+    # A PAT cannot be revoked over the API: say it is still live, and where to kill it.
+    assert first =~ "still works until you revoke it"
+    assert first =~ "dashboard/account/tokens"
+    assert Credentials.load_credential() == :missing
+
+    second = capture_io(fn -> assert CLI.run(["logout"]) == 0 end)
+    assert second =~ "Logged out."
+    refute second =~ "still works"
+  end
+
+  test "logout warns when SUPABLOCK_TOKEN keeps the shell authenticated" do
+    System.put_env("SUPABLOCK_TOKEN", "sbp_env00000000000000000000000000000000000e")
+    on_exit(fn -> System.delete_env("SUPABLOCK_TOKEN") end)
+
+    output = capture_io(fn -> assert CLI.run(["logout"]) == 0 end)
+    assert output =~ "SUPABLOCK_TOKEN is still set"
   end
 
   test "status without auth exits 2" do
@@ -436,6 +463,45 @@ defmodule Supablock.CLITest do
   test "refresh without a mount exits 1" do
     stderr = capture_io(:stderr, fn -> assert CLI.run(["refresh"]) == 1 end)
     assert stderr =~ "Not mounted."
+  end
+
+  describe "unknown options and stray arguments are refused, not dropped" do
+    test "a mistyped refresh --check does not flush" do
+      stderr = capture_io(:stderr, fn -> assert CLI.run(["refresh", "--chek"]) == 1 end)
+      assert stderr =~ "refresh: unexpected argument --chek"
+      refute stderr =~ "Not mounted."
+    end
+
+    test "every flag-taking command rejects an unknown flag before doing anything" do
+      for argv <- [
+            ["login", "--no-browse"],
+            ["setup", "--servce"],
+            ["mount", "--forground"],
+            ["status", "--jsn"],
+            ["unmount", "--force"],
+            ["ls", "-l"]
+          ] do
+        [command, flag] = argv
+
+        stderr = capture_io(:stderr, fn -> assert CLI.run(argv) == 1 end)
+        assert stderr =~ "#{command}: unknown option #{flag}"
+      end
+    end
+
+    test "a known flag missing its value says so" do
+      stderr = capture_io(:stderr, fn -> assert CLI.run(["login", "--token"]) == 1 end)
+      assert stderr =~ "login: --token needs a value"
+    end
+
+    test "commands that take no arguments refuse them" do
+      for command <- ["logout", "doctor", "mcp"] do
+        stderr = capture_io(:stderr, fn -> assert CLI.run([command, "extra"]) == 1 end)
+        assert stderr =~ "#{command}: unexpected argument extra"
+      end
+
+      stderr = capture_io(:stderr, fn -> assert CLI.run(["login", "stray"]) == 1 end)
+      assert stderr =~ "login: unexpected argument stray"
+    end
   end
 
   test "config set/get/list round trip" do
@@ -696,6 +762,12 @@ defmodule Supablock.CLITest do
              end) == ""
     end
 
+    test "grep on a missing path exits 2, so it cannot pass for no match" do
+      assert capture_io(:stderr, fn ->
+               assert CLI.run(["grep", "x", "#{@proj_base}/no-such-file"]) == 2
+             end) =~ "No such path"
+    end
+
     test "grep reports binary files without dumping bytes" do
       output =
         capture_io(fn ->
@@ -705,17 +777,17 @@ defmodule Supablock.CLITest do
       assert output == "Binary file #{@proj_base}/functions/hello/body matches\n"
     end
 
-    test "grep without a pattern is a usage error" do
-      assert capture_io(:stderr, fn -> assert CLI.run(["grep"]) == 1 end) =~
+    test "grep usage errors exit 2, not the no-match 1" do
+      assert capture_io(:stderr, fn -> assert CLI.run(["grep"]) == 2 end) =~
                "Usage: supablock grep"
 
-      assert capture_io(:stderr, fn -> assert CLI.run(["grep", "-z", "x", "."]) == 1 end) =~
+      assert capture_io(:stderr, fn -> assert CLI.run(["grep", "-z", "x", "."]) == 2 end) =~
                "unknown option -z"
     end
 
     test "grep rejects an invalid pattern" do
       assert capture_io(:stderr, fn ->
-               assert CLI.run(["grep", "(", "#{@proj_base}/health"]) == 1
+               assert CLI.run(["grep", "(", "#{@proj_base}/health"]) == 2
              end) =~ "bad pattern"
     end
 
