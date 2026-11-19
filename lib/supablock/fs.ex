@@ -22,33 +22,54 @@ defmodule Supablock.Fs do
   # caches from `stat` always matches what `cat` gets (no truncated or padded
   # reads when the cache refreshes in between), a multi-chunk read never
   # splices two versions, and a file is rendered once per open, not once per
-  # 128 KiB chunk; `supablock refresh` drops them all. A snapshot lives while it is in use: each hit pushes its
-  # expiry @snapshot_idle_ms further out, so a long read stays consistent and
-  # a file sees fresh data once it has been left alone that long. Total
-  # bytes are capped; least recently used snapshots go first.
+  # 128 KiB chunk. `supablock refresh` (a cache generation bump) drops them
+  # all. A snapshot lives while it is in use: each hit pushes its expiry
+  # @snapshot_idle_ms further out, so a long read stays consistent and a file
+  # sees fresh data once it has been left alone that long. Total bytes are
+  # capped; least recently used snapshots go first.
+  #
+  # Callbacks run concurrently (one process per FUSE request), so snapshots
+  # live in a public ETS table created per mount, not in the callback state.
+  # When two requests render the same path at once the first stored body
+  # wins and both serve it.
   @snapshot_idle_ms 10_000
   @snapshot_max_bytes 64 * 1024 * 1024
 
   @impl true
-  def userfs_init(_mount_point, opts),
-    do: {:ok, %{opts: opts, snapshots: %{}, bytes: 0, generation: Cache.generation()}}
+  def userfs_init(_mount_point, opts) do
+    table = :ets.new(:supablock_snapshots, [:set, :public, read_concurrency: true])
+    {:ok, %{opts: opts, snapshots: table}}
+  end
 
   @impl true
   def userfs_getattr(state, path) do
-    {result, state} =
+    result =
       case Router.kind(path) do
-        {:ok, :dir} -> {{:ok, :dir}, state}
-        {:ok, :file} -> body(state, path)
-        {:error, _reason} = error -> {error, state}
+        {:ok, :dir} ->
+          {:ok, :dir}
+
+        # Row pages: size unknown until fetched; opened with direct I/O.
+        {:ok, :file} ->
+          if Router.unsized?(path), do: {:ok, :unsized}, else: body(state, path)
+
+        {:error, _reason} = error ->
+          error
       end
 
     Logger.debug("supablock: getattr #{path} -> #{inspect(elem(result, 0))}")
 
     case result do
       {:ok, :dir} -> {:ok, {0o555, @attr_dir, 0}, state}
+      {:ok, :unsized} -> {:ok, {0o444, @attr_file, 0}, state}
       {:ok, body} -> {:ok, {0o444, @attr_file, byte_size(body)}, state}
       {:error, error} -> {:error, errno(error), state}
     end
+  end
+
+  @impl true
+  def userfs_open(state, path) do
+    flags = if Router.unsized?(path), do: @open_direct_io, else: 0
+    {:ok, flags, state}
   end
 
   @impl true
@@ -64,7 +85,7 @@ defmodule Supablock.Fs do
 
   @impl true
   def userfs_read(state, path) do
-    {result, state} = body(state, path)
+    result = body(state, path)
     Logger.debug("supablock: read #{path} -> #{inspect(elem(result, 0))}")
 
     case result do
@@ -77,62 +98,85 @@ defmodule Supablock.Fs do
   # The snapshot for `path` if one is live, else a fresh render (stored on
   # success; errors are never snapshotted). Public for tests; `now` is
   # injectable for the same reason.
-  def body(state, path, now \\ System.monotonic_time(:millisecond)) do
-    state = expire(state, now)
+  def body(%{snapshots: table}, path, now \\ System.monotonic_time(:millisecond)) do
+    generation = Cache.generation()
 
-    case Map.fetch(state.snapshots, path) do
-      {:ok, {body, _used}} ->
-        {{:ok, body}, put_in(state.snapshots[path], {body, now})}
+    case live_snapshot(table, path, generation, now) do
+      {:ok, body} ->
+        {:ok, body}
 
-      :error ->
-        case Router.read(path) do
-          {:ok, body} -> {{:ok, body}, store(state, path, body, now)}
-          {:error, _reason} = error -> {error, state}
+      :none ->
+        with {:ok, body} <- Router.read(path) do
+          {:ok, store(table, path, body, generation, now)}
         end
     end
   end
 
-  # A `supablock refresh` (Cache.flush/0) invalidates every snapshot at once.
-  defp expire(%{generation: gen} = state, now) do
-    if gen != Cache.generation() do
-      %{state | snapshots: %{}, bytes: 0, generation: Cache.generation()}
-    else
-      expire_idle(state, now)
+  # {path, body, last_used, generation, bytes}
+  defp live_snapshot(table, path, generation, now) do
+    case :ets.lookup(table, path) do
+      [{^path, body, used, ^generation, _bytes}] when now - used < @snapshot_idle_ms ->
+        :ets.update_element(table, path, {3, now})
+        {:ok, body}
+
+      _missing_idle_or_flushed ->
+        :none
     end
   end
 
-  defp expire_idle(state, now) do
-    {dead, live} =
-      Map.split_with(state.snapshots, fn {_path, {_body, used}} ->
-        now - used >= @snapshot_idle_ms
+  defp store(_table, _path, body, _generation, _now) when byte_size(body) > @snapshot_max_bytes,
+    do: body
+
+  defp store(table, path, body, generation, now) do
+    entry = {path, body, now, generation, byte_size(body)}
+
+    # A concurrent render of the same path may have stored first: serve
+    # that one, so every reader of this path sees the same bytes.
+    body =
+      if :ets.insert_new(table, entry) do
+        body
+      else
+        case live_snapshot(table, path, generation, now) do
+          {:ok, theirs} ->
+            theirs
+
+          :none ->
+            :ets.insert(table, entry)
+            body
+        end
+      end
+
+    prune(table, generation, now)
+    body
+  end
+
+  # Drop idle and pre-flush snapshots, then the least recently used ones
+  # until the total is under the cap. Runs only when a body is stored.
+  defp prune(table, generation, now) do
+    cutoff = now - @snapshot_idle_ms
+
+    :ets.select_delete(table, [
+      {{:_, :_, :"$1", :"$2", :_}, [{:orelse, {:"=<", :"$1", cutoff}, {:"/=", :"$2", generation}}],
+       [true]}
+    ])
+
+    entries = :ets.select(table, [{{:"$1", :_, :"$2", :_, :"$3"}, [], [{{:"$1", :"$2", :"$3"}}]}])
+    total = Enum.reduce(entries, 0, fn {_path, _used, bytes}, acc -> acc + bytes end)
+
+    if total > @snapshot_max_bytes do
+      entries
+      |> Enum.sort_by(fn {_path, used, _bytes} -> used end)
+      |> Enum.reduce_while(total, fn {path, _used, bytes}, left ->
+        if left <= @snapshot_max_bytes do
+          {:halt, left}
+        else
+          :ets.delete(table, path)
+          {:cont, left - bytes}
+        end
       end)
+    end
 
-    freed = dead |> Map.values() |> Enum.reduce(0, fn {body, _}, acc -> acc + byte_size(body) end)
-    %{state | snapshots: live, bytes: state.bytes - freed}
-  end
-
-  defp store(state, _path, body, _now) when byte_size(body) > @snapshot_max_bytes, do: state
-
-  defp store(state, path, body, now) do
-    state = %{
-      state
-      | snapshots: Map.put(state.snapshots, path, {body, now}),
-        bytes: state.bytes + byte_size(body)
-    }
-
-    evict_lru(state)
-  end
-
-  defp evict_lru(%{bytes: bytes} = state) when bytes <= @snapshot_max_bytes, do: state
-
-  defp evict_lru(state) do
-    {path, {body, _used}} = Enum.min_by(state.snapshots, fn {_path, {_body, used}} -> used end)
-
-    evict_lru(%{
-      state
-      | snapshots: Map.delete(state.snapshots, path),
-        bytes: state.bytes - byte_size(body)
-    })
+    :ok
   end
 
   @impl true

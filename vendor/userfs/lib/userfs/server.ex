@@ -100,117 +100,33 @@ defmodule Userfs.Server do
   def chunk(content, offset, size),
     do: binary_part(content, offset, min(size, byte_size(content) - offset))
 
-  defp port_tx(data, %__MODULE__{port: port} = state) do
-    true = Port.command(port, <<@magiccookie::size(32), data::binary>>)
-    state
-  end
+  @requests [@request_readdir, @request_getattr, @request_readlink, @request_read, @request_open]
 
-  @spec handle_fusereq(%__MODULE__{}, integer, atom, list, fun) :: %__MODULE__{}
+  # Supablock: requests carry an id, and each one runs in its own process
+  # that replies to the port directly (any process may write to a port; the
+  # reply echoes the id so the port matches it to the waiting FUSE thread).
+  # So a slow callback — a large table page, a slow API — no longer holds up
+  # every other `ls`/`cat` on the mount. The callback module's state is
+  # therefore read-only after `userfs_init/2`: the state a callback returns
+  # is ignored, and anything it must share between calls (Supablock.Fs keeps
+  # body snapshots) lives in ETS.
+  def handle_info(
+        {port, {:data, <<@magiccookie::size(32), code::size(32), id::size(32), args::binary>>}},
+        %__MODULE__{port: port, fs_mod: fs_mod, fs_state: fs_state} = state
+      )
+      when code in @requests do
+    spawn(fn ->
+      reply = run_request(fs_mod, fs_state, code, args)
 
-  defp handle_fusereq(
-         %__MODULE__{fs_mod: fs_mod, fs_state: fs_state} = state,
-         req_code,
-         cb_fun,
-         cb_args,
-         reply_fun
-       ) do
-    # A crashing callback must not take the server (and the mount) down with
-    # it: reply EIO (5) and carry on.
-    {port_reply, new_fs_state} =
       try do
-        case apply(fs_mod, cb_fun, [fs_state | cb_args]) do
-          {:ok, reply, new_fs_state} ->
-            {<<req_code::size(32), 0::size(32), reply_fun.(reply)::binary>>, new_fs_state}
-
-          {:error, err_code, new_fs_state} ->
-            {<<req_code::size(32), err_code::size(32)>>, new_fs_state}
-        end
-      catch
-        kind, reason ->
-          log_error("userfs callback #{fs_mod}.#{cb_fun} crashed: #{inspect({kind, reason})}")
-
-          {<<req_code::size(32), 5::size(32)>>, fs_state}
+        Port.command(port, <<@magiccookie::size(32), code::size(32), id::size(32), reply::binary>>)
+      rescue
+        # the port closed (unmounted) while this request ran
+        ArgumentError -> :ok
       end
+    end)
 
-    port_tx(port_reply, %__MODULE__{state | fs_state: new_fs_state})
-  end
-
-  def handle_info(
-        {port, {:data, <<@magiccookie::size(32), @request_readdir::size(32), path::binary>>}},
-        %__MODULE__{port: port} = state
-      ) do
-    new_state =
-      handle_fusereq(
-        state,
-        @request_readdir,
-        :userfs_readdir,
-        [path],
-        fn reply ->
-          List.foldl(
-            reply,
-            <<>>,
-            fn e, a when is_binary(e) -> <<a::binary, e::binary, 0::size(8)>> end
-          )
-        end
-      )
-
-    {:noreply, new_state}
-  end
-
-  def handle_info(
-        {port, {:data, <<@magiccookie::size(32), @request_getattr::size(32), path::binary>>}},
-        %__MODULE__{port: port} = state
-      ) do
-    new_state =
-      handle_fusereq(
-        state,
-        @request_getattr,
-        :userfs_getattr,
-        [path],
-        fn {mode, type, size}
-           when is_integer(mode) and is_integer(type) and is_integer(size) ->
-          <<mode::size(32), type::size(32), size::size(32)>>
-        end
-      )
-
-    {:noreply, new_state}
-  end
-
-  def handle_info(
-        {port, {:data, <<@magiccookie::size(32), @request_readlink::size(32), path::binary>>}},
-        %__MODULE__{port: port} = state
-      ) do
-    new_state =
-      handle_fusereq(
-        state,
-        @request_readlink,
-        :userfs_readlink,
-        [path],
-        fn link_dest when is_binary(link_dest) -> <<link_dest::binary, 0::size(8)>> end
-      )
-
-    {:noreply, new_state}
-  end
-
-  # Supablock: the port sends the kernel's offset and size with every read,
-  # so only that chunk goes back over the pipe (a sub-binary, no copy here).
-  def handle_info(
-        {port,
-         {:data,
-          <<@magiccookie::size(32), @request_read::size(32), offset::size(64), size::size(32),
-            path::binary>>}},
-        %__MODULE__{port: port} = state
-      ) do
-    new_state =
-      handle_fusereq(
-        state,
-        @request_read,
-        :userfs_read,
-        [path],
-        fn content when is_binary(content) -> chunk(content, offset, size) end
-      )
-
-    {:noreply, new_state}
+    {:noreply, state}
   end
 
   def handle_info(
@@ -347,6 +263,54 @@ defmodule Userfs.Server do
     Process.send_after(self(), {:slow_stop, info}, 100, [])
     %{state | phase: :stopping}
   end
+
+  # The reply after code and id: result (0 or an errno), then the data.
+  @doc false
+  def run_request(fs_mod, fs_state, code, args) do
+    {cb_fun, cb_args, encode} = request(code, args)
+
+    case callback(fs_mod, cb_fun, [fs_state | cb_args]) do
+      {:ok, reply, _state} -> <<0::size(32), encode.(reply)::binary>>
+      {:error, err_code, _state} when is_integer(err_code) -> <<err_code::size(32)>>
+    end
+  catch
+    # A crashing callback (or a malformed request) must not take the mount
+    # down, nor leave the FUSE thread waiting: reply EIO (5).
+    kind, reason ->
+      log_error("userfs request #{code} to #{fs_mod} crashed: #{inspect({kind, reason})}")
+      <<5::size(32)>>
+  end
+
+  defp request(@request_readdir, path),
+    do: {:userfs_readdir, [path], fn names -> for name <- names, into: <<>>, do: <<name::binary, 0>> end}
+
+  defp request(@request_getattr, path) do
+    {:userfs_getattr, [path],
+     fn {mode, type, size} when is_integer(mode) and is_integer(type) and is_integer(size) ->
+       <<mode::size(32), type::size(32), size::size(32)>>
+     end}
+  end
+
+  defp request(@request_readlink, path),
+    do: {:userfs_readlink, [path], fn dest when is_binary(dest) -> <<dest::binary, 0>> end}
+
+  # The port sends the kernel's offset and size with every read, so only that
+  # chunk goes back over the pipe (a sub-binary, no copy here).
+  defp request(@request_read, <<offset::size(64), size::size(32), path::binary>>),
+    do: {:userfs_read, [path], fn content when is_binary(content) -> chunk(content, offset, size) end}
+
+  defp request(@request_open, path),
+    do: {:userfs_open, [path], fn flags when is_integer(flags) -> <<flags::size(32)>> end}
+
+  # `userfs_open/2` is optional: without it every file opens with no flags.
+  defp callback(fs_mod, :userfs_open, [fs_state, _path] = args) do
+    if function_exported?(fs_mod, :userfs_open, 2),
+      do: apply(fs_mod, :userfs_open, args),
+      else: {:ok, 0, fs_state}
+  end
+
+  defp callback(fs_mod, cb_fun, args), do: apply(fs_mod, cb_fun, args)
+
 
   defp log_error(msg) do
     :ok = :error_logger.error_msg(String.to_charlist(msg))

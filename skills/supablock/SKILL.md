@@ -222,7 +222,7 @@ organizations/<org>/
     branches/<branch>/info.json
     database/{backups,migrations,readonly}.json
     database/<schema>/<table>/schema.json       # columns, types, primary key
-    database/<schema>/<table>/rows-000000.csv   # paged rows, 500/page
+    database/<schema>/<table>/rows-000000.csv   # paged rows, 500/page (mount: stat size 0, read to EOF)
     network/{restrictions,ssl-enforcement,custom-hostname,vanity-subdomain}.json
     types.ts                  # generated TypeScript types
     upgrade-eligibility.json

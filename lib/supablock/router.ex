@@ -125,6 +125,23 @@ defmodule Supablock.Router do
     end
   end
 
+  @doc """
+  True for files whose size the mount does not report up front: table row
+  pages. Knowing their size means fetching the page, so `ls -l` on a big
+  table would download all of it; instead they report size 0 and are read
+  with direct I/O until EOF (see `Supablock.Fs`). Pure path matching, no I/O.
+  """
+  @spec unsized?(String.t()) :: boolean
+  def unsized?(path) do
+    case segments(path) do
+      ["organizations", _org, "projects", _ref, "database", _schema, _table, file] ->
+        Regex.match?(~r/^rows-\d+\.(csv|json)$/, file)
+
+      _other ->
+        false
+    end
+  end
+
   @spec list(String.t()) :: {:ok, [String.t()]} | {:error, error}
   def list(path) do
     case resolve(segments(path)) do
