@@ -110,7 +110,8 @@ Snapshot a directory under git for a config audit trail.
 
 Facts agents should know: JSON output is deterministic (sorted keys,
 pretty-printed, trailing newline) so diffs are clean; exit codes are 0 ok,
-1 usage/no-such-path (grep: also "no matches"), 2 not authenticated,
+1 usage/no-such-path (grep: 1 only means "no matches"; its usage and
+missing-path errors are 2), 2 not authenticated,
 3 API/network/rate-limited, 4 environment, 141 downstream pipe closed;
 output is pipe-safe (`supablock cat … | jq`, `… | head` all behave like
 coreutils); the Management API allows 120 requests/minute — for batch
