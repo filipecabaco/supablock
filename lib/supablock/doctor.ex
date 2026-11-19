@@ -74,11 +74,17 @@ defmodule Supablock.Doctor do
   defp fuse_device do
     case :os.type() do
       {:unix, :darwin} ->
+        # Either userspace FUSE works: macFUSE (kext/FSKit) or FUSE-T (NFS-backed).
         if File.exists?("/Library/Filesystems/macfuse.fs") or
-             System.find_executable("mount_macfuse") do
-          {"macFUSE installed", :ok}
+             System.find_executable("mount_macfuse") != nil or
+             File.exists?("/Library/Application Support/fuse-t") or
+             File.exists?("/usr/local/lib/libfuse-t.dylib") or
+             File.exists?("/opt/homebrew/lib/libfuse-t.dylib") do
+          {"macFUSE or FUSE-T installed", :ok}
         else
-          {"macFUSE installed", {:error, "install macFUSE from https://macfuse.github.io"}}
+          {"macFUSE or FUSE-T installed",
+           {:error,
+            "install macFUSE (https://macfuse.github.io) or FUSE-T (https://www.fuse-t.org)"}}
         end
 
       _linux ->

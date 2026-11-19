@@ -609,7 +609,10 @@ defmodule Supablock.Router do
     name
     |> to_string()
     |> String.replace("/", "_")
-    |> String.replace(<<0>>, "_")
+    # NUL and other control characters (a newline in a table name would
+    # split one entry into two in `ls`, the MCP output and the line-based
+    # control socket).
+    |> String.replace(~r/[\x00-\x1f\x7f]/, "_")
     |> case do
       "" -> "_"
       "." -> "_"

@@ -10,7 +10,12 @@ description: >-
   Also use when asked to CHANGE a Supabase resource: supablock never writes,
   but each project's how-to-change.md documents the exact Management API /
   CLI request, which this skill hands to the user to run.
-allowed-tools: Bash(supablock:*)
+allowed-tools: >-
+  Bash(supablock help:*), Bash(supablock status:*),
+  Bash(supablock ls:*), Bash(supablock cat:*), Bash(supablock head:*),
+  Bash(supablock tail:*), Bash(supablock find:*), Bash(supablock grep:*),
+  Bash(supablock snapshot:*), Bash(supablock diff:*),
+  Bash(supablock serve:*)
 ---
 
 # supablock — verify Supabase state, read-only by construction
@@ -22,7 +27,8 @@ exploring. Output is deterministic — JSON pretty-printed with sorted keys —
 so two projects' files compare cleanly line for line.
 
 **This skill runs `supablock` and nothing else.** Its `allowed-tools` grant
-is a single read-only command, so every recipe below is expressed in
+lists only supablock's read subcommands — `config`, `setup`, `login`,
+`mount` and the rest still prompt the user — so every recipe below is expressed in
 supablock's own `ls`/`cat`/`head`/`find`/`grep` rather than piped through
 other utilities. Nothing here needs a shell pipeline, a downloader, a
 package manager or a container runtime; if a task seems to need one, that

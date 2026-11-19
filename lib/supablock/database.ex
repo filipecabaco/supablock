@@ -154,6 +154,26 @@ defmodule Supablock.Database do
     end
   end
 
+  @doc """
+  The project's API key of `kind`, through the cache. Every Data API page and
+  every metrics scrape needs one; fetching it uncached turned `ls -l` on a big
+  table into one Management API call per page. The cache key is the endpoint
+  URL, the same key `Router` uses for the `api-keys/` files, so both share
+  one fetch per `ttl.static` window (`supablock refresh` drops it).
+  """
+  @spec api_key(String.t(), :secret | :publishable) :: {:ok, String.t()} | {:error, term}
+  def api_key(ref, kind) do
+    args = if kind == :secret, do: %{ref: ref, reveal: true}, else: %{ref: ref}
+    url = Endpoints.path(:api_keys, args)
+
+    with {:ok, keys} <- Cache.fetch(url, Config.ttl_ms("static"), fn -> Client.get(url) end) do
+      case select_key(keys, kind) do
+        key when is_binary(key) and key != "" -> {:ok, key}
+        _none -> {:error, :no_key}
+      end
+    end
+  end
+
   @doc "Pick the `api_key` string of the given `kind` from an api-keys list."
   @spec select_key([map], :secret | :publishable) :: String.t() | nil
   def select_key(keys, kind) when is_list(keys) do

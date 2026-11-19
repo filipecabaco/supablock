@@ -5,7 +5,7 @@
 #
 #   docker run --rm \
 #     --cap-drop ALL --security-opt no-new-privileges \
-#     -e SUPABLOCK_TOKEN=sbp_... \
+#     -e SUPABLOCK_TOKEN \
 #     filipecabaco/supablock cat organizations/<org>/projects/<ref>/health
 #
 # Only `supablock mount` needs FUSE, and FUSE is what forces the privileged

@@ -150,13 +150,6 @@ defmodule Supablock.StubServer do
     end
   end
 
-  defp split_target(target) do
-    case String.split(target, "?", parts: 2) do
-      [path] -> {path, %{}}
-      [path, query] -> {path, URI.decode_query(query)}
-    end
-  end
-
   defp respond(socket, "POST", target, headers, body, routes) do
     {path, query_params} = split_target(target)
     bump(path)
@@ -174,6 +167,13 @@ defmodule Supablock.StubServer do
 
   defp respond(socket, _method, _target, _headers, _body, _routes) do
     send_json(socket, 405, %{"message" => "method not allowed"})
+  end
+
+  defp split_target(target) do
+    case String.split(target, "?", parts: 2) do
+      [path] -> {path, %{}}
+      [path, query] -> {path, URI.decode_query(query)}
+    end
   end
 
   defp body_params(headers, body) do
@@ -208,10 +208,12 @@ defmodule Supablock.StubServer do
     )
   end
 
-  defp send_raw(socket, content_type, body) do
+  defp send_json(socket, code, value) do
+    body = Jason.encode!(value)
+
     response = [
-      "HTTP/1.1 200 OK\r\n",
-      "content-type: #{content_type}\r\n",
+      "HTTP/1.1 #{code} #{reason_phrase(code)}\r\n",
+      "content-type: application/json\r\n",
       "content-length: #{byte_size(body)}\r\n",
       "connection: close\r\n",
       "\r\n",
@@ -221,12 +223,10 @@ defmodule Supablock.StubServer do
     :gen_tcp.send(socket, response)
   end
 
-  defp send_json(socket, code, value) do
-    body = Jason.encode!(value)
-
+  defp send_raw(socket, content_type, body) do
     response = [
-      "HTTP/1.1 #{code} #{reason_phrase(code)}\r\n",
-      "content-type: application/json\r\n",
+      "HTTP/1.1 200 OK\r\n",
+      "content-type: #{content_type}\r\n",
       "content-length: #{byte_size(body)}\r\n",
       "connection: close\r\n",
       "\r\n",

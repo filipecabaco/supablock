@@ -64,15 +64,15 @@ defmodule Supablock.CLITest do
     File.mkdir_p!(dir)
     url_file = Path.join(dir, "url")
 
-    opener = Path.join(dir, "xdg-open")
+    opener = Path.join(dir, "fake-browser")
     File.write!(opener, "#!/bin/sh\nprintf '%s' \"$1\" > #{url_file}\n")
     File.chmod!(opener, 0o755)
 
-    original_path = System.get_env("PATH")
-    System.put_env("PATH", dir <> ":" <> original_path)
+    original = Application.get_env(:supablock, :browser_opener)
+    Application.put_env(:supablock, :browser_opener, opener)
 
     ExUnit.Callbacks.on_exit(fn ->
-      System.put_env("PATH", original_path)
+      Application.put_env(:supablock, :browser_opener, original)
       File.rm_rf!(dir)
     end)
 
@@ -921,6 +921,15 @@ defmodule Supablock.CLITest do
       assert body =~ "while IFS= read -r line"
       assert body =~ "[[ \"$line\" == \"$cur\"* ]]"
       assert body =~ "COMPREPLY+=(\"$line\")"
+    end
+
+    test "fish path completion never splices names into a sed script" do
+      fish = capture_io(fn -> assert CLI.run(["completions", "fish"]) == 0 end)
+
+      # `$parent` is built from account-derived names; inside `sed "s|^|$parent/|"`
+      # a name like `x|e;s|^|` adds GNU sed's `e` flag, which runs a shell.
+      refute fish =~ ~r"\| *sed\b"
+      assert fish =~ ~s(printf '%s/%s\\n' "$parent" "$entry")
     end
   end
 

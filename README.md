@@ -109,7 +109,7 @@ needs no capabilities, no host devices and no writable filesystem:
 ```bash
 docker run --rm \
   --cap-drop ALL --security-opt no-new-privileges --read-only \
-  -e SUPABLOCK_TOKEN=sbp_... \
+  -e SUPABLOCK_TOKEN \
   filipecabaco/supablock cat organizations/<org>/projects/<ref>/health
 ```
 
@@ -119,7 +119,7 @@ about getting the same bits twice — the digests are listed on
 
 ```bash
 docker run --rm --cap-drop ALL --security-opt no-new-privileges \
-  -e SUPABLOCK_TOKEN=sbp_... \
+  -e SUPABLOCK_TOKEN \
   filipecabaco/supablock@sha256:<digest> ls organizations
 ```
 
@@ -127,7 +127,9 @@ Notes:
 
 * **One-off command:** anything after the image name runs as a supablock
   subcommand (e.g. `… filipecabaco/supablock grep -rl '"public": true' organizations`).
-* **Headless / CI:** `-e SUPABLOCK_TOKEN=sbp_…` skips login entirely; with
+* **Headless / CI:** with the token exported (`export SUPABLOCK_TOKEN=sbp_…`),
+  `-e SUPABLOCK_TOKEN` passes it through without putting it in the command
+  line or shell history, and skips login entirely; with
   `--read-only` nothing is written to disk. `ls`, `cat`, `find`, `grep`,
   `snapshot`, `diff` and `mcp` all run that way; `serve` needs somewhere to
   put its control socket, so add `--tmpfs /root/.local/state`.
@@ -393,8 +395,9 @@ output, and the filesystem shape means existing file tools (or plain
 `ls`/`cat`) are the whole integration.
 
 * **Agent skill** — `npx skills add filipecabaco/supablock` teaches an agent
-  to run the common checks. It declares `allowed-tools: Bash(supablock:*)`,
-  so the whole skill is one read-only command: no installer, no package
+  to run the common checks. Its `allowed-tools` pre-approves only
+  supablock's read subcommands (`config`, `setup`, `login`, `mount` still
+  prompt you): no installer, no package
   manager, no container runtime, no shell utilities, and every recipe
   written in supablock's own `ls`/`cat`/`head`/`find`/`grep`. It never
   handles your token, and it hands write requests to you rather than
@@ -419,7 +422,7 @@ output, and the filesystem shape means existing file tools (or plain
 
   ```bash
   docker run --rm --cap-drop ALL --security-opt no-new-privileges --read-only \
-    -e SUPABLOCK_TOKEN=sbp_... filipecabaco/supablock \
+    -e SUPABLOCK_TOKEN filipecabaco/supablock \
     cat organizations/<org>/projects/<ref>/health
   ```
 

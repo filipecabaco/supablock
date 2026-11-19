@@ -72,7 +72,7 @@ defmodule Supablock.Service do
 
     messages = ["Wrote #{path}"]
 
-    if System.find_executable("systemctl") do
+    if manager_available?("systemctl") do
       run_quiet("systemctl", ["--user", "daemon-reload"])
 
       case run_quiet("systemctl", ["--user", "enable", "--now", @unit_name]) do
@@ -101,7 +101,7 @@ defmodule Supablock.Service do
 
     messages = ["Wrote #{path}"]
 
-    if System.find_executable("launchctl") do
+    if manager_available?("launchctl") do
       case run_quiet("launchctl", ["load", "-w", path]) do
         {_out, 0} -> {:ok, messages ++ ["Loaded launchd agent #{@agent_label}."]}
         {out, _nonzero} -> {:ok, messages ++ ["launchctl load failed: #{String.trim(out)}"]}
@@ -195,11 +195,20 @@ defmodule Supablock.Service do
     |> String.replace("'", "&apos;")
   end
 
+  # Test seams (all unset in a real install):
+  #   * `:service_platform` — `:linux` / `:darwin`, so both paths are testable
+  #     on either OS;
+  #   * `:launch_agents_dir` — where the plist goes instead of
+  #     `~/Library/LaunchAgents` (`System.user_home!/0` ignores `$HOME`
+  #     changes made after boot, so env isolation alone cannot redirect it);
+  #   * `:service_manager` — `false` never runs systemctl/launchctl, so the
+  #     suite cannot load a real agent or unit on the developer's machine.
   defp platform do
-    case :os.type() do
-      {:unix, :darwin} -> :darwin
-      _other -> :linux
-    end
+    Application.get_env(:supablock, :service_platform) ||
+      case :os.type() do
+        {:unix, :darwin} -> :darwin
+        _other -> :linux
+      end
   end
 
   defp systemd_unit_path do
@@ -208,8 +217,16 @@ defmodule Supablock.Service do
   end
 
   defp launchd_plist_path do
-    Path.join([System.user_home!(), "Library", "LaunchAgents", "#{@agent_label}.plist"])
+    dir =
+      Application.get_env(:supablock, :launch_agents_dir) ||
+        Path.join([System.user_home!(), "Library", "LaunchAgents"])
+
+    Path.join(dir, "#{@agent_label}.plist")
   end
+
+  defp manager_enabled?, do: Application.get_env(:supablock, :service_manager, true) != false
+
+  defp manager_available?(cmd), do: manager_enabled?() and System.find_executable(cmd) != nil
 
   defp executable_path do
     candidates = [
@@ -230,7 +247,8 @@ defmodule Supablock.Service do
   end
 
   defp run_quiet(cmd, args) do
-    case System.find_executable(cmd) do
+    case manager_enabled?() && System.find_executable(cmd) do
+      false -> {"#{cmd} disabled", 127}
       nil -> {"#{cmd} not found", 127}
       path -> System.cmd(path, args, stderr_to_stdout: true)
     end

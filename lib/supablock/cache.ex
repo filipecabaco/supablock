@@ -9,6 +9,14 @@ defmodule Supablock.Cache do
 
   `fetch/3` is single-flight: concurrent misses on the same key result in
   exactly one run of the fetch fun; every other caller waits for that result.
+
+  Two bounds keep a long-running mount healthy:
+
+    * every fetch has a deadline (60s): a server that trickles its body
+      forever is killed and its waiters get `{:error, :timeout}` instead of
+      hanging the FUSE callback behind them;
+    * expired entries are swept every 60s, so walking every table page
+      does not grow memory for the daemon's lifetime.
   """
 
   use GenServer
@@ -18,6 +26,8 @@ defmodule Supablock.Cache do
 
   @not_found_ttl_ms 10_000
   @error_ttl_ms 5_000
+  @fetch_deadline_ms 60_000
+  @sweep_every_ms 60_000
 
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
@@ -52,11 +62,20 @@ defmodule Supablock.Cache do
     end
   end
 
-  @doc "Drop every cache entry (used by `supablock refresh`)."
+  @doc """
+  Drop every cache entry (used by `supablock refresh`). Also bumps
+  `generation/0`, so derived copies held elsewhere (the mount's per-file body
+  snapshots) know to drop theirs too.
+  """
   def flush do
     :ets.delete_all_objects(@table)
+    :persistent_term.put({__MODULE__, :generation}, generation() + 1)
     :ok
   end
+
+  @doc "Incremented by every `flush/0`; cheap to read on every FUSE call."
+  @spec generation() :: non_neg_integer
+  def generation, do: :persistent_term.get({__MODULE__, :generation}, 0)
 
   @doc """
   Cache occupancy, used by `supablock refresh --check`: total entries and how
@@ -84,8 +103,20 @@ defmodule Supablock.Cache do
   def init(_opts) do
     :ets.new(@table, [:named_table, :public, :set, read_concurrency: true])
     :ets.new(@ratelimit_table, [:named_table, :public, :set, read_concurrency: true])
+    schedule_sweep()
     {:ok, %{inflight: %{}}}
   end
+
+  @doc "Delete every entry past its TTL; returns how many were dropped."
+  @spec sweep() :: non_neg_integer
+  def sweep do
+    now = now_ms()
+    # {key, value, fetched_at, ttl}: expired when fetched_at + ttl =< now.
+    spec = [{{:_, :_, :"$1", :"$2"}, [{:"=<", {:+, :"$1", :"$2"}, now}], [true]}]
+    :ets.select_delete(@table, spec)
+  end
+
+  defp schedule_sweep, do: Process.send_after(self(), :sweep, @sweep_every_ms)
 
   @impl true
   def handle_call({:fetch, key, ttl_ms, fun}, from, state) do
@@ -102,7 +133,7 @@ defmodule Supablock.Cache do
           :error ->
             server = self()
 
-            {_pid, ref} =
+            {pid, ref} =
               spawn_monitor(fn ->
                 result =
                   try do
@@ -114,6 +145,8 @@ defmodule Supablock.Cache do
                 send(server, {:fetch_result, key, result})
               end)
 
+            deadline = Application.get_env(:supablock, :cache_fetch_deadline_ms, @fetch_deadline_ms)
+            Process.send_after(self(), {:fetch_deadline, key, ref, pid}, deadline)
             inflight = Map.put(state.inflight, key, {ref, ttl_ms, [from]})
             {:noreply, %{state | inflight: inflight}}
         end
@@ -131,6 +164,27 @@ defmodule Supablock.Cache do
         store(key, result, ttl_ms)
         Enum.each(waiters, &GenServer.reply(&1, result))
         {:noreply, %{state | inflight: inflight}}
+    end
+  end
+
+  def handle_info(:sweep, state) do
+    sweep()
+    schedule_sweep()
+    {:noreply, state}
+  end
+
+  def handle_info({:fetch_deadline, key, ref, pid}, state) do
+    case Map.fetch(state.inflight, key) do
+      {:ok, {^ref, _ttl, waiters}} ->
+        # Demonitor first so the kill below is not also reported as a crash.
+        Process.demonitor(ref, [:flush])
+        Enum.each(waiters, &GenServer.reply(&1, {:error, :timeout}))
+        Process.exit(pid, :kill)
+        store(key, {:error, :timeout}, @error_ttl_ms)
+        {:noreply, %{state | inflight: Map.delete(state.inflight, key)}}
+
+      _done_or_replaced ->
+        {:noreply, state}
     end
   end
 

@@ -74,6 +74,36 @@ defmodule Supablock.TokenStoreTest do
     assert TestEnv.hits("/v1/oauth/token") == 1
   end
 
+  test "a rotated pair that cannot be saved is kept in memory, not dropped" do
+    stub_token_endpoint!()
+    :ok = Credentials.store_oauth("sbp_oauth_stale", "oauth_refresh_old", now() + 30)
+
+    # Make the write fail: the state dir sits under a regular file, so
+    # `Paths.ensure!/0` cannot create it (read-only HOME / full disk stand-in).
+    state_home = System.get_env("XDG_STATE_HOME")
+    blocker = Path.join(Path.dirname(state_home), "not-a-dir")
+    File.write!(blocker, "")
+    System.put_env("XDG_STATE_HOME", Path.join(blocker, "state"))
+
+    fresh = new_access()
+
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert {:ok, ^fresh} = TokenStore.access_token()
+      end)
+
+    assert log =~ "could not be saved"
+    # The old refresh token is spent; the stale one on disk must not be reused.
+    assert {:ok, ^fresh} = TokenStore.access_token()
+    assert TestEnv.hits("/v1/oauth/token") == 1
+    assert {:ok, %{access_token: "sbp_oauth_stale"}} = Credentials.load_credential()
+
+    # Once the disk is writable again the pair is flushed on the next read.
+    System.put_env("XDG_STATE_HOME", state_home)
+    assert {:ok, ^fresh} = TokenStore.access_token()
+    assert {:ok, %{access_token: ^fresh}} = Credentials.load_credential()
+  end
+
   test "after_401 on a PAT cannot rotate" do
     :ok = Credentials.store("sbp_" <> String.duplicate("f", 40))
     assert {:error, :unauthorized} = TokenStore.after_401("sbp_" <> String.duplicate("f", 40))

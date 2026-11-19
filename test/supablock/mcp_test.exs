@@ -180,6 +180,28 @@ defmodule Supablock.MCPTest do
     assert [%{"error" => %{"code" => -32602}}, %{"error" => %{"code" => -32601}}] = replies
   end
 
+  test "malformed tools/call params are errors, and the server keeps serving" do
+    replies =
+      roundtrip([
+        %{"jsonrpc" => "2.0", "id" => 1, "method" => "tools/call", "params" => "x"},
+        %{
+          "jsonrpc" => "2.0",
+          "id" => 2,
+          "method" => "tools/call",
+          "params" => %{"name" => "ls", "arguments" => [1]}
+        },
+        call(3, "grep", %{"pattern" => 5, "path" => @base}),
+        %{"jsonrpc" => "2.0", "id" => 4, "method" => "ping"}
+      ])
+
+    assert [
+             %{"id" => 1, "error" => %{"code" => -32602}},
+             %{"id" => 2, "error" => %{"code" => -32602}},
+             %{"id" => 3, "result" => %{"isError" => true}},
+             %{"id" => 4, "result" => %{}}
+           ] = replies
+  end
+
   test "malformed JSON gets a parse error and the loop continues" do
     {:ok, input} =
       StringIO.open(

@@ -2,7 +2,7 @@
 # filipecabaco/supablock — the source of the quick-start:
 #
 #   docker run --rm --cap-drop ALL --security-opt no-new-privileges \
-#     -e SUPABLOCK_TOKEN=sbp_... filipecabaco/supablock ls organizations
+#     -e SUPABLOCK_TOKEN filipecabaco/supablock ls organizations
 #
 # Only `supablock mount` needs FUSE, which is what forces the privileged
 # form (host device + CAP_SYS_ADMIN + AppArmor exemption):

@@ -40,6 +40,11 @@ defmodule Supablock.MCP do
   instructions are instructions.
   """
 
+  # One find/grep call must not walk (and fetch) a whole account or flood the
+  # client's context: every rows page, log and metrics file is an API read.
+  @max_results 500
+  @max_reads 300
+
   # Appended to every tool description, so hosts that surface tool metadata
   # but not server instructions still carry the warning. Same reasoning as
   # the untrusted-data paragraph in @instructions.
@@ -58,10 +63,22 @@ defmodule Supablock.MCP do
       line ->
         case handle_line(String.trim(line)) do
           :noreply -> :ok
-          reply -> IO.binwrite(output, [Jason.encode!(reply), "\n"])
+          reply -> IO.binwrite(output, [encode_reply(reply), "\n"])
         end
 
         serve(input, output)
+    end
+  end
+
+  # A body with invalid UTF-8 (a binary row value, a function bundle) cannot
+  # go into a JSON string; answer with an error instead of crashing the server.
+  defp encode_reply(reply) do
+    case Jason.encode(reply) do
+      {:ok, json} ->
+        json
+
+      {:error, _reason} ->
+        Jason.encode!(error_reply(reply["id"], -32603, "result is not valid UTF-8 text"))
     end
   end
 
@@ -94,10 +111,25 @@ defmodule Supablock.MCP do
     do: result_reply(id, %{"tools" => tools()})
 
   defp handle(%{"method" => "tools/call", "id" => id} = request) do
-    name = get_in(request, ["params", "name"])
-    args = get_in(request, ["params", "arguments"]) || %{}
+    with %{} = params <- Map.get(request, "params"),
+         name when is_binary(name) <- Map.get(params, "name"),
+         args when is_map(args) <- Map.get(params, "arguments") || %{} do
+      call_tool_reply(id, name, args)
+    else
+      _invalid ->
+        error_reply(id, -32602, "invalid params: expected {name: string, arguments: object}")
+    end
+  end
 
-    case call_tool(name, args) do
+  defp handle(%{"method" => _method, "id" => id}),
+    do: error_reply(id, -32601, "method not found")
+
+  defp handle(_notification), do: :noreply
+
+  # Argument values of the wrong type (`"pattern": 5`) reach clauses that only
+  # match strings; one bad call must not take the whole server down.
+  defp call_tool_reply(id, name, args) do
+    case safe_call_tool(name, args) do
       {:ok, text} ->
         result_reply(id, %{
           "content" => [%{"type" => "text", "text" => text}],
@@ -115,10 +147,12 @@ defmodule Supablock.MCP do
     end
   end
 
-  defp handle(%{"method" => _method, "id" => id}),
-    do: error_reply(id, -32601, "method not found")
-
-  defp handle(_notification), do: :noreply
+  defp safe_call_tool(name, args) do
+    call_tool(name, args)
+  rescue
+    _error in [FunctionClauseError, ArgumentError, CaseClauseError, Protocol.UndefinedError] ->
+      {:error, "invalid arguments for #{name}: check each argument's type against the tool schema"}
+  end
 
   defp result_reply(id, result), do: %{"jsonrpc" => "2.0", "id" => id, "result" => result}
 
@@ -234,6 +268,9 @@ defmodule Supablock.MCP do
 
     {lines, errors} =
       Walk.reduce(start, max_depth, {[], []}, fn
+        event, acc when length(elem(acc, 0)) >= @max_results ->
+          stop_walk(event, acc)
+
         {:error, path, reason}, {lines, errors} ->
           {lines, [describe(path, reason) | errors]}
 
@@ -246,7 +283,7 @@ defmodule Supablock.MCP do
           end
       end)
 
-    render_walk_output(Enum.reverse(lines), Enum.reverse(errors))
+    render_walk_output(Enum.reverse(lines), Enum.reverse(errors), length(lines) >= @max_results)
   end
 
   defp call_tool("grep", args) do
@@ -256,25 +293,33 @@ defmodule Supablock.MCP do
       max_depth = max_depth(args)
       files_only? = args["files_only"] || false
 
-      {lines, errors} =
-        Walk.reduce(start, max_depth, {[], []}, fn
-          {:error, path, reason}, {lines, errors} ->
-            {lines, [describe(path, reason) | errors]}
+      # Every file read can be an API call (row pages, logs, metrics), so the
+      # walk stops on whichever budget runs out first: result lines or reads.
+      {lines, errors, reads} =
+        Walk.reduce(start, max_depth, {[], [], 0}, fn
+          event, {lines, _errors, reads} = acc
+          when length(lines) >= @max_results or reads >= @max_reads ->
+            stop_walk(event, acc)
+
+          {:error, path, reason}, {lines, errors, reads} ->
+            {lines, [describe(path, reason) | errors], reads}
 
           {:dir, _path}, acc ->
             acc
 
-          {:file, path}, {lines, errors} ->
+          {:file, path}, {lines, errors, reads} ->
             case Tree.read(Walk.router_path(path)) do
               {:ok, body} ->
-                {grep_file(regex, path, body, files_only?, lines), errors}
+                {grep_file(regex, path, body, files_only?, lines), errors, reads + 1}
 
               {:error, reason} ->
-                {lines, [describe(path, reason) | errors]}
+                {lines, [describe(path, reason) | errors], reads + 1}
             end
         end)
 
-      case render_walk_output(Enum.reverse(lines), Enum.reverse(errors)) do
+      truncated? = length(lines) >= @max_results or reads >= @max_reads
+
+      case render_walk_output(Enum.reverse(lines), Enum.reverse(errors), truncated?) do
         {:ok, "\n"} -> {:ok, "no matches\n"}
         other -> other
       end
@@ -305,12 +350,26 @@ defmodule Supablock.MCP do
     end
   end
 
-  defp render_walk_output([], []), do: {:ok, "\n"}
-  defp render_walk_output([], errors), do: {:error, Enum.join(errors, "\n") <> "\n"}
+  # Past a budget: skip the rest of the tree without listing or reading it.
+  defp stop_walk({:dir, _path}, acc), do: {:prune, acc}
+  defp stop_walk(_event, acc), do: acc
 
-  defp render_walk_output(lines, errors) do
+  defp render_walk_output(lines, errors, truncated?)
+  defp render_walk_output([], [], _truncated?), do: {:ok, "\n"}
+  defp render_walk_output([], errors, _truncated?), do: {:error, Enum.join(errors, "\n") <> "\n"}
+
+  defp render_walk_output(lines, errors, truncated?) do
+    lines = Enum.take(lines, @max_results)
     suffix = if errors == [], do: "", else: "\nerrors:\n" <> Enum.join(errors, "\n") <> "\n"
-    {:ok, Enum.join(lines, "\n") <> "\n" <> suffix}
+
+    note =
+      if truncated?,
+        do:
+          "\n[truncated: stopped at #{@max_results} results or #{@max_reads} files read; " <>
+            "narrow `path`, set `maxdepth`, or use files_only]\n",
+        else: ""
+
+    {:ok, Enum.join(lines, "\n") <> "\n" <> suffix <> note}
   end
 
   defp tool_result({:ok, value}, _path), do: {:ok, value}

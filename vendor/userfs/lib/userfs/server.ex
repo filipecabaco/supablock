@@ -11,7 +11,12 @@ defmodule Userfs.Server do
   use GenServer
   use Userfs.Fs, attribs: true
 
-  defstruct mount_point: nil, fs_mod: nil, fs_state: nil, phase: :init, port: nil, port_os_pid: nil
+  defstruct mount_point: nil,
+            fs_mod: nil,
+            fs_state: nil,
+            phase: :init,
+            port: nil,
+            port_os_pid: nil
 
   @doc """
   Called by the `Userfs.MountSup` supervisor, `start_link` starts an FS
@@ -88,6 +93,13 @@ defmodule Userfs.Server do
     :undefined
   end
 
+  @doc false
+  # The bytes of `content` in [offset, offset + size); empty past EOF.
+  def chunk(content, offset, _size) when offset >= byte_size(content), do: <<>>
+
+  def chunk(content, offset, size),
+    do: binary_part(content, offset, min(size, byte_size(content) - offset))
+
   defp port_tx(data, %__MODULE__{port: port} = state) do
     true = Port.command(port, <<@magiccookie::size(32), data::binary>>)
     state
@@ -115,9 +127,7 @@ defmodule Userfs.Server do
         end
       catch
         kind, reason ->
-          log_error(
-            "userfs callback #{fs_mod}.#{cb_fun} crashed: #{inspect({kind, reason})}"
-          )
+          log_error("userfs callback #{fs_mod}.#{cb_fun} crashed: #{inspect({kind, reason})}")
 
           {<<req_code::size(32), 5::size(32)>>, fs_state}
       end
@@ -182,8 +192,13 @@ defmodule Userfs.Server do
     {:noreply, new_state}
   end
 
+  # Supablock: the port sends the kernel's offset and size with every read,
+  # so only that chunk goes back over the pipe (a sub-binary, no copy here).
   def handle_info(
-        {port, {:data, <<@magiccookie::size(32), @request_read::size(32), path::binary>>}},
+        {port,
+         {:data,
+          <<@magiccookie::size(32), @request_read::size(32), offset::size(64), size::size(32),
+            path::binary>>}},
         %__MODULE__{port: port} = state
       ) do
     new_state =
@@ -192,14 +207,15 @@ defmodule Userfs.Server do
         @request_read,
         :userfs_read,
         [path],
-        fn content when is_binary(content) -> <<content::binary>> end
+        fn content when is_binary(content) -> chunk(content, offset, size) end
       )
 
     {:noreply, new_state}
   end
 
   def handle_info(
-        {port, {:data, <<@magiccookie::size(32), @status_data::size(32), port_os_pid::size(32)>>}},
+        {port,
+         {:data, <<@magiccookie::size(32), @status_data::size(32), port_os_pid::size(32)>>}},
         %__MODULE__{phase: :init, port: port} = state
       ) do
     {:noreply, %__MODULE__{state | phase: :ready, port_os_pid: port_os_pid}}
@@ -237,16 +253,24 @@ defmodule Userfs.Server do
     {:noreply, state}
   end
 
-  def handle_info({port, {:data, data}}, %__MODULE__{port: port, port_os_pid: port_os_pid} = state) do
+  def handle_info(
+        {port, {:data, data}},
+        %__MODULE__{port: port, port_os_pid: port_os_pid} = state
+      ) do
     log_error(
       "port (PID #{port_os_pid}) data #{inspect(data)} to userfs #{:erlang.pid_to_list(self())} received without correct cookie"
     )
 
     {_method, state} = server_stop_port(state)
-    {:noreply, server_slow_stop(state, {:error, "communication with port fatally compromised (bad cookie)"})}
+
+    {:noreply,
+     server_slow_stop(state, {:error, "communication with port fatally compromised (bad cookie)"})}
   end
 
-  def handle_info({:slow_stop, {reason, {:genserver_client, client}}}, %__MODULE__{phase: :stopping} = state) do
+  def handle_info(
+        {:slow_stop, {reason, {:genserver_client, client}}},
+        %__MODULE__{phase: :stopping} = state
+      ) do
     GenServer.reply(client, :ok)
     {:stop, reason, state}
   end

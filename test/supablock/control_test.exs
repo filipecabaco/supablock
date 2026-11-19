@@ -29,6 +29,38 @@ defmodule Supablock.ControlTest do
     assert {:hit, {:ok, 1}} = Supablock.Cache.lookup(:probe_key)
   end
 
+  test "unmount naming another path is refused and the daemon keeps running" do
+    assert {:ok, "err mismatch"} = Control.send_cmd("unmount /somewhere/else")
+    assert {:ok, "ok"} = Control.send_cmd("flush")
+  end
+
+  test "a live daemon's socket is never taken over" do
+    Control.stop()
+    sock = Supablock.Paths.control_socket()
+
+    {:ok, other} =
+      :gen_tcp.listen(0, [:binary, active: false, ifaddr: {:local, String.to_charlist(sock)}])
+
+    on_exit(fn -> :gen_tcp.close(other) end)
+
+    assert {:error, :already_running} = Control.start("/tmp/second")
+    assert File.exists?(sock)
+  end
+
+  test "a dead socket file left by a crash is replaced" do
+    Control.stop()
+    sock = Supablock.Paths.control_socket()
+
+    {:ok, dead} =
+      :gen_tcp.listen(0, [:binary, active: false, ifaddr: {:local, String.to_charlist(sock)}])
+
+    :gen_tcp.close(dead)
+    File.touch(sock)
+
+    assert {:ok, _pid} = Control.start("/tmp/again")
+    assert {:ok, "ok"} = Control.send_cmd("flush")
+  end
+
   test "send_cmd without a socket reports not mounted" do
     Control.stop()
     assert {:error, :not_mounted} = Control.send_cmd("flush")

@@ -62,8 +62,18 @@ defmodule Supablock.FuseTest do
 
   defp mounted?(mountpoint) do
     case File.read("/proc/mounts") do
-      {:ok, mounts} -> mounts =~ " #{mountpoint} fuse"
-      _error -> false
+      {:ok, mounts} ->
+        mounts =~ " #{mountpoint} fuse"
+
+      # macOS has no /proc: `mount` prints "<dev> on <path> (macfuse, …)".
+      # The tmp dir resolves through /private, so match either spelling.
+      _no_proc ->
+        {out, _status} = System.cmd("mount", [], stderr_to_stdout: true)
+
+        Enum.any?(
+          [mountpoint, "/private" <> mountpoint],
+          &String.contains?(out, " on #{&1} (")
+        )
     end
   end
 
@@ -76,6 +86,50 @@ defmodule Supablock.FuseTest do
 
     health = File.read!(Path.join(mp, "organizations/org-alpha/projects/#{@proj_a1}/health"))
     assert health =~ "db: healthy\n"
+  end
+
+  test "a file much larger than one kernel read comes back whole, at any offset",
+       %{mountpoint: mp} do
+    # 500 rows x ~1 KiB names = one ~500 KiB page: several 128 KiB kernel
+    # reads, each sending its offset and size over the port.
+    wide = String.duplicate("x", 1_000)
+
+    model = %{
+      "app" => %{
+        "wide" => %{
+          columns: ["id", "name"],
+          pk: ["id"],
+          rows: for(i <- 0..499, do: %{"id" => i, "name" => "#{i}-#{wide}"})
+        }
+      }
+    }
+
+    Application.put_env(:supablock, :data_api_fun, Supablock.DataApiStub.fun(model))
+    Supablock.Cache.flush()
+
+    page =
+      Path.join(
+        mp,
+        "organizations/org-alpha/projects/#{@proj_a1}/database/app/wide/rows-000000.csv"
+      )
+
+    body = File.read!(page)
+
+    assert byte_size(body) > 3 * 128 * 1024
+    assert File.stat!(page).size == byte_size(body)
+    assert String.starts_with?(body, "id,name\n0-x") or String.starts_with?(body, "id,name\n0,0-x")
+    assert body |> String.split("\n", trim: true) |> length() == 501
+
+    # Random-access reads land on the same bytes as the sequential one.
+    {:ok, fd} = :file.open(String.to_charlist(page), [:read, :binary, :raw])
+
+    for offset <- [0, 1, 131_071, 131_072, 300_000, byte_size(body) - 10] do
+      assert {:ok, chunk} = :file.pread(fd, offset, 4_096)
+      assert chunk == binary_part(body, offset, byte_size(chunk))
+    end
+
+    assert :eof == :file.pread(fd, byte_size(body), 16)
+    :file.close(fd)
   end
 
   test "stat sizes are exact byte counts", %{mountpoint: mp} do

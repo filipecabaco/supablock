@@ -66,7 +66,13 @@ defmodule Supablock.Profile do
 
   defp skipped_keys(pairs), do: Enum.map(pairs, fn {key, _value} -> key end)
 
-  defp read_source("http://" <> _rest = url), do: http_get(url)
+  # A profile sets oauth.client_id/client_secret and mountpoint, so whoever
+  # can rewrite it in transit chooses which OAuth app the next login grants.
+  # Plain http is refused, and redirects are not followed (one could step
+  # down to http or to another host); the error names the target instead.
+  defp read_source("http://" <> _rest = url),
+    do: {:error, "refusing plain-http profile URL #{url} - use https://"}
+
   defp read_source("https://" <> _rest = url), do: http_get(url)
 
   defp read_source(path) do
@@ -83,7 +89,7 @@ defmodule Supablock.Profile do
         receive_timeout: @timeout_ms,
         connect_options: Client.connect_options(@timeout_ms),
         retry: false,
-        redirect: true
+        redirect: false
       )
       |> Client.apply_test_plug()
 
@@ -93,6 +99,12 @@ defmodule Supablock.Profile do
 
       {:ok, %Req.Response{status: 200, body: body}} ->
         {:ok, Jason.encode!(body)}
+
+      {:ok, %Req.Response{status: status} = response} when status in 300..399 ->
+        location = response |> Req.Response.get_header("location") |> List.first()
+
+        {:error,
+         "profile URL redirects to #{location || "another location"} - use the final https:// URL directly"}
 
       {:ok, %Req.Response{status: status}} ->
         {:error, "profile fetch failed: HTTP #{status}"}

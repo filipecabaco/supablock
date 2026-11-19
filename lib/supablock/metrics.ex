@@ -5,7 +5,7 @@ defmodule Supablock.Metrics do
 
   Authentication is Basic Auth: username `service_role`, password is the
   project's secret API key (`sb_secret_…`), fetched from the Management API
-  and already cached via the `api-keys` endpoint.
+  through `Database.api_key/2` (cached under `ttl.static`).
 
   Results are cached under the `logs` TTL class (default 60s) — consistent
   with the API's "scrape once per minute" recommendation.
@@ -14,7 +14,7 @@ defmodule Supablock.Metrics do
   application env (same as every other HTTP call in this codebase).
   """
 
-  alias Supablock.{Cache, Client, Config, Database, Endpoints}
+  alias Supablock.{Cache, Client, Config, Database}
 
   @doc """
   Fetch the current Prometheus metrics for `ref`. Returns `{:ok, binary}` with
@@ -28,7 +28,7 @@ defmodule Supablock.Metrics do
 
   defp real_fetch(ref) do
     with true <- Client.valid_ref?(ref),
-         {:ok, key} <- secret_key(ref),
+         {:ok, key} <- Database.api_key(ref, :secret),
          url = base_url(ref) <> "/customer/v1/privileged/metrics",
          {:ok, resp} <- Client.raw_get(url, auth: {:basic, "service_role:#{key}"}) do
       case resp do
@@ -40,15 +40,6 @@ defmodule Supablock.Metrics do
     else
       false -> {:error, :invalid_ref}
       {:error, _reason} = error -> error
-    end
-  end
-
-  defp secret_key(ref) do
-    with {:ok, keys} <- Client.get(Endpoints.path(:api_keys, %{ref: ref, reveal: true})) do
-      case Database.select_key(keys, :secret) do
-        key when is_binary(key) and key != "" -> {:ok, key}
-        _none -> {:error, :no_key}
-      end
     end
   end
 

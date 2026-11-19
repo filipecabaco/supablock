@@ -102,19 +102,23 @@ defmodule Supablock.BrowserLogin do
   @doc "Open `url` in the default browser; failures are fine (URL is printed)."
   @spec open_browser(String.t()) :: :ok
   def open_browser(url) do
-    opener =
-      case :os.type() do
-        {:unix, :darwin} -> "open"
-        _other -> "xdg-open"
-      end
+    # Tests set `:browser_opener` to `false` (never open) or a fake script.
+    opener = Application.get_env(:supablock, :browser_opener, default_opener())
 
-    case System.find_executable(opener) do
-      nil ->
-        :ok
-
-      path ->
+    case opener && System.find_executable(opener) do
+      path when is_binary(path) ->
         spawn(fn -> System.cmd(path, [url], stderr_to_stdout: true) end)
         :ok
+
+      _none ->
+        :ok
+    end
+  end
+
+  defp default_opener do
+    case :os.type() do
+      {:unix, :darwin} -> "open"
+      _other -> "xdg-open"
     end
   end
 
