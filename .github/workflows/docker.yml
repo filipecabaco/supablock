@@ -343,7 +343,9 @@ jobs:
               && cat organizations/org-local/projects/*/database/public/todos/rows-000000.csv \
               && cat organizations/org-local/projects/*/database/public/events/rows-001000.csv | wc -l \
               && grep -rl "theme,dark" organizations/org-local/projects/*/database/app \
-              && head -1 organizations/org-local/projects/*/database/public/customers/rows-000000.csv' \
+              && head -1 organizations/org-local/projects/*/database/public/customers/rows-000000.csv \
+              && cp organizations/org-local/projects/*/database/public/todos/rows-000000.csv /tmp/todos.csv \
+              && grep -q "ship it" /tmp/todos.csv && echo copied-ok' \
             | tee mount.out
 
           grep -qx "/supabase" mount.out
@@ -353,6 +355,9 @@ jobs:
           grep -qx "201" mount.out
           grep -q "app/settings/rows-000000.csv" mount.out
           grep -q "id,name,note,balance,meta" mount.out
+          # Row pages report size 0: cat/cp must still copy every byte (the
+          # image ships GNU coreutils; busybox's sendfile copy would be empty).
+          grep -qx "copied-ok" mount.out
 
       - name: Push by digest
         id: push

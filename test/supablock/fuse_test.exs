@@ -238,6 +238,24 @@ defmodule Supablock.FuseTest do
     refute_received {:page_fetch, _path}
   end
 
+  test "row pages (size 0) copy whole with GNU cat and cp", %{mountpoint: mp} do
+    page =
+      Path.join(
+        mp,
+        "organizations/org-alpha/projects/#{@proj_a1}/database/app/widgets/rows-000000.csv"
+      )
+
+    expected = File.read!(page)
+    assert byte_size(expected) > 0
+
+    assert {^expected, 0} = System.cmd("cat", [page])
+
+    copy = Path.join(System.tmp_dir!(), "row-page-#{System.unique_integer([:positive])}.csv")
+    on_exit(fn -> File.rm(copy) end)
+    assert {_out, 0} = System.cmd("cp", [page, copy])
+    assert File.read!(copy) == expected
+  end
+
   test "a slow request does not block the rest of the mount", %{mountpoint: mp} do
     stub = Supablock.DataApiStub.fun(Supablock.DataApiStub.sample_model(3))
 
