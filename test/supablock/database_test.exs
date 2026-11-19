@@ -14,6 +14,18 @@ defmodule Supablock.DatabaseTest do
     Application.put_env(:supablock, :data_api_fun, DataApiStub.fun(model))
   end
 
+  test "api_key is fetched once and then served from the cache" do
+    TestEnv.stub_api!()
+
+    assert {:ok, "sb_secret_" <> _rest} = Database.api_key(@ref, :secret)
+    assert {:ok, "sb_secret_" <> _rest} = Database.api_key(@ref, :secret)
+    assert {:ok, "sb_publishable_" <> _rest} = Database.api_key(@ref, :publishable)
+    assert {:ok, "sb_publishable_" <> _rest} = Database.api_key(@ref, :publishable)
+
+    # One request per variant (?reveal=true or not), however many pages read.
+    assert TestEnv.hits("/v1/projects/#{@ref}/api-keys") == 2
+  end
+
   describe "key selection" do
     test "defaults to the secret (service_role) key" do
       assert Database.key_kind() == :secret

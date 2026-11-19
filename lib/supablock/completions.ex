@@ -158,7 +158,11 @@ defmodule Supablock.Completions do
         set parent (string replace -r '/[^/]*$' '' -- $cur)
       end
       if test -n "$parent"
-        supablock ls "$parent" 2>/dev/null | sed "s|^|$parent/|"
+        # Entry names are account data: prefix them with printf, never by
+        # splicing $parent into a sed script (GNU sed's `e` flag runs sh).
+        for entry in (supablock ls "$parent" 2>/dev/null)
+          printf '%s/%s\\n' "$parent" "$entry"
+        end
       else
         supablock ls / 2>/dev/null
       end

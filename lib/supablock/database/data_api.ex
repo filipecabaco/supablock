@@ -18,7 +18,7 @@ defmodule Supablock.Database.DataApi do
   the raw (undecoded) response body.
   """
 
-  alias Supablock.{Client, Database, Endpoints}
+  alias Supablock.{Client, Database}
 
   @type response :: %{
           status: non_neg_integer,
@@ -42,7 +42,7 @@ defmodule Supablock.Database.DataApi do
 
   defp real_get(ref, path, headers) do
     with true <- Client.valid_ref?(ref),
-         {:ok, key} <- api_key(ref),
+         {:ok, key} <- Database.api_key(ref, Database.key_kind()),
          request_headers = [{"apikey", key}, {"authorization", "Bearer " <> key} | headers],
          {:ok, %Req.Response{status: status, headers: resp_headers, body: body}} <-
            Client.raw_get(base_url(ref) <> path, headers: request_headers) do
@@ -50,23 +50,6 @@ defmodule Supablock.Database.DataApi do
     else
       false -> {:error, :invalid_ref}
       {:error, _reason} = error -> error
-    end
-  end
-
-  defp api_key(ref) do
-    kind = Database.key_kind()
-
-    endpoint =
-      case kind do
-        :publishable -> Endpoints.path(:api_keys, %{ref: ref})
-        :secret -> Endpoints.path(:api_keys, %{ref: ref, reveal: true})
-      end
-
-    with {:ok, keys} <- Client.get(endpoint) do
-      case Database.select_key(keys, kind) do
-        key when is_binary(key) and key != "" -> {:ok, key}
-        _none -> {:error, :no_key}
-      end
     end
   end
 

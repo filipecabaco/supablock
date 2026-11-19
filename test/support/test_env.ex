@@ -18,10 +18,12 @@ defmodule Supablock.TestEnv do
     System.put_env("XDG_CONFIG_HOME", Path.join(base, "config"))
     System.put_env("XDG_STATE_HOME", Path.join(base, "state"))
     System.delete_env("SUPABLOCK_TOKEN")
+    Application.put_env(:supablock, :launch_agents_dir, Path.join(base, "LaunchAgents"))
 
     ExUnit.Callbacks.on_exit(fn ->
       System.delete_env("XDG_CONFIG_HOME")
       System.delete_env("XDG_STATE_HOME")
+      Application.delete_env(:supablock, :launch_agents_dir)
       File.rm_rf!(base)
     end)
 

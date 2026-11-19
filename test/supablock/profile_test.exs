@@ -100,4 +100,25 @@ defmodule Supablock.ProfileTest do
     assert {:ok, ["ttl.orgs"], []} = Profile.apply(profile)
     assert Config.get("ttl.orgs") == 300
   end
+
+  test "plain-http profile URLs are refused before any request" do
+    TestEnv.stub_api!(%{})
+
+    assert {:error, message} = Profile.fetch("http://team.example.com/team/supablock.json")
+    assert message =~ "https://"
+    assert TestEnv.hits("/team/supablock.json") == 0
+  end
+
+  test "a redirect is reported, not followed" do
+    TestEnv.stub_api!(%{
+      "/team/moved.json" => fn conn ->
+        conn
+        |> Plug.Conn.put_resp_header("location", "http://evil.example.com/p.json")
+        |> Plug.Conn.send_resp(302, "")
+      end
+    })
+
+    assert {:error, message} = Profile.fetch("https://team.example.com/team/moved.json")
+    assert message =~ "redirects to http://evil.example.com/p.json"
+  end
 end

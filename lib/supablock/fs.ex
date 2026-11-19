@@ -13,21 +13,40 @@ defmodule Supablock.Fs do
 
   require Logger
 
-  alias Supablock.{Control, Paths, Router}
+  alias Supablock.{Cache, Control, Paths, Router}
 
   @errno %{enoent: 2, eio: 5, eagain: 11, eacces: 13, erofs: 30}
 
+  # Body snapshots: `getattr` renders a file once and keeps the bytes; every
+  # `read` of that path then serves the same bytes. So the size the kernel
+  # caches from `stat` always matches what `cat` gets (no truncated or padded
+  # reads when the cache refreshes in between), a multi-chunk read never
+  # splices two versions, and a file is rendered once per open, not once per
+  # 128 KiB chunk; `supablock refresh` drops them all. A snapshot lives while it is in use: each hit pushes its
+  # expiry @snapshot_idle_ms further out, so a long read stays consistent and
+  # a file sees fresh data once it has been left alone that long. Total
+  # bytes are capped; least recently used snapshots go first.
+  @snapshot_idle_ms 10_000
+  @snapshot_max_bytes 64 * 1024 * 1024
+
   @impl true
-  def userfs_init(_mount_point, opts), do: {:ok, opts}
+  def userfs_init(_mount_point, opts),
+    do: {:ok, %{opts: opts, snapshots: %{}, bytes: 0, generation: Cache.generation()}}
 
   @impl true
   def userfs_getattr(state, path) do
-    result = Router.describe(path)
+    {result, state} =
+      case Router.kind(path) do
+        {:ok, :dir} -> {{:ok, :dir}, state}
+        {:ok, :file} -> body(state, path)
+        {:error, _reason} = error -> {error, state}
+      end
+
     Logger.debug("supablock: getattr #{path} -> #{inspect(elem(result, 0))}")
 
     case result do
       {:ok, :dir} -> {:ok, {0o555, @attr_dir, 0}, state}
-      {:ok, {:file, size}} -> {:ok, {0o444, @attr_file, size}, state}
+      {:ok, body} -> {:ok, {0o444, @attr_file, byte_size(body)}, state}
       {:error, error} -> {:error, errno(error), state}
     end
   end
@@ -45,13 +64,75 @@ defmodule Supablock.Fs do
 
   @impl true
   def userfs_read(state, path) do
-    result = Router.read(path)
+    {result, state} = body(state, path)
     Logger.debug("supablock: read #{path} -> #{inspect(elem(result, 0))}")
 
     case result do
       {:ok, body} -> {:ok, body, state}
       {:error, error} -> {:error, errno(error), state}
     end
+  end
+
+  @doc false
+  # The snapshot for `path` if one is live, else a fresh render (stored on
+  # success; errors are never snapshotted). Public for tests; `now` is
+  # injectable for the same reason.
+  def body(state, path, now \\ System.monotonic_time(:millisecond)) do
+    state = expire(state, now)
+
+    case Map.fetch(state.snapshots, path) do
+      {:ok, {body, _used}} ->
+        {{:ok, body}, put_in(state.snapshots[path], {body, now})}
+
+      :error ->
+        case Router.read(path) do
+          {:ok, body} -> {{:ok, body}, store(state, path, body, now)}
+          {:error, _reason} = error -> {error, state}
+        end
+    end
+  end
+
+  # A `supablock refresh` (Cache.flush/0) invalidates every snapshot at once.
+  defp expire(%{generation: gen} = state, now) do
+    if gen != Cache.generation() do
+      %{state | snapshots: %{}, bytes: 0, generation: Cache.generation()}
+    else
+      expire_idle(state, now)
+    end
+  end
+
+  defp expire_idle(state, now) do
+    {dead, live} =
+      Map.split_with(state.snapshots, fn {_path, {_body, used}} ->
+        now - used >= @snapshot_idle_ms
+      end)
+
+    freed = dead |> Map.values() |> Enum.reduce(0, fn {body, _}, acc -> acc + byte_size(body) end)
+    %{state | snapshots: live, bytes: state.bytes - freed}
+  end
+
+  defp store(state, _path, body, _now) when byte_size(body) > @snapshot_max_bytes, do: state
+
+  defp store(state, path, body, now) do
+    state = %{
+      state
+      | snapshots: Map.put(state.snapshots, path, {body, now}),
+        bytes: state.bytes + byte_size(body)
+    }
+
+    evict_lru(state)
+  end
+
+  defp evict_lru(%{bytes: bytes} = state) when bytes <= @snapshot_max_bytes, do: state
+
+  defp evict_lru(state) do
+    {path, {body, _used}} = Enum.min_by(state.snapshots, fn {_path, {_body, used}} -> used end)
+
+    evict_lru(%{
+      state
+      | snapshots: Map.delete(state.snapshots, path),
+        bytes: state.bytes - byte_size(body)
+    })
   end
 
   @impl true
@@ -70,16 +151,27 @@ defmodule Supablock.Fs do
   def mount(mountpoint) do
     recover_stale_mount(mountpoint)
 
+    # The control socket comes first: if it is refused (a daemon is already
+    # running, or the socket path is unusable) nothing has been mounted yet.
+    # The reverse order left a live FUSE mount with no daemon owning it,
+    # which reads as ENOTCONN until someone force-unmounts.
     with :ok <- ensure_mountpoint(mountpoint),
-         {:ok, _apps} <- Application.ensure_all_started(:userfs),
-         {:ok, _pid} <- Userfs.mount(mountpoint, __MODULE__, nil),
-         {:ok, _control} <- Control.start(mountpoint) do
+         {:ok, _control} <- Control.start(mountpoint),
+         {:ok, _apps} <- stop_control_on_error(Application.ensure_all_started(:userfs)),
+         {:ok, _pid} <- stop_control_on_error(Userfs.mount(mountpoint, __MODULE__, nil)) do
       File.write(Paths.mount_info_file(), mountpoint <> "\n")
       :ok
     else
       {:error, reason} -> {:error, reason}
     end
   end
+
+  defp stop_control_on_error({:error, _reason} = error) do
+    Control.stop()
+    error
+  end
+
+  defp stop_control_on_error(ok), do: ok
 
   @doc "Unmount whatever this VM has mounted (or `mountpoint` explicitly)."
   @spec unmount(String.t() | nil) :: :ok | {:error, :not_mounted}

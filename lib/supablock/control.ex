@@ -7,6 +7,7 @@ defmodule Supablock.Control do
       flush\\n         -> ok\\n                    (drop the cache)
       check\\n         -> ok entries=N stale=M\\n  (cache occupancy; no flush)
       unmount\\n       -> ok\\n                    (unmount if mounted, stop the VM)
+      unmount <path>\\n -> ok\\n or err mismatch\\n  (only when <path> is this daemon's mount)
       kind <path>\\n   -> ok dir|file\\n           | err <errno>\\n
       list <path>\\n   -> ok <bytes>\\n<payload>   | err <errno>\\n
       read <path>\\n   -> ok <bytes>\\n<payload>   | err <errno>\\n
@@ -67,8 +68,37 @@ defmodule Supablock.Control do
   defp listen(mountpoint) do
     Paths.ensure!()
     sock_path = Paths.control_socket()
-    File.rm(sock_path)
 
+    # A socket that still answers belongs to a live daemon (a `serve`, or
+    # another mount): deleting it would orphan that daemon for good, and a
+    # later `serve stop` would reach us instead. Only a dead socket file is
+    # ours to replace.
+    if live?(sock_path) do
+      {:stop, :already_running}
+    else
+      File.rm(sock_path)
+      open_listener(sock_path, mountpoint)
+    end
+  end
+
+  defp live?(sock_path) do
+    File.exists?(sock_path) and
+      match?(
+        {:ok, _socket},
+        with {:ok, socket} <-
+               :gen_tcp.connect(
+                 {:local, String.to_charlist(sock_path)},
+                 0,
+                 [:binary, active: false],
+                 500
+               ) do
+          :gen_tcp.close(socket)
+          {:ok, socket}
+        end
+      )
+  end
+
+  defp open_listener(sock_path, mountpoint) do
     case :gen_tcp.listen(0, [
            :binary,
            packet: :line,
@@ -137,6 +167,18 @@ defmodule Supablock.Control do
     %{entries: entries, stale: stale} = Supablock.Cache.stats()
     :gen_tcp.send(socket, "ok entries=#{entries} stale=#{stale}\n")
     :gen_tcp.close(socket)
+  end
+
+  # `unmount <path>` is what the CLI sends: a `serve` daemon (no mount) or a
+  # mount elsewhere answers `err mismatch` and keeps running, rather than
+  # being stopped by an unmount aimed at some other path.
+  defp handle_command("unmount " <> path, socket, state) do
+    if state.mountpoint && Path.expand(state.mountpoint) == Path.expand(path) do
+      handle_command("unmount", socket, state)
+    else
+      :gen_tcp.send(socket, "err mismatch\n")
+      :gen_tcp.close(socket)
+    end
   end
 
   defp handle_command("unmount", socket, state) do

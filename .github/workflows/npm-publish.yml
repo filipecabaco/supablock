@@ -23,9 +23,11 @@ jobs:
       - name: Download release assets
         env:
           GH_TOKEN: ${{ github.token }}
+          # Inputs go through env, never spliced into the script text.
+          TAG: ${{ inputs.tag }}
         run: |
           mkdir -p dist
-          gh release download "${{ inputs.tag }}" \
+          gh release download "$TAG" \
             --repo "$GITHUB_REPOSITORY" --pattern 'supablock-*' --dir dist
           ls -la dist/
 
@@ -37,6 +39,6 @@ jobs:
       - name: Publish to npm
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          TAG: ${{ inputs.tag }}
         run: |
-          TAG="${{ inputs.tag }}"
           ./npm/publish.sh "${TAG#v}" dist

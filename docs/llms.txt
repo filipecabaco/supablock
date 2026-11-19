@@ -127,7 +127,7 @@ organizations/<org>/projects/<ref>/advisors`).
 - [README](https://github.com/filipecabaco/supablock)
 - [Agent skill (SKILL.md)](https://github.com/filipecabaco/supablock/blob/main/skills/supablock/SKILL.md):
   install with `npx skills add filipecabaco/supablock`. Declares
-  `allowed-tools: Bash(supablock:*)` — one read-only command, no installer,
+  `allowed-tools` for supablock's read subcommands only, no installer,
   no package manager, no container runtime, no other shell utilities.
 - [Security model](https://github.com/filipecabaco/supablock/blob/main/SECURITY.md)
 - [Install options, with checksum and provenance

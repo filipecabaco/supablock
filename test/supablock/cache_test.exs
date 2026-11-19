@@ -19,6 +19,34 @@ defmodule Supablock.CacheTest do
     assert stats.stale == 1
   end
 
+  test "sweep drops expired entries and keeps fresh ones" do
+    Cache.fetch(:keep, 60_000, fn -> {:ok, 1} end)
+    Cache.fetch(:drop, 0, fn -> {:ok, 2} end)
+
+    assert Cache.sweep() == 1
+    assert Cache.stats() == %{entries: 1, stale: 0}
+    assert {:hit, {:ok, 1}} = Cache.lookup(:keep)
+  end
+
+  test "a fetch past its deadline is killed and every waiter gets :timeout" do
+    Application.put_env(:supablock, :cache_fetch_deadline_ms, 50)
+    on_exit(fn -> Application.delete_env(:supablock, :cache_fetch_deadline_ms) end)
+
+    test_pid = self()
+
+    hang = fn ->
+      send(test_pid, {:fetcher, self()})
+      Process.sleep(:infinity)
+    end
+
+    waiters = for _i <- 1..3, do: Task.async(fn -> Cache.fetch(:slow, 1_000, hang) end)
+    assert_receive {:fetcher, fetcher}
+    ref = Process.monitor(fetcher)
+
+    assert Enum.all?(Task.await_many(waiters, 2_000), &(&1 == {:error, :timeout}))
+    assert_receive {:DOWN, ^ref, :process, ^fetcher, :killed}
+  end
+
   test "hit within TTL returns the stored value without re-running the fun" do
     counter = :counters.new(1, [])
 

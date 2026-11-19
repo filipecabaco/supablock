@@ -255,7 +255,12 @@ defmodule Supablock.CLI do
     end
   end
 
-  defp display_config_value("oauth.client_secret"), do: "(set)"
+  # Secrets are masked wherever config is echoed; `config get <key>` is the
+  # one explicit way to read a value back.
+  defp display_config_value("oauth.client_secret" = key) do
+    if Config.get(key) in [nil, ""], do: format_value(nil), else: "(set)"
+  end
+
   defp display_config_value(key), do: format_value(Config.get(key))
 
   defp ensure_authenticated(opts) do
@@ -621,7 +626,7 @@ defmodule Supablock.CLI do
   defp config(["set", key, value]) do
     case Config.set(key, value) do
       :ok ->
-        IO.puts("#{key} = #{value}")
+        IO.puts("#{key} = #{display_config_value(key)}")
         0
 
       {:error, message} ->
@@ -641,7 +646,7 @@ defmodule Supablock.CLI do
 
   defp config(["list"]) do
     Enum.each(Config.valid_keys(), fn key ->
-      IO.puts("#{key} = #{format_value(Config.get(key))}")
+      IO.puts("#{key} = #{display_config_value(key)}")
     end)
 
     0
@@ -700,11 +705,20 @@ defmodule Supablock.CLI do
         verbose = if opts[:verbose], do: ["--verbose"], else: []
         argv = [bin, "mount", "--foreground"] ++ verbose ++ [mountpoint]
         cmd = Enum.map_join(argv, " ", &sh_escape/1) <> " >> " <> sh_escape(log) <> " 2>&1 &"
+        # mount.info is written only once FUSE and the control socket are both
+        # up, so its appearance is the success signal; clear any leftover first.
+        File.rm(Paths.mount_info_file())
         System.cmd("sh", ["-c", cmd])
-        IO.puts("Mounting at #{mountpoint} (background).")
-        IO.puts("Log: #{log}")
-        IO.puts("Check status: supablock status")
-        0
+
+        if await_mount_info(mountpoint) do
+          IO.puts("Mounted at #{mountpoint} (background).")
+          IO.puts("Log: #{log}")
+          0
+        else
+          IO.puts(:stderr, "Mount at #{mountpoint} did not come up. See the log: #{log}")
+          IO.puts(:stderr, "Run: supablock doctor")
+          4
+        end
 
       {:error, message} ->
         IO.puts(:stderr, message)
@@ -713,8 +727,26 @@ defmodule Supablock.CLI do
     end
   end
 
+  # The child polls for 15s: long enough for a cold FUSE start, short enough
+  # that a failed mount reports instead of looking like success.
+  defp await_mount_info(mountpoint, attempts \\ 150) do
+    case File.read(Paths.mount_info_file()) do
+      {:ok, body} ->
+        String.trim(body) == mountpoint
+
+      {:error, _reason} when attempts > 0 ->
+        Process.sleep(100)
+        await_mount_info(mountpoint, attempts - 1)
+
+      {:error, _reason} ->
+        false
+    end
+  end
+
   defp resolve_mountpoint(opts, args) do
-    mountpoint = opts[:path] || List.first(args) || Config.mountpoint()
+    # Absolute, so mount.info, `unmount` from another directory and the
+    # /proc/mounts stale check all name the same path.
+    mountpoint = Path.expand(opts[:path] || List.first(args) || Config.mountpoint())
     _ = File.mkdir_p(mountpoint)
     {:ok, mountpoint}
   end
@@ -778,14 +810,27 @@ defmodule Supablock.CLI do
           end
       end
 
-    case Control.send_cmd("unmount") do
-      {:ok, "ok"} ->
-        wait_for_shutdown()
-        File.rm(Paths.mount_info_file())
-        IO.puts("Unmounted #{mountpoint || ""}." |> String.replace(" .", "."))
-        0
+    mountpoint = if mountpoint, do: Path.expand(mountpoint)
 
-      _no_socket ->
+    # Name the path, so a `serve` daemon or a mount elsewhere answers
+    # `err mismatch` and keeps running instead of being stopped.
+    command = if mountpoint, do: "unmount " <> mountpoint, else: "unmount"
+
+    case Control.send_cmd(command) do
+      {:ok, "ok"} ->
+        case wait_for_shutdown() do
+          :ok ->
+            File.rm(Paths.mount_info_file())
+            IO.puts("Unmounted #{mountpoint || ""}." |> String.replace(" .", "."))
+            0
+
+          :timeout ->
+            IO.puts(:stderr, "The daemon accepted the unmount but is still running after 5s.")
+            IO.puts(:stderr, "Log: #{Paths.log_file()}")
+            1
+        end
+
+      _no_socket_or_mismatch ->
         case mountpoint do
           nil ->
             IO.puts(:stderr, "Not mounted.")
@@ -1564,6 +1609,12 @@ defmodule Supablock.CLI do
   # failure with a fix the caller can act on, so it arrives as prose rather
   # than as the kernel's bare :einval.
   defp daemon_error({:control_socket_path, fix}), do: fix
+
+  defp daemon_error(:already_running),
+    do:
+      "a supablock daemon is already running (mount or serve); " <>
+        "stop it first: supablock unmount / supablock serve stop"
+
   defp daemon_error(reason), do: inspect(reason)
 
   defp split_lines(body) do
@@ -1598,17 +1649,15 @@ defmodule Supablock.CLI do
     3
   end
 
+  # The socket file disappears when the daemon's Control terminates.
   defp wait_for_shutdown do
-    Enum.find(1..50, fn _attempt ->
-      if File.exists?(Paths.control_socket()) do
-        Process.sleep(100)
-        false
-      else
-        true
-      end
-    end)
+    gone? =
+      Enum.any?(1..50, fn _attempt ->
+        File.exists?(Paths.control_socket()) && Process.sleep(100)
+        not File.exists?(Paths.control_socket())
+      end)
 
-    :ok
+    if gone?, do: :ok, else: :timeout
   end
 
   defp service(["install"]) do

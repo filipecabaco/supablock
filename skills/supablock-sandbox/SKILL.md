@@ -107,7 +107,7 @@ release with the root baked in, so it self-extracts nothing and runs under
 
 ```bash
 docker run --rm --cap-drop ALL --security-opt no-new-privileges --read-only \
-  -e SUPABLOCK_TOKEN=sbp_... \
+  -e SUPABLOCK_TOKEN \
   filipecabaco/supablock cat 'organizations/<org>/projects/<ref>/health'
 ```
 

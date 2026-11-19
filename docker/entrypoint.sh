@@ -19,7 +19,7 @@ CREDENTIALS="${XDG_CONFIG_HOME:-$HOME/.config}/supablock/credentials"
 # cache daemon (serve) read the tree without mounting, so they need none of
 # the FUSE flags below:
 #   docker run --rm --cap-drop ALL --security-opt no-new-privileges \
-#     -e SUPABLOCK_TOKEN=sbp_... filipecabaco/supablock \
+#     -e SUPABLOCK_TOKEN filipecabaco/supablock \
 #     grep -l '"disable_signup": false' organizations
 # Every clause of Supablock.CLI.dispatch/1 must be listed here: a missing
 # one falls through to the mount path and demands the privileged flags for
@@ -39,7 +39,7 @@ mounted. Most work does not need a mount — the readers resolve straight off
 the API and run with no capabilities at all:
 
   docker run --rm --cap-drop ALL --security-opt no-new-privileges --read-only \
-    -e SUPABLOCK_TOKEN=sbp_... filipecabaco/supablock \
+    -e SUPABLOCK_TOKEN filipecabaco/supablock \
     cat organizations/<org>/projects/<ref>/health
 
 If you really do want the mount, FUSE needs a host device, CAP_SYS_ADMIN
@@ -65,7 +65,7 @@ if [ ! -s "$CREDENTIALS" ] && [ -z "${SUPABLOCK_TOKEN:-}" ]; then
 Not authenticated and no TTY to run the login flow. Either:
   * run interactively once (-it) so the login flow can prompt you, keeping
     the credentials volume: -v supablock-config:/root/.config/supablock
-  * or pass a personal access token: -e SUPABLOCK_TOKEN=sbp_...
+  * or export a personal access token and pass it through: -e SUPABLOCK_TOKEN
 EOF
         exit 2
     fi

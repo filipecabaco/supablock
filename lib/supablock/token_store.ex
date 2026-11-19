@@ -38,32 +38,40 @@ defmodule Supablock.TokenStore do
   def after_401(failed_token), do: GenServer.call(__MODULE__, {:after_401, failed_token}, 20_000)
 
   @impl true
-  def init(nil), do: {:ok, %{}}
+  # `unsaved` holds a rotated OAuth pair that could not be written to disk
+  # (read-only HOME, full disk). The refresh already burned the old refresh
+  # token, so dropping the new pair would log the user out for good; keep it
+  # in memory, prefer it over the stale file, and retry the write on each use.
+  def init(nil), do: {:ok, %{unsaved: nil}}
 
   @impl true
   def handle_call(:access_token, _from, state) do
-    reply =
-      case Credentials.load_credential() do
+    {credential, state} = current_credential(state)
+
+    {reply, state} =
+      case credential do
         :missing ->
-          :missing
+          {:missing, state}
 
         {:ok, %Credential{type: :pat, access_token: token}} ->
-          {:ok, token}
+          {{:ok, token}, state}
 
         {:ok, %Credential{type: :oauth} = credential} ->
           if expiring?(credential) do
-            case rotate(credential) do
-              {:ok, token} ->
-                {:ok, token}
+            case rotate(credential, state) do
+              {{:ok, token}, state} ->
+                {{:ok, token}, state}
 
-              {:error, _reason} when not is_nil(credential.expires_at) ->
-                if expired?(credential), do: :missing, else: {:ok, credential.access_token}
+              {{:error, _reason}, state} when not is_nil(credential.expires_at) ->
+                if expired?(credential),
+                  do: {:missing, state},
+                  else: {{:ok, credential.access_token}, state}
 
-              {:error, _reason} ->
-                {:ok, credential.access_token}
+              {{:error, _reason}, state} ->
+                {{:ok, credential.access_token}, state}
             end
           else
-            {:ok, credential.access_token}
+            {{:ok, credential.access_token}, state}
           end
       end
 
@@ -71,42 +79,74 @@ defmodule Supablock.TokenStore do
   end
 
   def handle_call({:after_401, failed_token}, _from, state) do
-    reply =
-      case Credentials.load_credential() do
+    {credential, state} = current_credential(state)
+
+    {reply, state} =
+      case credential do
         {:ok, %Credential{type: :oauth, access_token: ^failed_token} = credential} ->
-          rotate(credential)
+          rotate(credential, state)
 
         {:ok, %Credential{type: :oauth, access_token: current}} ->
-          {:ok, current}
+          {{:ok, current}, state}
 
         {:ok, %Credential{type: :pat}} ->
-          {:error, :unauthorized}
+          {{:error, :unauthorized}, state}
 
         :missing ->
-          {:error, :unauthorized}
+          {{:error, :unauthorized}, state}
       end
 
     {:reply, reply, state}
   end
 
-  defp rotate(%Credential{refresh_token: refresh}) when is_binary(refresh) do
-    case OAuth.refresh(refresh) do
-      {:ok, tokens} ->
-        case Credentials.store_oauth(
-               tokens.access_token,
-               tokens.refresh_token,
-               tokens.expires_at
-             ) do
-          :ok -> {:ok, tokens.access_token}
-          {:error, reason} -> {:error, {:store_failed, reason}}
-        end
+  defp current_credential(%{unsaved: nil} = state), do: {Credentials.load_credential(), state}
 
-      {:error, reason} ->
-        {:error, reason}
+  defp current_credential(%{unsaved: %Credential{} = unsaved} = state) do
+    case persist(unsaved) do
+      :ok -> {{:ok, unsaved}, %{state | unsaved: nil}}
+      {:error, _reason} -> {{:ok, unsaved}, state}
     end
   end
 
-  defp rotate(%Credential{}), do: {:error, :no_refresh_token}
+  defp rotate(%Credential{refresh_token: refresh}, state) when is_binary(refresh) do
+    case OAuth.refresh(refresh) do
+      {:ok, tokens} ->
+        rotated = %Credential{
+          type: :oauth,
+          access_token: tokens.access_token,
+          refresh_token: tokens.refresh_token,
+          expires_at: tokens.expires_at
+        }
+
+        case persist(rotated) do
+          :ok ->
+            {{:ok, rotated.access_token}, %{state | unsaved: nil}}
+
+          {:error, reason} ->
+            require Logger
+
+            Logger.warning(
+              "supablock: refreshed OAuth token could not be saved (#{inspect(reason)}); " <>
+                "keeping it in memory — this process stays logged in, but a restart will need `supablock login`"
+            )
+
+            {{:ok, rotated.access_token}, %{state | unsaved: rotated}}
+        end
+
+      {:error, reason} ->
+        {{:error, reason}, state}
+    end
+  end
+
+  defp rotate(%Credential{}, state), do: {{:error, :no_refresh_token}, state}
+
+  # `Paths.ensure!/0` raises on an unwritable state dir; that is a failed
+  # write like any other, not a reason to crash with the only live token.
+  defp persist(%Credential{} = c) do
+    Credentials.store_oauth(c.access_token, c.refresh_token, c.expires_at)
+  rescue
+    error -> {:error, error}
+  end
 
   defp expiring?(%Credential{expires_at: expires_at}) when is_integer(expires_at) do
     System.os_time(:second) >= expires_at - @refresh_margin_s

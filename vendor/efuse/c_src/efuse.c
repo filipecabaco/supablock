@@ -18,6 +18,8 @@
 //     a growable bounded buffer
 //   - error codes returned by the Erlang side are passed through to the
 //     kernel instead of always becoming ENOENT
+//   - read requests carry offset and size, so only the requested chunk
+//     crosses the pipe (it used to be the whole file on every read)
 //   - a watchdog thread unmounts and exits when the Erlang VM goes away
 //     (EOF/HUP on the port pipe), so a dead BEAM never leaves a stale
 //     mount behind
@@ -40,6 +42,7 @@
 #include <pthread.h>
 #include <poll.h>
 #include <stdatomic.h>
+#include <stdint.h>
 
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -307,12 +310,31 @@ int read_from_erlang(void) {
 				getpid(), magiccookie1);
 		exit(1);
 	}
+	if (datalen < sizeof(uint32_t)) {
+		syslog(LOG_CRIT, "efuse[%d]: read: reply header length %u is shorter than the cookie",
+				getpid(), datalen);
+		exit(1);
+	}
 	datalen -= sizeof(uint32_t);
 
 	if (datalen > BUFFER_MAX) {
-		syslog(LOG_CRIT, "efuse[%d]: read: reply of %u bytes exceeds limit",
+		// One oversized reply must fail that one call (EIO), not unmount the
+		// whole filesystem: drain its bytes so the stream stays framed.
+		syslog(LOG_ERR, "efuse[%d]: read: reply of %u bytes exceeds limit, discarding",
 				getpid(), datalen);
-		exit(1);
+		unsigned char sink[65536];
+		uint32_t left = datalen;
+		while (left > 0) {
+			size_t want = left < sizeof(sink) ? left : sizeof(sink);
+			readlen = read(3, sink, want);
+			if (readlen <= 0) {
+				syslog(LOG_CRIT, "efuse[%d]: read: port closed while discarding reply",
+						getpid());
+				exit(1);
+			}
+			left -= readlen;
+		}
+		return -1;
 	}
 	if (datalen > erlmsg_size) {
 		size_t newsize = erlmsg_size;
@@ -347,19 +369,22 @@ int read_from_erlang(void) {
 }
 
 
-// Send a request (a code plus the path) to Erlang and read the reply
-// into erlmsg, validating the reply code. Returns the reply length, or
-// a negative errno suitable for returning to FUSE.
+// Send a request (a code, optional fixed-size arguments, then the path) to
+// Erlang and read the reply into erlmsg, validating the reply code. Returns
+// the reply length, or a negative errno suitable for returning to FUSE.
 
-static int erlang_roundtrip(unsigned int reqcode, const char * path, const char * what) {
+static int erlang_roundtrip_args(unsigned int reqcode, const unsigned char * args,
+		size_t argslen, const char * path, const char * what) {
 
 	size_t pathlen = strlen(path);
-	if (pathlen + 4 > REQ_BUFFER_SIZE)
+	if (pathlen + argslen + 4 > REQ_BUFFER_SIZE)
 		return -ENAMETOOLONG;
 
 	((uint32_t*)reqmsg)[0] = htonl(reqcode);
-	memcpy((char *) reqmsg+4, path, pathlen);
-	write_to_erlang(pathlen+4, reqmsg);
+	if (argslen > 0)
+		memcpy((char *) reqmsg+4, args, argslen);
+	memcpy((char *) reqmsg+4+argslen, path, pathlen);
+	write_to_erlang(pathlen+argslen+4, reqmsg);
 
 	int replylen;
 	if ((replylen = read_from_erlang()) < 0) {
@@ -393,6 +418,10 @@ static int erlang_roundtrip(unsigned int reqcode, const char * path, const char 
 
 	return replylen;
 
+}
+
+static int erlang_roundtrip(unsigned int reqcode, const char * path, const char * what) {
+	return erlang_roundtrip_args(reqcode, NULL, 0, path, what);
 }
 
 
@@ -493,22 +522,32 @@ static int fusecb_read(
 
 	(void) fi;
 
-	int replylen = erlang_roundtrip(EFUSE_REQUEST_READ, path, "read");
+	if (offset < 0)
+		return -EINVAL;
+
+	// The request carries offset (64 bit) and size (32 bit), big endian, so
+	// the Erlang side returns only this chunk: a large file no longer crosses
+	// the pipe once per kernel read, and no reply exceeds `size`.
+	uint64_t off = (uint64_t) offset;
+	uint32_t want = size > UINT32_MAX ? UINT32_MAX : (uint32_t) size;
+	unsigned char args[12];
+	uint32_t hi = htonl((uint32_t) (off >> 32));
+	uint32_t lo = htonl((uint32_t) (off & 0xffffffffu));
+	uint32_t sz = htonl(want);
+	memcpy(args, &hi, 4);
+	memcpy(args+4, &lo, 4);
+	memcpy(args+8, &sz, 4);
+
+	int replylen = erlang_roundtrip_args(EFUSE_REQUEST_READ, args, sizeof(args), path, "read");
 	if (replylen < 0)
 		return replylen;
 
-	// pass data in response back to FUSE, clamped to what is available
-	replylen -= 8;
-	if (offset < replylen) {
-		size_t returneddatalen =
-			(size_t) replylen - offset < size
-			? (size_t) replylen - offset
-			: size;
-		memcpy(buf, ((char *) erlmsg+8) + offset, returneddatalen);
-		return returneddatalen;
-	} else {
-		return 0;
-	}
+	// the reply is the chunk itself; clamp defensively to the buffer
+	size_t datalen = (size_t) (replylen - 8);
+	if (datalen > size)
+		datalen = size;
+	memcpy(buf, (char *) erlmsg+8, datalen);
+	return (int) datalen;
 
 }
 

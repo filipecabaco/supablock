@@ -35,8 +35,13 @@ construction rather than by policy:
 `skills/supablock/SKILL.md` is written for a threat model where the agent
 reading an account is not the only author of what it reads. Its properties:
 
-* **Bounded capability.** The skill declares `allowed-tools:
-  Bash(supablock:*)` — one read-only command, nothing else. There is no
+* **Bounded capability.** The skill's `allowed-tools` lists supablock's
+  read subcommands one by one (`ls`, `cat`, `head`, `tail`, `find`, `grep`,
+  `status`, `help`, `snapshot`, `diff`, `serve`). State-changing ones —
+  `config set`, `setup`, `login`, `logout`, `mount`, `service`, `mcp` — are
+  not pre-approved, so a prompt injection in account data cannot flip
+  `expose_secrets` or swap the OAuth client without the user seeing a
+  permission prompt. There is no
   downloader, package manager, container runtime or shell utility in its
   grant, and every recipe is expressed in supablock's own
   `ls`/`cat`/`head`/`find`/`grep` so the bound is sufficient rather than

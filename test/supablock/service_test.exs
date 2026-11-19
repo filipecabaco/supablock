@@ -5,11 +5,32 @@ defmodule Supablock.ServiceTest do
 
   alias Supablock.{CLI, Service, TestEnv}
 
-  setup do
+  setup context do
     base = TestEnv.isolate_xdg!()
     System.put_env("SUPABLOCK_BIN", "/bin/sh")
-    on_exit(fn -> System.delete_env("SUPABLOCK_BIN") end)
+    # Default to the systemd path so assertions hold on any host OS.
+    Application.put_env(:supablock, :service_platform, context[:platform] || :linux)
+
+    on_exit(fn ->
+      System.delete_env("SUPABLOCK_BIN")
+      Application.delete_env(:supablock, :service_platform)
+    end)
+
     {:ok, base: base}
+  end
+
+  @tag platform: :darwin
+  test "install on macOS writes the plist into the redirected LaunchAgents dir", %{base: base} do
+    :ok = Supablock.Config.set("mountpoint", "/mnt/supabase")
+
+    assert {:ok, messages} = Service.install()
+    plist_path = Path.join([base, "LaunchAgents", "io.github.filipecabaco.supablock.plist"])
+    assert messages == ["Wrote #{plist_path}", "launchctl not found — load manually."]
+    assert File.read!(plist_path) =~ "<string>/bin/sh</string>"
+    assert {:installed, ^plist_path, "not loaded"} = Service.status()
+
+    assert {:ok, _messages} = Service.uninstall()
+    assert Service.status() == :not_installed
   end
 
   test "install without a configured mountpoint uses the ~/Supabase default", %{base: base} do

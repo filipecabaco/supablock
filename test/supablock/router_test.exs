@@ -461,6 +461,8 @@ defmodule Supablock.RouterTest do
     test "slashes and NULs become underscores, empty becomes _" do
       assert Router.sanitize("a/b") == "a_b"
       assert Router.sanitize("a" <> <<0>> <> "b") == "a_b"
+      assert Router.sanitize("evil\nrows-000000.csv") == "evil_rows-000000.csv"
+      assert Router.sanitize("a\rb\tc") == "a_b_c"
       assert Router.sanitize("") == "_"
       assert Router.sanitize("ok-name") == "ok-name"
     end
