@@ -70,8 +70,13 @@ FROM alpine:3.22
 # ncurses for the tty driver and libcrypto3 for the crypto NIF — the only
 # piece of OpenSSL the BEAM links (Erlang's ssl app is Erlang code on top of
 # it, so no libssl and no openssl CLI). ca-certificates for TLS trust.
-# Busybox already provides the browsing toolkit (ls, cat, grep, find, diff).
-RUN apk add --no-cache fuse3 libstdc++ libgcc ncurses-libs libcrypto3 ca-certificates
+# Busybox provides the rest of the browsing toolkit (ls, grep, find, diff).
+# GNU coreutils is added for cat/cp: table row pages on the mount report
+# size 0 (their size is unknown until fetched) and busybox cat/cp copy with
+# sendfile(), which stops at that size and returns an empty file. GNU
+# cat/cp fall back to read() and get every byte. /usr/bin precedes
+# busybox's /bin on PATH.
+RUN apk add --no-cache fuse3 libstdc++ libgcc ncurses-libs libcrypto3 ca-certificates coreutils
 
 COPY --from=build /app/_build/prod/rel/supablock /opt/supablock
 # The repo's thin launcher works unchanged: it resolves the release root from

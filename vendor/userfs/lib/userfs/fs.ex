@@ -1,5 +1,4 @@
 defmodule Userfs.Fs do
-
   @moduledoc """
   To implement a filesystem a callback module must be created which implements
   five methods.
@@ -88,28 +87,44 @@ defmodule Userfs.Fs do
     quote location: :keep, bind_quoted: [opts: opts] do
       is_fs = opts[:is_fs]
       import_attribs = opts[:attribs]
+
       if (is_fs === nil and import_attribs === nil) or is_fs do
         @behaviour Userfs.Fs
       end
+
       if import_attribs === nil or import_attribs do
-        @error_noent  :userfs_defs.error_noent()
-        @status_data    :userfs_defs.status_data()
+        @error_noent :userfs_defs.error_noent()
+        @status_data :userfs_defs.status_data()
         @request_readdir :userfs_defs.request_readdir()
-        @request_getattr  :userfs_defs.request_getattr()
+        @request_getattr :userfs_defs.request_getattr()
         @request_readlink :userfs_defs.request_readlink()
-        @request_read     :userfs_defs.request_read()
-        @attr_dir        :userfs_defs.attr_dir()
-        @attr_file      :userfs_defs.attr_file()
-        @attr_symlink  :userfs_defs.attr_symlink()
+        @request_read :userfs_defs.request_read()
+        @request_open :userfs_defs.request_open()
+        @open_direct_io :userfs_defs.open_direct_io()
+        @attr_dir :userfs_defs.attr_dir()
+        @attr_file :userfs_defs.attr_file()
+        @attr_symlink :userfs_defs.attr_symlink()
         @magiccookie :userfs_defs.magiccookie()
       end
     end
   end
 
-  @callback userfs_init(String.t, term) :: {:ok, term} | {:error, term}
-  @callback userfs_readdir(term, String.t) :: {:ok, [binary], term} | {:error, integer}
-  @callback userfs_getattr(term, String.t) :: {:ok, {Userfs.mode, Userfs.type, integer}, term} | {:error, integer}
-  @callback userfs_readlink(term, String.t) :: {:ok, binary, term} | {:error, integer}
-  @callback userfs_read(term, String.t) :: {:ok, binary, term} | {:error, integer}
+  @callback userfs_init(String.t(), term) :: {:ok, term} | {:error, term}
+  @callback userfs_readdir(term, String.t()) :: {:ok, [binary], term} | {:error, integer}
+  @callback userfs_getattr(term, String.t()) ::
+              {:ok, {Userfs.mode(), Userfs.type(), integer}, term} | {:error, integer}
+  @callback userfs_readlink(term, String.t()) :: {:ok, binary, term} | {:error, integer}
+  @callback userfs_read(term, String.t()) :: {:ok, binary, term} | {:error, integer}
 
+  # Supablock: `userfs_open/2` (optional) returns open flags for a file;
+  # `@open_direct_io` makes the kernel bypass its page cache and read until
+  # EOF, for files whose size `userfs_getattr/2` cannot know (it reports 0).
+  #
+  # Callbacks run concurrently, each request in its own process (see
+  # `Userfs.Server`), so the state returned by a callback is ignored: treat
+  # the state from `userfs_init/2` as read-only and keep anything shared
+  # between calls in ETS.
+  @callback userfs_open(term, String.t()) ::
+              {:ok, non_neg_integer, term} | {:error, integer, term}
+  @optional_callbacks userfs_open: 2
 end

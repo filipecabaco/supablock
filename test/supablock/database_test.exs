@@ -184,6 +184,45 @@ defmodule Supablock.DatabaseTest do
       assert order == ~s("a,b","x.desc","q\\"t")
     end
 
+    test "a slow exact count falls back to the estimate plus one page of slack" do
+      Application.put_env(:supablock, :exact_count_budget_ms, 100)
+      on_exit(fn -> Application.delete_env(:supablock, :exact_count_budget_ms) end)
+
+      test_pid = self()
+      stub = DataApiStub.fun(DataApiStub.sample_model())
+
+      Application.put_env(:supablock, :data_api_fun, fn ref, path, headers ->
+        case List.keyfind(headers, "prefer", 0) do
+          {"prefer", "count=exact"} ->
+            send(test_pid, :exact_started)
+            # A full scan of a huge table: far over the budget.
+            Process.sleep(5_000)
+            stub.(ref, path, headers)
+
+          {"prefer", "count=estimated"} ->
+            {:ok, %{status: 206, headers: %{"content-range" => "0-0/1180"}, body: "[]"}}
+
+          _rows ->
+            stub.(ref, path, headers)
+        end
+      end)
+
+      {elapsed_us, result} = :timer.tc(fn -> Database.row_count(@ref, "app", "widgets") end)
+
+      assert_received :exact_started
+      assert {:ok, count} = result
+      assert count == 1180 + Database.page_size()
+      assert elapsed_us < 2_000_000
+    end
+
+    test "a fast exact count is used as is" do
+      stub_data_api()
+      Application.put_env(:supablock, :exact_count_budget_ms, 2_000)
+      on_exit(fn -> Application.delete_env(:supablock, :exact_count_budget_ms) end)
+
+      assert {:ok, 1200} = Database.row_count(@ref, "app", "widgets")
+    end
+
     test "quote_ident escapes backslashes and double quotes" do
       assert Database.quote_ident("id") == ~s("id")
       assert Database.quote_ident(~s(a"b)) == ~s("a\\"b")

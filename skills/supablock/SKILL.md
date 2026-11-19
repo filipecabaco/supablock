@@ -222,7 +222,7 @@ organizations/<org>/
     branches/<branch>/info.json
     database/{backups,migrations,readonly}.json
     database/<schema>/<table>/schema.json       # columns, types, primary key
-    database/<schema>/<table>/rows-000000.csv   # paged rows, 500/page
+    database/<schema>/<table>/rows-000000.csv   # paged rows, 500/page (mount: stat size 0, read to EOF)
     network/{restrictions,ssl-enforcement,custom-hostname,vanity-subdomain}.json
     types.ts                  # generated TypeScript types
     upgrade-eligibility.json
@@ -335,6 +335,10 @@ initiative to unblock a task:
   you need — output is byte-exact for binary bodies and a closed pipe ends
   the command quietly (exit 141), never with a stack trace. Reading a
   value out of a JSON file is `supablock grep -n`, not an external parser.
+- **Row pages on a mount report size 0** (`rows-*.csv` / `.json`): read them
+  to EOF with GNU `cat`, `head`, `grep` or `supablock cat`. Busybox `cat`/`cp`
+  and Python `shutil.copyfile` use `sendfile()` and silently produce an
+  empty file — an empty page there is not an empty table.
 - **Rate limits:** the Management API allows 120 req/min. Exit 3 with a
   "Rate limited" message means back off and retry. For bursts, start
   `supablock serve &` first (shared warm cache — see above) and keep

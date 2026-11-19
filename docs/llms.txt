@@ -93,7 +93,7 @@ Tree shape (all paths under the root):
     organizations/<org>/projects/<ref>/branches/<branch>/info.json
     organizations/<org>/projects/<ref>/database/{backups,migrations,readonly}.json
     organizations/<org>/projects/<ref>/database/<schema>/<table>/schema.json   # columns, types, pk
-    organizations/<org>/projects/<ref>/database/<schema>/<table>/rows-000000.csv
+    organizations/<org>/projects/<ref>/database/<schema>/<table>/rows-000000.csv   # on the mount: size 0 in stat, read to EOF
     organizations/<org>/projects/<ref>/network/{restrictions,ssl-enforcement,custom-hostname,vanity-subdomain}.json  # custom-hostname/vanity read {} unless the feature is enabled
     organizations/<org>/projects/<ref>/logs/<source>   # NDJSON; source ∈ postgres,auth,edge,storage,…
     organizations/<org>/projects/<ref>/metrics         # Prometheus text, project-wide

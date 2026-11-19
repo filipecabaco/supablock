@@ -116,7 +116,9 @@ defmodule Supablock.FuseTest do
     body = File.read!(page)
 
     assert byte_size(body) > 3 * 128 * 1024
-    assert File.stat!(page).size == byte_size(body)
+    # Row pages report size 0 (knowing it means fetching the page) and are
+    # read with direct I/O until EOF, so the whole body still comes back.
+    assert File.stat!(page).size == 0
     assert String.starts_with?(body, "id,name\n0-x") or String.starts_with?(body, "id,name\n0,0-x")
     assert body |> String.split("\n", trim: true) |> length() == 501
 
@@ -212,7 +214,85 @@ defmodule Supablock.FuseTest do
     page = Path.join(widgets, "rows-000000.csv")
     body = File.read!(page)
     assert String.starts_with?(body, "id,name\n0,w0\n")
-    assert File.stat!(page).size == byte_size(body)
+    assert %File.Stat{size: 0, type: :regular} = File.stat!(page)
+  end
+
+  test "ls -l on a table does not fetch its row pages", %{mountpoint: mp} do
+    # 1200 rows: several pages.
+    stub = Supablock.DataApiStub.fun(Supablock.DataApiStub.sample_model())
+    Application.put_env(:supablock, :data_api_fun, stub)
+    Supablock.Cache.flush()
+
+    table = Path.join(mp, "organizations/org-alpha/projects/#{@proj_a1}/database/app/widgets")
+    pages = table |> File.ls!() |> Enum.filter(&String.starts_with?(&1, "rows-"))
+    assert length(pages) > 1
+
+    test_pid = self()
+
+    Application.put_env(:supablock, :data_api_fun, fn ref, path, headers ->
+      if String.contains?(path, "offset="), do: send(test_pid, {:page_fetch, path})
+      stub.(ref, path, headers)
+    end)
+
+    for page <- pages, do: File.stat!(Path.join(table, page))
+    refute_received {:page_fetch, _path}
+  end
+
+  test "row pages (size 0) copy whole with GNU cat and cp", %{mountpoint: mp} do
+    page =
+      Path.join(
+        mp,
+        "organizations/org-alpha/projects/#{@proj_a1}/database/app/widgets/rows-000000.csv"
+      )
+
+    expected = File.read!(page)
+    assert byte_size(expected) > 0
+
+    assert {^expected, 0} = System.cmd("cat", [page])
+
+    copy = Path.join(System.tmp_dir!(), "row-page-#{System.unique_integer([:positive])}.csv")
+    on_exit(fn -> File.rm(copy) end)
+    assert {_out, 0} = System.cmd("cp", [page, copy])
+    assert File.read!(copy) == expected
+  end
+
+  test "a slow request does not block the rest of the mount", %{mountpoint: mp} do
+    stub = Supablock.DataApiStub.fun(Supablock.DataApiStub.sample_model(3))
+
+    Application.put_env(:supablock, :data_api_fun, fn ref, path, headers ->
+      # Row pages of app.widgets take 3s: a huge table on a slow link.
+      if String.contains?(path, "widgets") and String.contains?(path, "offset="),
+        do: Process.sleep(3_000)
+
+      stub.(ref, path, headers)
+    end)
+
+    page =
+      Path.join(
+        mp,
+        "organizations/org-alpha/projects/#{@proj_a1}/database/app/widgets/rows-000000.csv"
+      )
+
+    # Warm the listing so the slow read below is the only slow thing. The
+    # slow reader is a separate OS process (as another user of the mount
+    # would be): File.read!/File.ls! in this VM share OTP's single
+    # file_server process and would queue behind each other here, not in
+    # the mount.
+    File.stat!(page)
+    slow = Task.async(fn -> System.cmd("cat", [page]) end)
+    Process.sleep(300)
+
+    {elapsed_us, _} =
+      :timer.tc(fn ->
+        assert Enum.sort(File.ls!(Path.join(mp, "organizations"))) == ["org-alpha", "org-beta"]
+        assert File.read!(Path.join(mp, "organizations/org-beta/info.json")) =~ "org-beta"
+      end)
+
+    assert elapsed_us < 1_500_000,
+           "other requests waited #{div(elapsed_us, 1000)}ms behind the slow one"
+
+    assert {body, 0} = Task.await(slow, 15_000)
+    assert String.starts_with?(body, "id,name\n0,w0\n")
   end
 
   test "kill -9 of the port leaves a recoverable state", %{mountpoint: mp} do

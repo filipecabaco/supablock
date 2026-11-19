@@ -350,7 +350,26 @@ in ordinal order, the primary key and NOT NULL columns — rendered from the
 same cached PostgREST spec that powers listings, so it costs no extra
 requests. Rows are paged into files of `db_page_size` rows (default 500),
 named by offset and ordered by primary key. CSV by default (RFC-4180 quoted, `NULL`
-= empty field); switch with config:
+= empty field); switch with config.
+
+On the mount, row pages show **size 0** in `ls -l` and `stat`: knowing a
+page's size means downloading it, so listing a big table would fetch every
+page. They are served with direct I/O (like `/proc` files): anything that
+reads until EOF gets every byte — GNU `cat`/`cp`, `head`, `tail`, `grep`,
+`less`, Python's `open().read()`. Tools that copy with `sendfile()` stop at
+the reported size and produce an **empty file without an error**: busybox
+`cat`/`cp` and Python's `shutil.copyfile`/`shutil.copy`. Use GNU coreutils
+(the Docker image ships them) or read the file, e.g.
+`shutil.copyfileobj(open(src, "rb"), open(dst, "wb"))`. `mmap` of a row page
+is unsupported. All other files report their exact size.
+
+How many pages a table lists comes from a row count. An exact count is a
+full scan, so it gets 5 seconds; for tables too big for that, supablock
+uses Postgres' estimate plus one page of slack, so the last page may come
+back short or empty, but rows are not silently dropped.
+
+The mount serves requests concurrently: a slow page or a slow API call does
+not hold up other reads.
 
 ```bash
 supablock config set db_format json       # csv (default) | json

@@ -49,19 +49,43 @@ defmodule Supablock.Database do
     end
   end
 
-  @doc "Exact row count of `schema.table` (via PostgREST `count=exact`)."
+  @exact_count_budget_ms 5_000
+
+  @doc """
+  Row count of `schema.table`, which decides how many `rows-*` pages a table
+  lists. PostgREST `count=exact` is a full scan, so it gets
+  #{@exact_count_budget_ms}ms; past that (a big table) the count falls back
+  to `count=estimated` — the planner's estimate — plus one page of slack, so
+  a slightly stale estimate lists an extra (short or empty) page rather than
+  silently dropping the last rows.
+  """
   @spec row_count(String.t(), String.t(), String.t()) :: {:ok, non_neg_integer} | {:error, errno}
   def row_count(ref, schema, table) do
     cached({:db, ref, :count, schema, table}, fn ->
-      headers = [{"accept-profile", schema}, {"prefer", "count=exact"}, {"range", "0-0"}]
+      budget = Application.get_env(:supablock, :exact_count_budget_ms, @exact_count_budget_ms)
+      exact = Task.async(fn -> count(ref, schema, table, "exact") end)
 
-      case DataApi.get(ref, "/rest/v1/#{encode(table)}?select=*", headers) do
-        {:ok, %{status: status, headers: h}} when status in [200, 206] -> parse_count(h)
-        {:ok, %{status: 404}} -> {:error, :enoent}
-        {:ok, %{status: status}} -> {:error, http_errno(status)}
-        {:error, reason} -> {:error, errno(reason)}
+      case Task.yield(exact, budget) || Task.shutdown(exact, :brutal_kill) do
+        {:ok, result} ->
+          result
+
+        nil ->
+          with {:ok, estimate} <- count(ref, schema, table, "estimated") do
+            {:ok, estimate + page_size()}
+          end
       end
     end)
+  end
+
+  defp count(ref, schema, table, method) do
+    headers = [{"accept-profile", schema}, {"prefer", "count=" <> method}, {"range", "0-0"}]
+
+    case DataApi.get(ref, "/rest/v1/#{encode(table)}?select=*", headers) do
+      {:ok, %{status: status, headers: h}} when status in [200, 206] -> parse_count(h)
+      {:ok, %{status: 404}} -> {:error, :enoent}
+      {:ok, %{status: status}} -> {:error, http_errno(status)}
+      {:error, reason} -> {:error, errno(reason)}
+    end
   end
 
   @doc "A page of rows from `schema.table` (`columns` + `rows`)."
